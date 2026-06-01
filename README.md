@@ -71,15 +71,55 @@ run.sh              suite runner + CI gate
 lib/                env, cleanup, preflight, assert, report  (leaves; one-way deps)
 tests/*.test.sh     one journey each (standalone-runnable)
 setup/auth.*.sh     one-time human OTP login -> state save  (Phase 1)
-bin/probe-record.sh AI authoring: snapshot+chat -> .test.sh  (Phase 2, opt-in)
+bin/probe-record.sh authoring: scaffold (snapshot+stub) -> compile -> .test.sh
 flows/              optional declarative twins (no @eN field)
 fixtures/auth/      cached *.state.json  (gitignored — secrets)
 baselines/          committed golden snapshots/screenshots
 artifacts/<run>/    per-run video/screenshots/report  (gitignored)
 ```
 
-## Auth & OTP (Phase 1)
+## Auth & OTP
 
-Sites needing OTP/2FA are handled once, interactively, in `setup/auth.<app>.sh`:
-run headed, the human completes the OTP, the script waits on a success URL and saves
-session state. Tests then start from that cached state and replay unattended.
+Sites needing OTP/2FA are handled once, interactively, via `setup/auth.sh`:
+
+```bash
+APP=myapp LOGIN_URL="https://app.example.com/login" SUCCESS_URL="**/dashboard" \
+  bash setup/auth.sh
+```
+
+It opens a real Chrome window; you complete the login + OTP by hand; the script waits on
+`SUCCESS_URL` and saves `fixtures/auth/myapp.state.json`. Tests then start with
+`AB_AUTH myapp open <url>` and replay unattended — the OTP cost is paid once.
+
+## Authoring a test (AI or human, no API key)
+
+A coding agent (e.g. Claude Code) or a human inspects the site and writes a declarative
+flow, which compiles to a runnable test. No AI API key is needed — the agent doing the
+authoring is the "AI"; agent-browser's own `chat` (which needs a Vercel AI Gateway key)
+is intentionally not used.
+
+```bash
+# 1. Capture the page's interactive snapshot + a flow stub:
+bash bin/probe-record.sh scaffold checkout https://app.example.com/cart
+#    -> flows/checkout.snapshot.txt  (the menu of stable locators)
+#    -> flows/checkout.flow.json     (stub to fill in)
+
+# 2. Fill flows/checkout.flow.json with steps/asserts using STABLE locators read off the
+#    snapshot (priority: testid > role+name > label > exact-text > placeholder > title;
+#    verify each is unique with `agent-browser get count '<sel>' --json` -> .data.count==1).
+#    NEVER write @eN refs — they go stale. See flows/SCHEMA.md.
+
+# 3. Compile to a runnable, harness-compatible test:
+bash bin/probe-record.sh compile flows/checkout.flow.json
+#    -> tests/checkout.test.sh
+
+# 4. Run it:
+bash run.sh checkout
+```
+
+## Visual / structural regression (optional)
+
+`assert_no_snapshot_change baselines/<test>.snapshot.json` gates structural drift
+(parses `diff snapshot --json .changed`; preferred over pixel diff, which false-positives
+on Windows font AA). Capture a baseline once with
+`agent-browser snapshot --json > baselines/<test>.snapshot.json`.

@@ -15,9 +15,12 @@ Last Updated: 2026-06-01
 - 2026-06-01: **Phase 2 완료(compile)**. flows/SCHEMA.md + bin/probe-record.sh(compile/discover 2모드).
   compile: flow.json→.test.sh 생성, 생성물이 run.sh서 그린 실증. discover(chat)는 AI_GATEWAY_API_KEY
   없어 trace저장+사람확정에서 멈추는 보수설계(추측변환 금지).
+- 2026-06-01: **Phase 2 정정(option B)**. agent-browser chat은 Vercel Gateway 전용이라(사용자 키는
+  OpenAI라 비호환) discover 제거 → scaffold(snapshot+stub, 키 불요)로 교체. 저작 주체 = Claude(snapshot
+  보고 flow.json 작성). scaffold→compile→run 그린 실증. 어떤 LLM 키도 불필요. README에 워크플로 문서화.
 - **다음 active: Phase 3** — 삼성 실전. 사용자 OTP 입력 필요(대화형). setup/auth.sh로
-  APP=samsung LOGIN_URL=.. SUCCESS_URL=.. 실행 → state 캐싱 → tests/samsung-*.test.sh 작성.
-  + AI_GATEWAY_API_KEY 생기면 discover 자동변환 완성.
+  APP=samsung LOGIN_URL=.. SUCCESS_URL=.. 실행 → state 캐싱 → 내가 snapshot 떠서 scaffold→flow→compile로
+  tests/samsung-*.test.sh 작성. (AI authoring은 이제 키 없이 가능.)
 
 ## Current Execution Contract
 

@@ -77,9 +77,12 @@ Last Updated: 2026-06-01
 - [x] P2-2 bin/probe-record.sh — 2모드: `compile <flow.json>`(결정적, 키 불요, 핵심) + `discover`(chat, 키 필요).
       compile은 flow.json→하네스 호환 .test.sh 생성. standalone leaf(back-import 없음).
 - [x] P2-3 검증: 손으로 쓴 login.flow.json → compile → 생성된 .test.sh가 run.sh서 실제 그린(exit 0). codegen 실증.
-- [BLOCKED] discover(AI chat) 실동작: AI_GATEWAY_API_KEY가 현재 셸에 없음.
-      설계상 정직하게 처리: chat trace 저장 후 사람이 flow.json 확정→compile에서 멈춤(잘못된 flow silent 생성 방지).
-      키 생기면: chat --json -v trace 형태 실측 → 자동 변환(harden) 추가. 그 전엔 추측 변환 금지(문제은폐 회피).
+- [x] P2-4 (2026-06-01 정정, option B) discover(Vercel chat 의존) 제거 → scaffold로 교체.
+      사용자가 준 키는 OpenAI(sk-proj)였고 agent-browser chat은 Vercel Gateway(gw_) 전용이라 비호환.
+      결정: agent-browser chat 안 씀(별도 LLM 키 불요) — Claude(코딩 에이전트)가 snapshot 보고 flow.json 직접 작성.
+      scaffold <name> <url>: headed open + snapshot -i 저장(.snapshot.txt) + flow.json stub 생성(키/AI 불요).
+      end-to-end 실증: scaffold→Claude가 "Learn more" 로케이터로 flow 작성→compile→run.sh 그린(24s, exit 0).
+      ⚠️ 사용자 OpenAI 키 노출됨 → 폐기(rotate) 권고함. 이 흐름은 어떤 키도 불필요.
 
 ### 작업 전 필독
 - context: 로케이터 우선순위 testid>role+name>label>text>placeholder>title>css, get count --json==1
