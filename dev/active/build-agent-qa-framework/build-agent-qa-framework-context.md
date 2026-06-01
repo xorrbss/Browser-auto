@@ -7,10 +7,17 @@ Last Updated: 2026-06-01
 - 2026-06-01: 프로젝트 부트스트랩(git init, dev/ 구조). 설계 워크플로 완료 → 2-레이어 하네스 확정.
   Dev Docs 3파일 작성. 키 결정 확정(agent-qa, AI키 있음, 간단사이트→삼성 순차).
 - 2026-06-01: agent-browser --json 형태 정밀 실측 → 검증모델 정정(개별명령 실패=exit1, batch래퍼=exit0, .success 파싱이 토대).
-- 2026-06-01: **Phase 0 완료**. lib 5종 + run.sh + tests/login.test.sh 작성, end-to-end 그린(exit 0,
-  video VP8 35.7s, report.json+junit.xml). 검증모델이 실패 케이스를 정확히 잡음을 실증.
-  버그 2건 수정: preflight $USER unbound(set -u) → LOCALAPPDATA 유도; report.sh grep -c 산술에러 → awk count.
-- **다음 active: Phase 1** — setup/auth.<app>.sh(headed wait-for-human OTP → state save) + --state 패턴.
+- 2026-06-01: **Phase 0 완료**. lib 5종 + run.sh + tests/login.test.sh, end-to-end 그린(video VP8 + report).
+  검증모델이 실패 케이스 정확히 검출 실증. 버그 2건 수정(preflight $USER unbound, report.sh grep-c 산술).
+  커밋 b99e844.
+- 2026-06-01: **Phase 1 완료**. setup/auth.sh(범용 env 기반 headed wait-for-human → state save) +
+  lib/env.sh AB_AUTH 헬퍼. state save/load 비대화형 스모크 통과. confirm-gate/diff-baseline은 YAGNI 보류.
+- 2026-06-01: **Phase 2 완료(compile)**. flows/SCHEMA.md + bin/probe-record.sh(compile/discover 2모드).
+  compile: flow.json→.test.sh 생성, 생성물이 run.sh서 그린 실증. discover(chat)는 AI_GATEWAY_API_KEY
+  없어 trace저장+사람확정에서 멈추는 보수설계(추측변환 금지).
+- **다음 active: Phase 3** — 삼성 실전. 사용자 OTP 입력 필요(대화형). setup/auth.sh로
+  APP=samsung LOGIN_URL=.. SUCCESS_URL=.. 실행 → state 캐싱 → tests/samsung-*.test.sh 작성.
+  + AI_GATEWAY_API_KEY 생기면 discover 자동변환 완성.
 
 ## Current Execution Contract
 

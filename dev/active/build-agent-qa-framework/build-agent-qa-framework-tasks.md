@@ -4,10 +4,10 @@ Last Updated: 2026-06-01
 
 ## Phase 상태
 
-- Phase 0 — Layer 1 스파인: **DONE (2026-06-01, end-to-end 그린 검증)**
-- Phase 1 — human-loop + auth 캐싱: PENDING (다음 active)
-- Phase 2 — AI authoring(Layer 2): PENDING
-- Phase 3 — 삼성 실전: PENDING
+- Phase 0 — Layer 1 스파인: **DONE (2026-06-01, end-to-end 그린)**
+- Phase 1 — human-loop + auth 캐싱: **DONE (2026-06-01, state save/load 스모크 검증)**
+- Phase 2 — AI authoring(Layer 2): **DONE — compile 경로 검증, discover(chat)는 키 대기**
+- Phase 3 — 삼성 실전: PENDING (사용자 OTP 입력 필요 = 대화형, 핸드오프 지점)
 
 ---
 
@@ -47,12 +47,15 @@ Last Updated: 2026-06-01
 
 ---
 
-## phase-1 — human-loop + auth 캐싱
+## phase-1 — human-loop + auth 캐싱 — DONE
 
-- [ ] P1-1 setup/auth.<app>.sh — headed wait-for-human(OTP) → state save
-- [ ] P1-2 모든 테스트가 --state/--session-name로 시작하도록 패턴 확립
-- [ ] P1-3 confirm-gate(파괴적 클릭) 데모
-- [ ] P1-4 Tier-3 diff snapshot baseline 1건
+- [x] P1-1 setup/auth.sh — 범용(APP/LOGIN_URL/SUCCESS_URL env) headed wait-for-human(OTP) → state save.
+      크로스오리진 OTP iframe 우회 위해 wait --url 성공게이트 사용.
+- [x] P1-2 lib/env.sh에 AB_AUTH <app> 헬퍼 추가 — fixtures/auth/<app>.state.json 자동 --state 주입,
+      없으면 loud fail. state save/load 비대화형 스모크 검증 통과.
+- [~] P1-3 confirm-gate: YAGNI로 보류(실제 파괴적 클릭 테스트 생길 때 추가). agent-browser --confirm-actions 네이티브 존재.
+- [~] P1-4 diff baseline: assert_no_snapshot_change가 이미 lib/assert.sh에 있음(diff snapshot --json .changed).
+      baseline 캡처는 실제 테스트 생길 때. README에 사용법 명시.
 
 ### 작업 전 필독
 - context: 크로스오리진 iframe 한계 → wait --url 성공게이트 우회
@@ -68,11 +71,15 @@ Last Updated: 2026-06-01
 
 ---
 
-## phase-2 — AI authoring (Layer 2, opt-in)
+## phase-2 — AI authoring (Layer 2, opt-in) — DONE (compile 검증, discover 키 대기)
 
-- [ ] P2-1 flows/*.flow.json 스키마 정의(NO @eN field, type-literal step)
-- [ ] P2-2 bin/probe-record.sh — snapshot+chat → 안정 로케이터 굳히기(우선순위 ladder + uniqueness) → 생성
-- [ ] P2-3 AI_GATEWAY_API_KEY로 실제 사이트 한 플로우 산출·실행 검증
+- [x] P2-1 flows/SCHEMA.md — flow.json 스키마(NO @eN field, find/wait step + assert kinds). 로케이터 우선순위 명시.
+- [x] P2-2 bin/probe-record.sh — 2모드: `compile <flow.json>`(결정적, 키 불요, 핵심) + `discover`(chat, 키 필요).
+      compile은 flow.json→하네스 호환 .test.sh 생성. standalone leaf(back-import 없음).
+- [x] P2-3 검증: 손으로 쓴 login.flow.json → compile → 생성된 .test.sh가 run.sh서 실제 그린(exit 0). codegen 실증.
+- [BLOCKED] discover(AI chat) 실동작: AI_GATEWAY_API_KEY가 현재 셸에 없음.
+      설계상 정직하게 처리: chat trace 저장 후 사람이 flow.json 확정→compile에서 멈춤(잘못된 flow silent 생성 방지).
+      키 생기면: chat --json -v trace 형태 실측 → 자동 변환(harden) 추가. 그 전엔 추측 변환 금지(문제은폐 회피).
 
 ### 작업 전 필독
 - context: 로케이터 우선순위 testid>role+name>label>text>placeholder>title>css, get count --json==1

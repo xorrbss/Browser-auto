@@ -35,6 +35,22 @@ mkdir -p "$ARTDIR"
 # AB_JSON or the assert_* helpers instead of trusting AB's exit code.
 AB() { agent-browser --session "$S" "$@"; }
 
+# AB_AUTH <app> <agent-browser-args...>: like AB but injects --state from the cached
+# login produced by setup/auth.sh (fixtures/auth/<app>.state.json). Use as the first
+# call of a test that needs a logged-in session, e.g.
+#   AB_AUTH samsung open "https://guest.samsungdisplay.com/main/index.do"
+# Fails loudly (return 1) if the state file is missing so a test never silently runs
+# logged-out — run `APP=<app> LOGIN_URL=.. SUCCESS_URL=.. bash setup/auth.sh` first.
+AB_AUTH() {
+	local app="$1"; shift
+	local state="${PROBE_ROOT}/fixtures/auth/${app}.state.json"
+	if [ ! -s "$state" ]; then
+		echo "  ✗ AB_AUTH: no cached state for '$app' ($state). Run setup/auth.sh first." >&2
+		return 1
+	fi
+	agent-browser --session "$S" --state "$state" "$@"
+}
+
 # AB_JSON: run an agent-browser command with --json and echo its raw JSON envelope.
 # THE failure-detection primitive. Does NOT itself decide pass/fail — it just surfaces
 # the JSON so jq can read `.success`. Single command only (batch has its own shape).
