@@ -151,9 +151,30 @@ bash bin/probe-record.sh compile flows/checkout.flow.json
 bash run.sh checkout
 ```
 
-Sensitive fields (password / OTP / card / SSN) are masked at capture and never written.
-Scope is a single top-frame, single tab; a new tab or cross-origin top-level nav ends the
-recording with a warning (see `flows/SCHEMA.md` and `bin/capture.js`).
+**Capture scope & limitations** (by design — the recorder fails loud or marks `needs_review`
+rather than guessing):
+
+- **Single top-frame, single tab.** A new tab/popup is detected (`tab list` poll); the
+  recorder stops, saves the original tab's actions, and exits non-zero — re-record the
+  journey within one tab if the new-tab steps are needed.
+- **Same-origin journeys persist losslessly** (the buffer lives in per-origin
+  sessionStorage). Crossing a top-level origin boundary drops the prior origin's buffered
+  actions; cross-origin iframes are unreachable. Stay on one origin for a clean recording.
+- **Actions covered:** click, text input (fill), select, Enter, navigation. Scroll, hover,
+  drag, and file-upload are excluded (replay auto-scrolls to each element).
+- **Sensitive fields** (password / OTP / card / SSN — by type/autocomplete/inputmode) are
+  masked at capture and never written; their `{{input_N}}` token must be filled by hand.
+- **No unique stable locator → `needs_review`** (with ≥2 candidates), never a fragile guess.
+  This is expected for icon-only buttons whose only accessible name is `aria-label` (the
+  engine's `find role --name` is unreliable on 0.27.0, so role is only a low-priority
+  candidate), duplicate-text grids (N identical "Edit" rows), and closed shadow roots.
+- **SPA navigation:** `history.pushState`/`replaceState`/hash changes are captured as
+  wait-gates; a pure DOM-swap router that changes no URL produces no wait signal — replay
+  then leans on the next locator's implicit wait.
+- **Data integrity:** a silent sessionStorage quota / private-mode write loss is caught by a
+  seq-advance health-check and fails the capture loudly (never a quietly-incomplete flow).
+
+See `flows/SCHEMA.md` (schema, needs_review, values sidecar) and `bin/capture.js`.
 
 ## Visual / structural regression (optional)
 
