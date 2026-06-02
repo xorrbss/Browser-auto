@@ -27,7 +27,7 @@ LOGIN_URL="${2:-${LOGIN_URL:-}}"
 SUCCESS_URL="${3:-${SUCCESS_URL:-}}"
 if [ -z "$APP" ] || [ -z "$LOGIN_URL" ] || [ -z "$SUCCESS_URL" ]; then
 	echo "usage: bash setup/auth.sh <app> <login_url> <success_url>" >&2
-	echo "  e.g: bash setup/auth.sh samsung https://guest.samsungdisplay.com/main/index.do '**/index.do'" >&2
+	echo "  e.g: bash setup/auth.sh myapp https://app.example.com/login '**/dashboard'" >&2
 	exit 2
 fi
 # How long to wait for the human to finish (default 5 min). OTP + reading email is slow.
@@ -91,7 +91,8 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 	# the poll under `set -e` (we just retry until the deadline).
 	url_json="$(agent-browser --session "$SESS" get url --json 2>/dev/null </dev/null || true)"
 	got="$(printf '%s' "$url_json" | jq -r 'if .success then .data.url else empty end' 2>/dev/null || true)"
-	if [ -n "$got" ] && _url_match "$got" "$SUCCESS_URL"; then matched=1; break; fi
+	# Only accept the match once the page has navigated away from the login URL (so a SUCCESS_URL that is also a suffix/substring of LOGIN_URL cannot false-match the login page itself).
+	if [ -n "$got" ] && [ "$got" != "$LOGIN_URL" ] && _url_match "$got" "$SUCCESS_URL"; then matched=1; break; fi
 	sleep 1
 done
 if [ "$matched" != 1 ]; then
