@@ -181,8 +181,8 @@ capture() {
 	local app="" secs="${AQA_CAPTURE_SECONDS:-0}"
 	while [ $# -gt 0 ]; do
 		case "${1:-}" in
-			--app) app="${2:-}"; shift 2 ;;
-			--seconds) secs="${2:-0}"; shift 2 ;;
+			--app) [ $# -ge 2 ] || usage; app="$2"; shift 2 ;;
+			--seconds) [ $# -ge 2 ] || usage; secs="$2"; shift 2 ;;
 			*) usage ;;
 		esac
 	done
@@ -204,52 +204,141 @@ capture() {
 	fi
 
 	local recfile; recfile="$(mktemp)"; echo '[]' > "$recfile"
-	local flushed=0
+	local flushed=0 degraded=0 cap_seq=0 cap_recovered=0 orig_tab="" newtab=0 _stopped=0 crossorigin=0 start_origin=""
 	# Drain the in-page buffer ONCE, then close. Judged via jq .success: a dead browser FAILS
 	# LOUD (write nothing) rather than emitting an empty flow.json. Idempotent (Enter + Ctrl-C
 	# + EXIT trap all funnel here).
+	#
+	# Health-check (P1.3): the drain also reads __aqa_seq — the monotonic counter capture.js
+	# bumps once per recorded action. In the happy path it equals the buffer length (every
+	# record() advances seq AND pushes to the buffer). If sessionStorage.setItem silently threw
+	# (quota / private mode), the buffer stops growing while seq keeps advancing, so seq >
+	# recovered => events were lost. We surface that loudly and make capture() exit non-zero,
+	# instead of quietly writing an incomplete flow.json. (design.md OPEN RISKS: sessionStorage quota.)
 	_flush_once() {
 		[ "$flushed" = 1 ] && return 0
 		flushed=1
 		local out ok
+		# Drain the ORIGINAL tab (P1.4): a new tab/popup steals the active context and `eval`
+		# targets the active tab, so without switching back we would read the (empty) new tab's
+		# storage and lose the whole recording. Best-effort switch to the tab capture opened.
+		[ -n "$orig_tab" ] && agent-browser --session "$sess" tab "$orig_tab" >/dev/null 2>&1 </dev/null || true
 		out="$(agent-browser --session "$sess" eval --json \
-			"JSON.parse(sessionStorage.getItem('__aqa_buf')||'[]')" 2>/dev/null || true)"
+			"({buf:JSON.parse(sessionStorage.getItem('__aqa_buf')||'[]'),seq:(parseInt(sessionStorage.getItem('__aqa_seq')||'0',10)||0)})" 2>/dev/null || true)"
 		ok="$(printf '%s' "$out" | jq -r '.success // false' 2>/dev/null || echo false)"
 		if [ "$ok" != "true" ]; then
 			echo "[probe] FATAL: could not drain capture buffer (browser closed/unreachable). Nothing written." >&2
 			agent-browser --session "$sess" close >/dev/null 2>&1 || true
 			return 1
 		fi
-		printf '%s' "$out" | jq '.data.result' > "$recfile"
+		printf '%s' "$out" | jq '.data.result.buf' > "$recfile"
+		cap_seq="$(printf '%s' "$out" | jq -r '.data.result.seq // 0')"
+		cap_recovered="$(jq 'length' "$recfile" 2>/dev/null || echo 0)"
+		if [ "$cap_seq" -gt "$cap_recovered" ] 2>/dev/null; then
+			degraded=1
+			echo "[probe] WARNING: capture health-check FAILED — recorder advanced seq=$cap_seq but only" >&2
+			echo "[probe]   $cap_recovered event(s) persisted ($(( cap_seq - cap_recovered )) lost — likely sessionStorage" >&2
+			echo "[probe]   quota or private-mode). The recording is INCOMPLETE; re-record before trusting it." >&2
+		fi
 		agent-browser --session "$sess" close >/dev/null 2>&1 || true
 	}
-	trap '_flush_once || true' INT EXIT
 
 	echo "[probe] opening $starturl (headed). DRIVE YOUR JOURNEY, then press Enter (or Ctrl-C) to stop."
 	agent-browser --session "$sess" "${state_args[@]+"${state_args[@]}"}" --headed \
 		open --init-script "$capjs" "$starturl" >/dev/null 2>&1 \
 		|| { echo "[probe] open failed (is agent-browser healthy? try: agent-browser doctor)" >&2; exit 1; }
+	# Install the drain trap only AFTER a successful open: before this point there is no buffer
+	# to drain, so an INT/EXIT here would print the misleading "could not drain" FATAL.
+	trap '_flush_once || true; _stopped=1' INT EXIT
+
+	# Remember the tab capture opened so we drain IT even if a new tab/popup later steals focus.
+	orig_tab="$(agent-browser --session "$sess" tab list --json 2>/dev/null </dev/null \
+		| jq -r '[.data.tabs[]? | select(.active==true) | .tabId][0] // "t1"' 2>/dev/null || echo t1)"
+
+	# F6: clear any stale in-page capture state so a reused AQA_CAPTURE_SESSION cannot replay
+	# stale events from a prior recording.
+	agent-browser --session "$sess" eval "sessionStorage.setItem('__aqa_buf','[]');sessionStorage.setItem('__aqa_seq','0');sessionStorage.setItem('__aqa_prevurl',location.href);1" >/dev/null 2>&1 </dev/null || true
+
+	# F5: a top-level cross-origin nav moves sessionStorage to a new empty origin, silently
+	# losing events AND defeating the seq health-check. Remember the start origin to detect it.
+	start_origin="$(printf '%s' "$starturl" | sed -E 's#^([a-zA-Z][a-zA-Z0-9+.-]*://[^/]+).*#\1#')"
+
+	# Watch (ONE tab list --json call) for either an out-of-scope condition while waiting for the
+	# stop signal (Enter / Ctrl-C / --seconds): a new tab/popup (single tab, single top-frame), or
+	# a top-level cross-origin nav (sessionStorage moves origin, losing events). Either stops us so
+	# we drain the original tab, write the partial flow, and fail loud — better than silently
+	# missing actions.
+	_watch() {
+		local out cnt aurl aorig
+		out="$(agent-browser --session "$sess" tab list --json 2>/dev/null </dev/null || true)"
+		cnt="$(printf '%s' "$out" | jq -r '[.data.tabs[]? | select(.type=="page")] | length' 2>/dev/null || echo 1)"
+		[ "${cnt:-1}" -gt 1 ] 2>/dev/null && { newtab=1; return 0; }
+		aurl="$(printf '%s' "$out" | jq -r '[.data.tabs[]? | select(.active==true) | .url][0] // ""' 2>/dev/null || echo "")"
+		aorig="$(printf '%s' "$aurl" | sed -E 's#^([a-zA-Z][a-zA-Z0-9+.-]*://[^/]+).*#\1#')"
+		case "$aorig" in http://*|https://*) [ -n "$start_origin" ] && [ "$aorig" != "$start_origin" ] && { crossorigin=1; return 0; } ;; esac
+		return 1
+	}
 
 	if [ "$secs" -gt 0 ] 2>/dev/null; then
 		echo "[probe] recording for ${secs}s, then auto-stop. Do your journey in the browser now..."
-		sleep "$secs"
+		local _end=$(( $(date +%s) + secs ))
+		while [ "$(date +%s)" -lt "$_end" ]; do
+			[ "$_stopped" = 1 ] && break
+			if _watch; then break; fi
+			sleep 1
+		done
 	elif [ -r /dev/tty ]; then
 		# read from the controlling terminal, not stdin: when launched via record.cmd
 		# (cmd -> bash) stdin is not interactive and a plain `read` returns EOF instantly,
-		# closing the window before the user does anything.
+		# closing the window before the user does anything. read -t 1 lets us also poll for tabs.
 		printf '\n>>> Recording. Do your journey in the browser window, then press ENTER here to stop...\n'
-		read -r _ </dev/tty || true
+		while :; do
+			[ "$_stopped" = 1 ] && break
+			if _watch; then break; fi
+			if read -t 1 -r _ </dev/tty; then break; fi
+		done
 	else
 		read -r _ || true
 	fi
+	[ "$newtab" = 1 ] && echo "[probe] new tab/popup detected — stopping (out of scope: single tab)." >&2 || true
+	[ "$crossorigin" = 1 ] && echo "[probe] cross-origin navigation detected — out of scope (single origin)." >&2 || true
 
 	_flush_once || exit 1
 	trap - INT EXIT
 
 	local n; n="$(jq 'length' "$recfile" 2>/dev/null || echo 0)"
+	# F8: an empty capture must fail loud — build-flow.js would otherwise emit a vacuous
+	# always-green flow with no steps. (Degraded recordings still build their partial flow so it
+	# can be quarantined below.)
+	if [ "${n:-0}" -eq 0 ] 2>/dev/null && [ "$degraded" != 1 ]; then
+		echo "[probe] FATAL: captured 0 events — nothing to build (cross-origin nav, or init-script did not install?). Re-record." >&2
+		exit 1
+	fi
 	echo "[probe] captured $n raw event(s) -> building flow..."
 	node "$builder" "$name" "$starturl" "$app" "$recfile" "${PROBE_ROOT}/flows"
 	rm -f "$recfile"
+	# F7: build-flow.js writes flows/<name>.flow.json unconditionally; on each fatal branch
+	# rename it first so a later `compile` can never accept an incomplete artifact as clean.
+	if [ "$degraded" = 1 ]; then
+		mv -f "${PROBE_ROOT}/flows/${name}.flow.json" "${PROBE_ROOT}/flows/${name}.flow.json.incomplete" 2>/dev/null || true
+		echo "[probe] FATAL: capture health-check failed (see WARNING above) — flows/${name}.flow.json.incomplete is" >&2
+		echo "[probe]   INCOMPLETE (events lost to sessionStorage quota/private-mode). Re-record before use." >&2
+		exit 1
+	fi
+	if [ "$crossorigin" = 1 ]; then
+		mv -f "${PROBE_ROOT}/flows/${name}.flow.json" "${PROBE_ROOT}/flows/${name}.flow.json.incomplete" 2>/dev/null || true
+		echo "[probe] FATAL: a top-level cross-origin navigation occurred during recording (out of scope: single origin)." >&2
+		echo "[probe]   flows/${name}.flow.json.incomplete holds only the ORIGINAL origin's actions; events after the" >&2
+		echo "[probe]   cross-origin nav were NOT recorded. Re-record the journey within a single origin." >&2
+		exit 1
+	fi
+	if [ "$newtab" = 1 ]; then
+		mv -f "${PROBE_ROOT}/flows/${name}.flow.json" "${PROBE_ROOT}/flows/${name}.flow.json.incomplete" 2>/dev/null || true
+		echo "[probe] FATAL: a new tab/popup opened during recording (out of scope: single tab)." >&2
+		echo "[probe]   flows/${name}.flow.json.incomplete holds only the ORIGINAL tab's actions; new-tab steps were" >&2
+		echo "[probe]   NOT recorded. Re-record the journey within a single tab if those steps are needed." >&2
+		exit 1
+	fi
 	echo "[probe] next: resolve any needs_review in flows/${name}.flow.json, then: bin/probe-record.sh compile flows/${name}.flow.json"
 }
 
