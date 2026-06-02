@@ -41,14 +41,17 @@ source "$DIR/lib/assert.sh"   # assert_* helpers
 AB open "https://app.example.com" >/dev/null
 AB record start "$ARTDIR/video.webm" >/dev/null
 
-# Deterministic body: semantic locators only, a wait-gate between page changes.
+# Deterministic body: semantic locators only. Gate page changes with wait_url (URL) or an
+# in-batch text/load wait so the next locator runs against a settled page.
 BATCH --bail <<'JSON'
 [["find","label","Email","fill","user@example.com"],
- ["find","role","button","--name","Sign in","click"],
- ["wait","--url","**/dashboard"]]
+ ["find","role","button","--name","Sign in","click"]]
 JSON
 
-assert_url  "/dashboard"
+wait_url "**/dashboard"   # polls `get url`; NOT batch ["wait","--url",..], which is
+                          # broken for glob patterns on 0.27.0 (see Hard rules).
+
+assert_url  "**/dashboard"
 assert_text "Welcome"
 ```
 
@@ -59,8 +62,11 @@ assert_text "Welcome"
   field. A bare `is`/`find` in a test is a false-green waiting to happen.
 - **Never write `@eN` refs into a test.** Refs go stale on any page change. Use
   semantic `find role|text|label|placeholder|alt|title|testid` locators.
-- **Gate every page transition** with `wait --url|--text|--load networkidle` so the
-  next locator runs against a settled page.
+- **Gate every page transition** so the next locator runs against a settled page: use
+  `wait_url "<glob>"` for a URL change (it polls the reliable `get url`; the batch
+  `["wait","--url",…]` command is broken for glob patterns on 0.27.0 — it ignores the
+  timeout, hangs ~34s, then fails with `os error 10060`), or an in-batch
+  `["wait","--text",…]` / `["wait","--load","networkidle"]`.
 - **Run via `run.sh`**, which owns the daemon + ffmpeg PATH. Ad-hoc `agent-browser`
   calls from a stale-PATH shell can silently lose video.
 
@@ -71,8 +77,10 @@ run.sh              suite runner + CI gate
 lib/                env, cleanup, preflight, assert, report  (leaves; one-way deps)
 tests/*.test.sh     one journey each (standalone-runnable)
 setup/auth.*.sh     one-time human OTP login -> state save  (Phase 1)
-bin/probe-record.sh authoring: scaffold (snapshot+stub) -> compile -> .test.sh
-flows/              optional declarative twins (no @eN field)
+bin/probe-record.sh authoring: scaffold (snapshot+stub) | capture (record) -> compile -> .test.sh
+bin/capture.js      in-page recorder injected via --init-script (capture mode)
+bin/build-flow.js   raw captured events -> flow.json (+ gitignored values sidecar)
+flows/              declarative twins (no @eN field); *.values.json sidecars (gitignored)
 fixtures/auth/      cached *.state.json  (gitignored — secrets)
 baselines/          committed golden snapshots/screenshots
 artifacts/<run>/    per-run video/screenshots/report  (gitignored)
@@ -87,9 +95,12 @@ APP=myapp LOGIN_URL="https://app.example.com/login" SUCCESS_URL="**/dashboard" \
   bash setup/auth.sh
 ```
 
-It opens a real Chrome window; you complete the login + OTP by hand; the script waits on
-`SUCCESS_URL` and saves `fixtures/auth/myapp.state.json`. Tests then start with
-`AB_AUTH myapp open <url>` and replay unattended — the OTP cost is paid once.
+It opens a real Chrome window; you complete the login + OTP by hand; the script polls
+`get url` until it matches `SUCCESS_URL` — an agent-browser glob like `**/dashboard`, or a
+plain substring, matched across origins — then saves `fixtures/auth/myapp.state.json`.
+(It polls rather than calling `wait --url` because that command is broken for globs on
+0.27.0.) Tests then start with `AB_AUTH myapp open <url>` and replay unattended — the OTP
+cost is paid once.
 
 ## Authoring a test (AI or human, no API key)
 
@@ -105,8 +116,11 @@ bash bin/probe-record.sh scaffold checkout https://app.example.com/cart
 #    -> flows/checkout.flow.json     (stub to fill in)
 
 # 2. Fill flows/checkout.flow.json with steps/asserts using STABLE locators read off the
-#    snapshot (priority: testid > role+name > label > exact-text > placeholder > title;
-#    verify each is unique with `agent-browser get count '<sel>' --json` -> .data.count==1).
+#    snapshot (priority: testid > role+name > label > exact-text > placeholder > title).
+#    Pick a value that is UNIQUE in the snapshot. `get count` validates uniqueness only for
+#    CSS selectors (e.g. a testid's `[data-testid="v"]` equivalent) — it CANNOT count the
+#    semantic role/text/label locators replay uses, so judge those from the snapshot
+#    (capture mode below computes in-page uniqueness automatically).
 #    NEVER write @eN refs — they go stale. See flows/SCHEMA.md.
 
 # 3. Compile to a runnable, harness-compatible test:
@@ -116,6 +130,30 @@ bash bin/probe-record.sh compile flows/checkout.flow.json
 # 4. Run it:
 bash run.sh checkout
 ```
+
+### Or: record a live journey (capture mode)
+
+Instead of hand-authoring, drive the site yourself and let the recorder build the flow. It
+injects `bin/capture.js` via `--init-script`, hardens each action to a semantic locator
+in-page (computing uniqueness itself), masks sensitive values, inserts navigation wait-gates
+and a trailing URL assert, and emits the same `flows/<name>.flow.json`:
+
+```bash
+# 1. Record: opens a headed browser (from cached AB_AUTH state if --app); you click / type /
+#    select / navigate, then press Enter (or Ctrl-C) to stop. --seconds N auto-stops after N s.
+bash bin/probe-record.sh capture checkout https://app.example.com/cart --app myapp
+#    -> flows/checkout.flow.json     (steps hardened to semantic locators)
+#    -> flows/checkout.values.json   (gitignored sidecar: real input values; {{input_N}} tokens in the flow)
+
+# 2. Resolve any needs_review steps (no unique locator found — pick one of the listed
+#    candidates), fill flows/checkout.values.json, then compile + run as above:
+bash bin/probe-record.sh compile flows/checkout.flow.json
+bash run.sh checkout
+```
+
+Sensitive fields (password / OTP / card / SSN) are masked at capture and never written.
+Scope is a single top-frame, single tab; a new tab or cross-origin top-level nav ends the
+recording with a warning (see `flows/SCHEMA.md` and `bin/capture.js`).
 
 ## Visual / structural regression (optional)
 
