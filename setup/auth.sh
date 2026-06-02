@@ -19,9 +19,17 @@
 set -euo pipefail
 PROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-APP="${APP:?set APP=<name> (e.g. APP=samsung)}"
-LOGIN_URL="${LOGIN_URL:?set LOGIN_URL=<login page url>}"
-SUCCESS_URL="${SUCCESS_URL:?set SUCCESS_URL=<url pattern that means logged-in, e.g. **/dashboard>}"
+# Accept config as positional args (auth.sh <app> <login_url> <success_url>) OR env
+# vars. Args are preferred because they survive terminals that wrap/split long
+# multi-line env-prefixed commands; env vars stay supported for CI use.
+APP="${1:-${APP:-}}"
+LOGIN_URL="${2:-${LOGIN_URL:-}}"
+SUCCESS_URL="${3:-${SUCCESS_URL:-}}"
+if [ -z "$APP" ] || [ -z "$LOGIN_URL" ] || [ -z "$SUCCESS_URL" ]; then
+	echo "usage: bash setup/auth.sh <app> <login_url> <success_url>" >&2
+	echo "  e.g: bash setup/auth.sh samsung https://guest.samsungdisplay.com/main/index.do '**/index.do'" >&2
+	exit 2
+fi
 # How long to wait for the human to finish (default 5 min). OTP + reading email is slow.
 HUMAN_TIMEOUT_MS="${HUMAN_TIMEOUT_MS:-300000}"
 
@@ -31,6 +39,11 @@ mkdir -p "$STATE_DIR"
 
 # Isolated, headed session so the human can see and drive the real window.
 SESS="auth-${APP}"
+
+# Force a visible window. agent-browser.json sets headless:true for deterministic
+# replay; auth is the one flow that MUST be visible, so we override via both the flag
+# and the env var (the env var beats project config) to be certain the window appears.
+export AGENT_BROWSER_HEADED=1
 
 echo "[auth] opening $LOGIN_URL in a real Chrome window (session: $SESS)..."
 agent-browser --session "$SESS" --headed open "$LOGIN_URL" >/dev/null
