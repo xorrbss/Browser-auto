@@ -204,7 +204,7 @@ capture() {
 	fi
 
 	local recfile; recfile="$(mktemp)"; echo '[]' > "$recfile"
-	local flushed=0 degraded=0 cap_seq=0 cap_recovered=0
+	local flushed=0 degraded=0 cap_seq=0 cap_recovered=0 orig_tab="" newtab=0
 	# Drain the in-page buffer ONCE, then close. Judged via jq .success: a dead browser FAILS
 	# LOUD (write nothing) rather than emitting an empty flow.json. Idempotent (Enter + Ctrl-C
 	# + EXIT trap all funnel here).
@@ -219,6 +219,10 @@ capture() {
 		[ "$flushed" = 1 ] && return 0
 		flushed=1
 		local out ok
+		# Drain the ORIGINAL tab (P1.4): a new tab/popup steals the active context and `eval`
+		# targets the active tab, so without switching back we would read the (empty) new tab's
+		# storage and lose the whole recording. Best-effort switch to the tab capture opened.
+		[ -n "$orig_tab" ] && agent-browser --session "$sess" tab "$orig_tab" >/dev/null 2>&1 </dev/null || true
 		out="$(agent-browser --session "$sess" eval --json \
 			"({buf:JSON.parse(sessionStorage.getItem('__aqa_buf')||'[]'),seq:(parseInt(sessionStorage.getItem('__aqa_seq')||'0',10)||0)})" 2>/dev/null || true)"
 		ok="$(printf '%s' "$out" | jq -r '.success // false' 2>/dev/null || echo false)"
@@ -245,18 +249,40 @@ capture() {
 		open --init-script "$capjs" "$starturl" >/dev/null 2>&1 \
 		|| { echo "[probe] open failed (is agent-browser healthy? try: agent-browser doctor)" >&2; exit 1; }
 
+	# Remember the tab capture opened so we drain IT even if a new tab/popup later steals focus.
+	orig_tab="$(agent-browser --session "$sess" tab list --json 2>/dev/null </dev/null \
+		| jq -r '[.data.tabs[]? | select(.active==true) | .tabId][0] // "t1"' 2>/dev/null || echo t1)"
+
+	# Watch for a new tab/popup while waiting for the stop signal (Enter / Ctrl-C / --seconds).
+	# New tabs are OUT OF SCOPE (single tab, single top-frame); if one opens we stop, drain the
+	# original tab, write the partial flow, and fail loud — better than silently missing actions.
+	_extra_tab() {
+		local n
+		n="$(agent-browser --session "$sess" tab list --json 2>/dev/null </dev/null \
+			| jq -r '[.data.tabs[]? | select(.type=="page")] | length' 2>/dev/null || echo 1)"
+		[ "${n:-1}" -gt 1 ] 2>/dev/null
+	}
+
 	if [ "$secs" -gt 0 ] 2>/dev/null; then
 		echo "[probe] recording for ${secs}s, then auto-stop. Do your journey in the browser now..."
-		sleep "$secs"
+		local _end=$(( $(date +%s) + secs ))
+		while [ "$(date +%s)" -lt "$_end" ]; do
+			if _extra_tab; then newtab=1; break; fi
+			sleep 1
+		done
 	elif [ -r /dev/tty ]; then
 		# read from the controlling terminal, not stdin: when launched via record.cmd
 		# (cmd -> bash) stdin is not interactive and a plain `read` returns EOF instantly,
-		# closing the window before the user does anything.
+		# closing the window before the user does anything. read -t 1 lets us also poll for tabs.
 		printf '\n>>> Recording. Do your journey in the browser window, then press ENTER here to stop...\n'
-		read -r _ </dev/tty || true
+		while :; do
+			if _extra_tab; then newtab=1; break; fi
+			if read -t 1 -r _ </dev/tty; then break; fi
+		done
 	else
 		read -r _ || true
 	fi
+	[ "$newtab" = 1 ] && echo "[probe] new tab/popup detected — stopping (out of scope: single tab)." >&2 || true
 
 	_flush_once || exit 1
 	trap - INT EXIT
@@ -268,6 +294,12 @@ capture() {
 	if [ "$degraded" = 1 ]; then
 		echo "[probe] FATAL: capture health-check failed (see WARNING above) — flows/${name}.flow.json is" >&2
 		echo "[probe]   INCOMPLETE (events lost to sessionStorage quota/private-mode). Re-record before use." >&2
+		exit 1
+	fi
+	if [ "$newtab" = 1 ]; then
+		echo "[probe] FATAL: a new tab/popup opened during recording (out of scope: single tab)." >&2
+		echo "[probe]   flows/${name}.flow.json holds only the ORIGINAL tab's actions; new-tab steps were" >&2
+		echo "[probe]   NOT recorded. Re-record the journey within a single tab if those steps are needed." >&2
 		exit 1
 	fi
 	echo "[probe] next: resolve any needs_review in flows/${name}.flow.json, then: bin/probe-record.sh compile flows/${name}.flow.json"
