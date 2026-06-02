@@ -26,14 +26,55 @@ _ab_data() {
 	printf '%s' "$json" | jq -r "$jqpath"
 }
 
-# assert_url <pattern-substring>: current URL must contain the substring.
+# _url_match <got-url> <want-pattern>: 0 if the URL matches. <want> may be an agent-browser
+# style glob ("**/secure", query/fragment stripped); ** and * both collapse to bash * and are
+# matched against the WHOLE URL (so "**/secure" => "*/secure" matches ".../secure", optionally
+# followed by ?query/#frag). A plain substring (hand-written test) still matches via the contains
+# fallback. Shared by assert_url and wait_url so a recorded wait gate and its trailing assert
+# agree on EXACTLY the same matching.
+_url_match() {
+	local got="$1" want="$2" glob
+	# Only * / ** are wildcards; every other char is literal. Make the OTHER bash-glob
+	# metacharacters literal via single-char bracket expressions ([[] matches a literal '[',
+	# [?] a literal '?') — robust, unlike backslash escaping inside ${//} replacements. Escape
+	# '[' BEFORE the '?' rule introduces new '[' chars, then collapse ** -> * (the sole
+	# wildcard). Without this, "**/api/[v2]/x" would read [v2] as a character class and
+	# FALSE-match ".../apiv/..." — a silent false-green, the exact failure this framework prevents.
+	# (glob assigned from $want on its own line: a single `local ... glob="$want"` would read
+	# $want before it is set in the same declaration.)
+	glob="${want//\[/[[]}"        # literal [  -> [[]
+	glob="${glob//\?/[?]}"        # literal ?  -> [?]
+	glob="${glob//\*\*/\*}"       # **         -> *   (sole wildcard)
+	case "$got" in
+		$glob | $glob\?* | $glob\#*) return 0 ;;   # glob match (whole URL, optional query/frag)
+		*"$want"*) return 0 ;;                      # literal-substring fallback
+		*) return 1 ;;
+	esac
+}
+
+# assert_url <pattern>: current URL must match (glob or substring; see _url_match).
 assert_url() {
 	local want="$1" got
 	got="$(_ab_data '.data.url' get url)" || return 1
-	case "$got" in
-		*"$want"*) return 0 ;;
-		*) echo "  ✗ assert_url: expected to contain '$want', got '$got'" >&2; return 1 ;;
-	esac
+	_url_match "$got" "$want" && return 0
+	echo "  ✗ assert_url: '$got' does not match '$want'" >&2; return 1
+}
+
+# wait_url <pattern> [timeout_s]: poll the current URL until it matches <pattern> (default 15s).
+# This is the recorder's navigation gate. agent-browser 0.27.0 `wait --url` is BROKEN for glob
+# patterns ("**/secure" hangs ~34s then fails with os error 10060); it works only for plain
+# substrings. `get url` is reliable, so compile() emits this poll for every `wait until:url`
+# step instead of `wait --url`. Tolerates transient get-url failures mid-navigation (retries
+# until the deadline) and matches with the same logic as assert_url.
+wait_url() {
+	local want="$1" timeout="${2:-15}" got deadline
+	deadline=$(( $(date +%s) + timeout ))
+	while :; do
+		got="$(_ab_data '.data.url' get url 2>/dev/null)" && _url_match "$got" "$want" && return 0
+		[ "$(date +%s)" -ge "$deadline" ] && break
+		sleep 0.3
+	done
+	echo "  ✗ wait_url: URL '${got:-?}' never matched '$want' within ${timeout}s" >&2; return 1
 }
 
 # assert_text <substring> [selector]: page (or element) text must contain substring.

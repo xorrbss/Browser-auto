@@ -1,0 +1,13 @@
+{
+  "name": "nav-roundtrip",
+  "startUrl": "https://example.com",
+  "steps": [
+    { "kind": "find", "by": "text", "value": "Learn more",      "action": "click" },
+    { "kind": "wait", "until": "url", "value": "**/help/example-domains" },
+    { "kind": "find", "by": "text", "value": "Example Domains", "action": "hover" }
+  ],
+  "asserts": [
+    { "kind": "url",  "value": "**/help/example-domains" },
+    { "kind": "text", "value": "Example Domains" }
+  ]
+}
