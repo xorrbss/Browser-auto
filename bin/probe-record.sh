@@ -204,23 +204,38 @@ capture() {
 	fi
 
 	local recfile; recfile="$(mktemp)"; echo '[]' > "$recfile"
-	local flushed=0
+	local flushed=0 degraded=0 cap_seq=0 cap_recovered=0
 	# Drain the in-page buffer ONCE, then close. Judged via jq .success: a dead browser FAILS
 	# LOUD (write nothing) rather than emitting an empty flow.json. Idempotent (Enter + Ctrl-C
 	# + EXIT trap all funnel here).
+	#
+	# Health-check (P1.3): the drain also reads __aqa_seq — the monotonic counter capture.js
+	# bumps once per recorded action. In the happy path it equals the buffer length (every
+	# record() advances seq AND pushes to the buffer). If sessionStorage.setItem silently threw
+	# (quota / private mode), the buffer stops growing while seq keeps advancing, so seq >
+	# recovered => events were lost. We surface that loudly and make capture() exit non-zero,
+	# instead of quietly writing an incomplete flow.json. (design.md OPEN RISKS: sessionStorage quota.)
 	_flush_once() {
 		[ "$flushed" = 1 ] && return 0
 		flushed=1
 		local out ok
 		out="$(agent-browser --session "$sess" eval --json \
-			"JSON.parse(sessionStorage.getItem('__aqa_buf')||'[]')" 2>/dev/null || true)"
+			"({buf:JSON.parse(sessionStorage.getItem('__aqa_buf')||'[]'),seq:(parseInt(sessionStorage.getItem('__aqa_seq')||'0',10)||0)})" 2>/dev/null || true)"
 		ok="$(printf '%s' "$out" | jq -r '.success // false' 2>/dev/null || echo false)"
 		if [ "$ok" != "true" ]; then
 			echo "[probe] FATAL: could not drain capture buffer (browser closed/unreachable). Nothing written." >&2
 			agent-browser --session "$sess" close >/dev/null 2>&1 || true
 			return 1
 		fi
-		printf '%s' "$out" | jq '.data.result' > "$recfile"
+		printf '%s' "$out" | jq '.data.result.buf' > "$recfile"
+		cap_seq="$(printf '%s' "$out" | jq -r '.data.result.seq // 0')"
+		cap_recovered="$(jq 'length' "$recfile" 2>/dev/null || echo 0)"
+		if [ "$cap_seq" -gt "$cap_recovered" ] 2>/dev/null; then
+			degraded=1
+			echo "[probe] WARNING: capture health-check FAILED — recorder advanced seq=$cap_seq but only" >&2
+			echo "[probe]   $cap_recovered event(s) persisted ($(( cap_seq - cap_recovered )) lost — likely sessionStorage" >&2
+			echo "[probe]   quota or private-mode). The recording is INCOMPLETE; re-record before trusting it." >&2
+		fi
 		agent-browser --session "$sess" close >/dev/null 2>&1 || true
 	}
 	trap '_flush_once || true' INT EXIT
@@ -250,6 +265,11 @@ capture() {
 	echo "[probe] captured $n raw event(s) -> building flow..."
 	node "$builder" "$name" "$starturl" "$app" "$recfile" "${PROBE_ROOT}/flows"
 	rm -f "$recfile"
+	if [ "$degraded" = 1 ]; then
+		echo "[probe] FATAL: capture health-check failed (see WARNING above) — flows/${name}.flow.json is" >&2
+		echo "[probe]   INCOMPLETE (events lost to sessionStorage quota/private-mode). Re-record before use." >&2
+		exit 1
+	fi
 	echo "[probe] next: resolve any needs_review in flows/${name}.flow.json, then: bin/probe-record.sh compile flows/${name}.flow.json"
 }
 
