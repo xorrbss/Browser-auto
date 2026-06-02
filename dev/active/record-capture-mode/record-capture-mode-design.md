@@ -128,14 +128,23 @@ seed where they conflict (the seed's blockers below were empirically wrong).
   Structural ceiling of any recorder; round-trip on same build is the backstop.
 - **wrong-element-but-count==1**: cardinality ≠ identity; mutated SPA between action and drain.
   Mitigated by per-boundary drain (read while element exists) + matchesTarget at capture.
+  - **verify-repair replay (v2, DEFERRED 2026-06-03)**: a post-capture step that re-drives the flow
+    and non-destructively probes each locator (`find … hover --json`), recovering down the candidate
+    ladder or promoting to needs_review, would further mitigate the three risks above. Deferred:
+    (a) the top risk (accname/role divergence) is already blunted by WKIND ranking testid/text/label
+    above the unreliable role; (b) `compile → run.sh` round-trip is the existing locator backstop;
+    (c) a step-by-step replay+repair engine duplicates run.sh and is a large new layer (KISS/YAGNI).
+    Pick up as a separate bin/verify-flow.* if needs_review frequency proves too high in practice.
 - **closed shadow roots / cross-origin iframes** unreachable → thin candidates → needs_review (not silent).
 - **duplicate-text grids** (N 'Edit' rows, no testid) → every step needs_review (correct fail-loud;
   schema has no scope/index to auto-resolve).
 - **pushState clobber / pure DOM-swap routers** (no URL signal at all) → missed; host poll is backstop
   but pure-DOM routers produce ZERO URL signal → no wait gate.
 - **poll granularity ~250ms**: fast click→nav→click can misattribute the boundary.
-- **sessionStorage quota/private-mode**: setItem throw is swallowed → silent loss. Needs host
-  health-check (verify monotonic seq advanced between drains) to fail loud. (NOT yet specified — TODO.)
+- **sessionStorage quota/private-mode**: setItem throw is swallowed → silent loss. Host
+  health-check **IMPLEMENTED (2026-06-03, P1.3)**: `_flush_once` drains `__aqa_seq` alongside the
+  buffer and, when `seq > recovered`, prints a loud WARNING and makes `capture()` exit non-zero
+  (partial flow preserved for inspection). Regression: tests/capture-healthcheck.test.sh.
 - **file size**: capture JS large → lives in bin/capture.js (OK). Bash capture dispatch + compile
   guard may push probe-record.sh over ~250 lines → may split the flow-json builder into a helper.
 - **PoC**: workflow agents couldn't launch a browser (sandbox); but inline PoC brg25r4fo retired R1

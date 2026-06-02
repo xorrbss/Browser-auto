@@ -9,6 +9,13 @@ Last Updated: 2026-06-02
 - Phase 2 — 호스트 capture() + compile 변경: **DONE (2026-06-02)** — needs_review 가드/토큰 치환/build-flow.js
 - Phase 3 — round-trip 검증: **DONE (2026-06-02, run.sh PASS exit 0)**
 - Phase 3.1 — **네비 wait 신뢰성 수정 + 멀티스텝-네비 재생: DONE (2026-06-02, run.sh PASS)**
+- Phase 4 — **production hardening: DONE (2026-06-03, branch feat/capture-hardening, suite 5/5 GREEN)**
+  - P0.1 auth.sh 글롭 `wait --url`→get url 폴링(라이브 검증) · P0.2 README 정합(capture/ wait_url/ get count/ 한계)
+  - P1.3 seq-advance health-check(`_flush_once`, fail-loud+exit1, 유닛+실와이어링 검증)
+  - P1.4 new-tab 감지(`tab list` 폴 → orig_tab drain → partial flow → exit1, 유닛+실와이어링 검증)
+  - Infra.9 build-flow.js 브라우저-불요 유닛테스트(+compile needs_review 거부)
+  - P2.7/P3 한계 문서화(README scope&limitations)
+  - **보류**: P2.6 verify-repair(v2; 근거는 context.md 2026-06-03), **#5 사람 녹화 round-trip(사람 필요)**
 
 > ✅ **`wait --url` 글롭 버그 수정**: agent-browser 0.27.0 `wait --url`은 글롭(`*`/`**`)에서 `os error 10060`로
 > 깨짐(평문 substring만 동작). → `wait_url` get-url 폴링 헬퍼(lib/assert.sh, assert_url과 `_url_match` 공유) +

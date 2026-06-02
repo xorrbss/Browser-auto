@@ -58,6 +58,55 @@ Last Updated: 2026-06-02
 - **다음(v2/선택)**: ① 사람 헤디드 실사용 경로 통합검증(현재 메커니즘만) ② verify-repair replay
   (캡처 후 flow를 단계별 재생하며 각 로케이터를 hover --json으로 검증·복구) ③ icon-only(aria-label) 보강
   ④ SPA pushState-only 네비(URL 신호 無) wait gate 부재 — 다음 find의 암묵 wait에 의존.
+- 2026-06-03: **production-hardening 세션 (ultracode 자율). 브랜치 feat/capture-hardening (master 분기).**
+  - **환경 footgun(신규/치명)**: C: 디스크가 100% full이면 셸/하네스가 temp 작업디렉터리 mkdir에서 `ENOSPC`로
+    **모든 Bash/PowerShell이 전면 차단**된다(파일 쓰기는 MFT 슬랙으로 가능하나 디렉터리 생성 불가). 복구법:
+    **Write 툴로 큰 텍스트 파일을 truncate해 1클러스터 확보**(바이너리는 Read 거부로 불가) → 셸 복구 →
+    `Temp\claude`의 **orphan `browser-use-user-data-dir-*` 프로파일 91개(~1.1GB)** + artifacts 정리. 그 후 24GB 여유.
+    (디스크 대부분은 사용자 데이터라 추가 정리 불가; 캡처/run마다 artifacts 정리 권장.)
+  - **P0.1 setup/auth.sh**: `wait --url` 글롭 버그(`--timeout` 무시, ~34s 후 os error 10060) **재확인** →
+    **get url 폴링 루프 인라인 구현**(_url_match 인라인, lib/assert.sh와 동일 매칭). 글롭 SUCCESS_URL 라이브
+    검증: 매칭 후 state 저장, exit 0 (구버전이면 34s 행). commit 2c5119e.
+  - **P0.2 README**: capture 워크플로 추가, 깨진 batch `wait --url`→`wait_url`, get count 유일성 정정,
+    auth 폴링 명시, Layout 보강. commit 06a467d.
+  - **P1.3 seq health-check (probe-record.sh _flush_once)**: drain이 `__aqa_seq`를 buf와 함께 읽어
+    `seq>recovered`면 **fail-loud(경고+exit 1)**, partial flow는 보존. 유닛(seeded mismatch/match) +
+    실 capture() 와이어링(seq=7/buf=1→exit 1) 검증. tests/capture-healthcheck.test.sh. commit 656de1f.
+  - **P1.4 new-tab (probe-record.sh)**: `tab list --json` 폴(>1 page tab)→`orig_tab` 스위치 후 drain→
+    partial flow→exit 1. **eval은 활성탭 추적**(새탭=빈 storage이므로 스위치 없으면 원탭 유실) 실측 확인.
+    timed/interactive(read -t 1) 양 경로에 watch loop. tests/capture-newtab.test.sh. 실 2탭 와이어링 검증. commit bf713df.
+  - **Infra.9**: tests/build-flow-unit.test.sh(브라우저 불요 ~5s, 합성 records→flow.json/values.json 단정 +
+    토큰화/마스킹/네비 wait/글롭/needs_review/@eN부재 + compile needs_review 거부). commit 9b44a40.
+  - **P2.7/P3 한계 문서화(README "Capture scope & limitations")**: 단일탭, same-origin, 액션범위
+    (scroll/hover/drag/upload 제외), 마스킹, needs_review 케이스(icon-only aria-label/dup-text grid/closed shadow),
+    SPA pushState/hash vs pure-DOM, 데이터 무결성. commit (docs).
+  - **suite 5/5 GREEN** (build-flow-unit, capture-healthcheck, capture-newtab, login, nav-roundtrip).
+  - **P2.6 verify-repair**: **v2로 의도적 보류** — 근거: (a) 주 리스크(accname/role 발산)는 이미 capture.js
+    WKIND가 role을 강등(testid/text/label 우선)해 완화됨, (b) compile→run.sh 라운드트립이 로케이터 실패의
+    backstop, (c) 단계별 재생+복구는 run.sh를 복제하는 대형 신규 레이어 → KISS/YAGNI/기존구조우선 위배.
+    design.md OPEN RISKS에 v2 TODO로 명시. 필요 시 다음 세션에서 별도 파일(bin/verify-flow.*)로 착수.
+  - **남은 것**: #5(사람 녹화 round-trip)만 사람 필요 → 세션 종료 시 사용자에게 record.cmd 요청.
+    probe-record.sh 313줄(목표~250 초과, 하드500 이내; 3모드 응집 dispatch라 분리 보류).
+- 2026-06-03 (이어서): **적대적 코드리뷰(read-only WF, 19 에이전트) → 실버그 10건 확정 → 병렬 수정 → 검증.**
+  - 리뷰(16제기/10확정/6기각): F1/F2 **직전에 넣은 P1.4 watch 루프가 Ctrl-C 정지를 깨뜨림**(INT trap이 루프를
+    못 빠져나와 닫힌 브라우저에 스핀), F3 open실패시 오해성 "could not drain" 메시지, F4 trailing flag가 shift로 abort,
+    F5 **크로스오리진 top-level nav가 이벤트 유실 + seq체크 우회(false-negative)**, F6 재사용세션 stale버퍼 replay,
+    F7 미완성 flow.json이 나중 compile에 clean으로 수용, F8 빈캡처→vacuous always-green test, F9 auth폴링이
+    로그인페이지에서 조기매칭(로그아웃 state 저장), F10 newtab테스트가 실 _flush_once 미검증. (6건 기각: seq/buf
+    "freeze together" 주장 등 — nextSeq가 SEQ를 먼저/작게 쓰고 save가 BUF를 나중/크게 써서 비대칭 → seq>buf로 정상 감지.)
+  - **병렬 구현 WF**: 3 에이전트가 독립 파일(probe-record.sh/auth.sh/test)을 동시 수정 + 적대적 verify(3 approved/0 must_fix).
+    probe-record.sh: F1 `_stopped` 플래그(트랩이 set, 양 watch loop 첫 줄이 break), F3 트랩을 open 성공 후로 이동,
+    F4 `[ $# -ge 2 ] || usage` 가드, F5 `_watch`(단일 tab list 호출로 newtab+crossorigin 동시 판정; about:/data:/chrome:
+    스킴은 http(s) case로 걸러 false-trigger 방지), F6 시작시 buf/seq/prevurl 리셋, F7 fatal마다 `.incomplete`로 mv,
+    F8 n==0 fail-loud. auth.sh: F9 `got!=LOGIN_URL` 가드 + usage 예시 비충돌로 교체. test: F10 구조적 가드(switch가 drain 전 존재).
+  - **검증**: suite 5/5 GREEN(회귀). 라이브: F8(빈→exit1, flow미작성)✓ F5(크로스오리진 감지)✓ F9(조기매칭 차단·state미저장)✓
+    F1(트랩+_stopped+break: SIGINT 전달시 ~1s 정지)✓. F7은 정적리뷰+F8(fail-loud-exit)+newtab스위트(감지·원탭drain)로 검증
+    (n>0 격리 E2E는 F6 clear가 pre-seed를 지우고 실이벤트 구동이 racy/wedge라 비실용; mv는 자명).
+  - **신규 footgun(2개)**: ① **헤디드 캡처를 연속/빠르게 돌리면 데몬 wedge** — `tab list`/`get url`이 건당 ~30s 행
+    (os error 10060류). 라이브테스트의 F1=64s·F9=90s 지연 원인. 복구: ExecutablePath에 `\.agent-browser\browsers\`
+    포함 chrome.exe(=Chrome-for-Testing)만 Stop-Process(Program Files chrome 절대 보존) + 데몬 kill →
+    run.sh preflight 재워밍. ② **MSYS2: `kill -INT <bg_pid>`는 백그라운드 프로세스 트랩에 SIGINT 미전달**
+    (실 Ctrl-C는 foreground group이라 정상 전달). SIGINT 자동테스트는 foreground 자식→부모 `kill -INT $$`로.
 
 ## Current Execution Contract
 
