@@ -60,10 +60,42 @@ cat <<EOF
 
 EOF
 
-# Block on the success URL. This is the wait-for-human gate: it returns as soon as the
-# human-driven browser navigates to the logged-in URL. Failure (timeout) exits non-zero.
-if ! agent-browser --session "$SESS" wait --url "$SUCCESS_URL" --timeout "$HUMAN_TIMEOUT_MS" >/dev/null 2>&1; then
-	echo "[auth] FATAL: did not reach '$SUCCESS_URL' within timeout. Login not saved." >&2
+# Block on the success URL by POLLING `get url` — NOT `agent-browser wait --url`, which is
+# broken for glob patterns on 0.27.0: it IGNORES --timeout, hangs ~34s, then fails with
+# `os error 10060` ("Failed to read"); only plain substrings work (reconfirmed 2026-06-03).
+# `get url` is 100% reliable, so we poll it (~1s) until SUCCESS_URL matches or the human
+# timeout elapses. This mirrors lib/assert.sh::wait_url, but auth.sh is a standalone setup
+# script that sources no lib/, so the matcher is inlined below.
+#
+# _url_match <got> <want>: 0 if URL matches. <want> is an agent-browser-style glob (** and *
+# both collapse to a bash * wildcard, matched against the whole URL with optional ?query/#frag)
+# OR a plain substring. The other glob metacharacters ([ and ?) are made literal so a URL
+# containing them can never false-match. KEEP IN SYNC with lib/assert.sh::_url_match.
+_url_match() {
+	local got="$1" want="$2" glob
+	glob="${want//\[/[[]}"        # literal [  -> [[]
+	glob="${glob//\?/[?]}"        # literal ?  -> [?]
+	glob="${glob//\*\*/\*}"       # **         -> *   (sole wildcard)
+	case "$got" in
+		$glob | $glob\?* | $glob\#*) return 0 ;;   # glob match (whole URL, optional query/frag)
+		*"$want"*) return 0 ;;                      # literal-substring fallback
+		*) return 1 ;;
+	esac
+}
+
+deadline=$(( $(date +%s) + HUMAN_TIMEOUT_MS / 1000 ))
+matched=0
+while [ "$(date +%s)" -lt "$deadline" ]; do
+	# Browser is already open (warm daemon) so $() is safe; </dev/null guards the fd-hang
+	# footgun, and `|| true` keeps a transient mid-navigation get-url failure from aborting
+	# the poll under `set -e` (we just retry until the deadline).
+	url_json="$(agent-browser --session "$SESS" get url --json 2>/dev/null </dev/null || true)"
+	got="$(printf '%s' "$url_json" | jq -r 'if .success then .data.url else empty end' 2>/dev/null || true)"
+	if [ -n "$got" ] && _url_match "$got" "$SUCCESS_URL"; then matched=1; break; fi
+	sleep 1
+done
+if [ "$matched" != 1 ]; then
+	echo "[auth] FATAL: did not reach '$SUCCESS_URL' within $(( HUMAN_TIMEOUT_MS / 1000 ))s. Login not saved." >&2
 	agent-browser --session "$SESS" close >/dev/null 2>&1 || true
 	exit 1
 fi
