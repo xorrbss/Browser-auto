@@ -304,7 +304,7 @@
   // Best-effort: a missed detection just falls back to the next locator's implicit wait. ---
   var DOM_SWAP_MIN = 12;          // accumulated added+removed element count that counts as a swap
   var DOM_SWAP_SETTLE_MS = 350;   // window after a click in which the swap must register
-  var mutAcc = 0;
+  var mutAcc = 0, mutConsumed = 0;  // mutConsumed = high-water mark already attributed to a dom_settle
   function subtreeCount(node) {
     if (!node || node.nodeType !== 1) return 0;
     try { return 1 + node.querySelectorAll('*').length; } catch (e) { return 1; }
@@ -323,7 +323,12 @@
     var urlBefore = location.href, mutBefore = mutAcc;
     setTimeout(function () {
       if (location.href !== urlBefore) return;          // a real navigation already emitted a gate
-      if ((mutAcc - mutBefore) < DOM_SWAP_MIN) return;  // no significant swap -> rely on implicit wait
+      // Count only mutation NOT already attributed to an earlier dom_settle: when several clicks
+      // land inside one settle window over a single swap, this records the marker exactly once
+      // (no duplicates) while still never missing a genuinely fresh swap.
+      var base = mutBefore > mutConsumed ? mutBefore : mutConsumed;
+      if ((mutAcc - base) < DOM_SWAP_MIN) return;       // no fresh significant swap -> rely on implicit wait
+      mutConsumed = mutAcc;
       record({ action_type: 'dom_settle', primary: null, candidates: [], is_navigation_boundary: false });
     }, DOM_SWAP_SETTLE_MS);
   }

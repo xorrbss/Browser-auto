@@ -174,7 +174,8 @@ rather than guessing):
   drag, and file-upload are excluded (replay auto-scrolls to each element).
 - **Sensitive fields** (password / OTP / card / SSN — by type/autocomplete/inputmode) are
   masked at capture and never written; their `{{input_N}}` token must be filled by hand.
-- **No unique stable locator → `needs_review`** (with ≥2 candidates), never a fragile guess.
+- **No unique stable locator → `needs_review`** (with a non-empty candidate ladder, usually ≥2),
+  never a fragile guess.
   This is expected for icon-only buttons whose only accessible name is `aria-label` (the
   engine's `find role --name` is unreliable on 0.27.0, so role is only a low-priority
   candidate), duplicate-text grids (N identical "Edit" rows), closed shadow roots, and links

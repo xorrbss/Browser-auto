@@ -98,4 +98,39 @@ eq "$(jq -rc '.steps[3]|[.kind,.until,.value]' "$FLOW2")" '["wait","load","netwo
 eq "$(jq -rc '.asserts[0]|[.kind,.value]' "$FLOW2")" '["url","**/dash"]' "ds trailing url assert (no nav)"
 eq "$(jq -r '[.steps[]|select(.needs_review==true)]|length' "$FLOW2")" '0' "ds no needs_review"
 
+# 14. C1 invariant: a needs_review step is NEVER empty even with exactly ONE candidate (the
+#     icon-only long-aria-label case — only role+name survives, and it is overLong so primary is
+#     null). The ladder must be preserved (1 element, never padded to 2, never dropped to 0).
+REC3="$TMP/records3.json"; FLOWS3="$TMP/flows3"; mkdir -p "$FLOWS3"
+cat > "$REC3" <<'JSON'
+[
+ {"seq":1,"action_type":"click","url_at_capture":"https://app.example.com/x","primary":null,"insufficient":true,"candidates":[{"by":"role","value":"button","name":"a very long aria label that exceeds eighty characters so it must stay needs review one","count":1}],"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" oneflow "https://app.example.com/x" "" "$REC3" "$FLOWS3" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on the 1-candidate stream"
+FLOW3="$FLOWS3/oneflow.flow.json"
+eq "$(jq -r '.steps[0].needs_review' "$FLOW3")" 'true' "1cand needs_review"
+eq "$(jq -r '.steps[0].candidates|length' "$FLOW3")" '1' "1cand: exactly one candidate preserved (never empty, never padded)"
+
+# 15. C2 look-ahead must NOT borrow text across a navigate boundary: for click -> dom_settle ->
+#     navigate(A->B) -> find(text on B), the dom_settle falls back to until:load (NOT the post-nav
+#     text, which would block on the OLD page), and the url-wait gate is emitted AFTER it.
+REC4="$TMP/records4.json"; FLOWS4="$TMP/flows4"; mkdir -p "$FLOWS4"
+cat > "$REC4" <<'JSON'
+[
+ {"seq":1,"action_type":"click","url_at_capture":"https://app.example.com/a","primary":{"by":"text","value":"Go"},"candidates":[{"by":"text","value":"Go","count":1}],"is_navigation_boundary":false},
+ {"seq":2,"action_type":"dom_settle","url_at_capture":"https://app.example.com/a","primary":null,"candidates":[],"is_navigation_boundary":false},
+ {"seq":3,"action_type":"navigate","url_at_capture":"https://app.example.com/a","from":"https://app.example.com/a","primary":null,"candidates":[],"is_navigation_boundary":true},
+ {"seq":4,"action_type":"click","url_at_capture":"https://app.example.com/b","primary":{"by":"text","value":"OnPageB"},"candidates":[{"by":"text","value":"OnPageB","count":1}],"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" navds "https://app.example.com/a" "" "$REC4" "$FLOWS4" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on the dom_settle+navigate stream"
+FLOW4="$FLOWS4/navds.flow.json"
+eq "$(jq -rc '.steps[0]|[.kind,.value,.action]' "$FLOW4")" '["find","Go","click"]' "navds step0 click"
+eq "$(jq -rc '.steps[1]|[.kind,.until,.value]' "$FLOW4")" '["wait","load","networkidle"]' "navds dom_settle -> until:load (not post-nav text)"
+eq "$(jq -rc '.steps[2]|[.kind,.until,.value]' "$FLOW4")" '["wait","url","**/b"]' "navds url-wait gate AFTER the settle"
+eq "$(jq -rc '.steps[3]|[.kind,.value]' "$FLOW4")" '["find","OnPageB"]' "navds step3 find on page B"
+
 echo "  ✓ build-flow-unit.test.sh passed"

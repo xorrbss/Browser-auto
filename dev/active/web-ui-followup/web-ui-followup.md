@@ -66,6 +66,34 @@ alt/title/aria-label already captured; pushState/replaceState/hashchange nav alr
       (subscribe terminal check incl 'cancelled'); KEEP_RUNS parse+clamp (0 honored, negative
       can't wipe all) + pruneArtifacts(keep<0) guard; RUN_ID PID-numeric sort (same-second safe).
       All re-verified; suite 7/7 GREEN. **Merged to master.**
-- [ ] C1 long-text candidates (engine pre-check first) — NEXT
-- [ ] C2 DOM-swap wait gate
-- [ ] capture-improve review + merge + re-validate
+- [x] C1 long-text candidates (capture.js): `overLong()` helper; `pushCand` + P2 role+name no
+      longer drop >80-char values (they enter the ladder); `emit()` auto-primary selection skips
+      overLong → long text stays needs_review with a NON-EMPTY ladder; `score()` >80 penalty kept
+      so short alternatives still rank first. Empirically verified by `tests/capture-longtext.test.sh`
+      (in-page probe: 109-char button click → ladder non-empty + contains the long value, primary
+      null, build-flow yields non-empty needs_review).
+- [x] C2 DOM-swap wait gate: capture.js MutationObserver accumulates added/removed element subtree
+      sizes; `armDomSwap()` after each click records a `dom_settle` if URL unchanged + mutation ≥
+      DOM_SWAP_MIN within DOM_SWAP_SETTLE_MS. build-flow.js compiles `dom_settle` → `until:text` on
+      next find (else `until:load networkidle`). Verified by `tests/capture-domswap.test.sh` (trivial
+      click → none; big no-URL swap → exactly one, after the click) + deterministic dom_settle scenario
+      in `build-flow-unit.test.sh`. Docs (README/SCHEMA) updated to match.
+- [x] Track C committed (95d3935 on feat/capture-improve). **Full suite 9/9 GREEN** (baseline was
+      7/7; +capture-longtext +capture-domswap).
+- [x] capture-improve adversarial review (ultracode WF, 11 agents): 6 findings / **3 confirmed
+      (all low)** after refute-by-default verify → all fixed:
+      - c2-capture: two clicks inside the 350ms settle window over one swap recorded a DUPLICATE
+        dom_settle → fixed with a `mutConsumed` high-water mark (records the marker exactly once,
+        attributed to the first window that observes the fresh swap; never misses a genuine swap).
+      - c2-buildflow: the dom_settle `until:text` look-ahead skipped a `navigate` boundary and
+        borrowed POST-nav text (would wait on the old page) → now treats `navigate` as a terminator
+        (falls back to until:load; the navigate's own url-wait gate settles it).
+      - regression-contract: README:177 still said needs_review "(≥2 candidates)" → C1 makes a
+        1-candidate ladder reachable → reworded to "non-empty … usually ≥2" (matches SCHEMA + code).
+      - Regression guards added to build-flow-unit (browser-free, deterministic): a 1-candidate
+        needs_review stays non-empty (never padded/dropped); navigate-after-dom_settle falls back to
+        until:load with the url-wait AFTER it. (3 refuted findings were cosmetic/latent, not defects.)
+- [ ] re-gate (run.sh GREEN) → commit fixes → --no-ff merge to master.
+- [ ] HUMAN-only: a live headed re-record (record.cmd driving real Chrome on a real long-text link +
+      a pure-DOM-swap SPA) to confirm C1/C2 end-to-end. Every autonomously-verifiable mechanism is
+      covered; only the real headed capture needs a person.

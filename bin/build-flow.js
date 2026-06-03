@@ -113,7 +113,8 @@ for (let i = 0; i < records.length; i++) {
     let nextTxt = null;
     for (let j = i + 1; j < records.length; j++) {
       const r = records[j];
-      if (r.action_type === 'navigate' || r.action_type === 'dom_settle') continue;
+      if (r.action_type === 'dom_settle') continue;
+      if (r.action_type === 'navigate') break;   // a real nav follows -> let its url-wait gate settle it; don't borrow post-nav text (which would wait on the OLD page)
       if (r.primary && (r.primary.by === 'text' || r.primary.by === 'label')) nextTxt = r.primary.value;
       break;
     }
