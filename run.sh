@@ -35,6 +35,17 @@ shopt -s nullglob
 TESTS=( "${PROBE_ROOT}/tests/"${GLOB}".test.sh" )
 shopt -u nullglob
 
+# Drop scaffold tests: an underscore-prefixed name (tests/_*.test.sh) is a THROWAWAY compiled flow
+# that a unit test (compile-fallback / replay-fallback) writes, runs, and deletes within its own run.
+# Excluding them here means a hard-crash straggler can never be globbed as a real suite test (which
+# would false-fail the gate — e.g. _rfb_red is designed to exit non-zero). Real tests never start '_'.
+_kept=()
+for _t in "${TESTS[@]}"; do
+	case "$(basename "$_t")" in _*) continue ;; esac
+	_kept+=("$_t")
+done
+TESTS=( ${_kept[@]+"${_kept[@]}"} )
+
 if [ "${#TESTS[@]}" -eq 0 ]; then
 	echo "[run] no tests matched 'tests/${GLOB}.test.sh'" >&2
 	exit 1
