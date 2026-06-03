@@ -93,7 +93,22 @@ alt/title/aria-label already captured; pushState/replaceState/hashchange nav alr
       - Regression guards added to build-flow-unit (browser-free, deterministic): a 1-candidate
         needs_review stays non-empty (never padded/dropped); navigate-after-dom_settle falls back to
         until:load with the url-wait AFTER it. (3 refuted findings were cosmetic/latent, not defects.)
-- [ ] re-gate (run.sh GREEN) → commit fixes → --no-ff merge to master.
+- [x] re-gate **9/9 GREEN** after fixes → fix commit (4f21782) → **--no-ff merged to master
+      (7ef4bc7)**. Track C COMPLETE.
+
+## TRACK C — DONE (2026-06-03)
+- master HEAD = 7ef4bc7. Full suite **9/9 GREEN** (build-flow-unit, capture-domswap,
+  capture-healthcheck, capture-longtext, capture-newtab, ianatour, login, nav-roundtrip,
+  verify-flow). capture.js 375 lines (<500); zero new deps; thin layer preserved.
+- New permanent regression tests: `tests/capture-longtext.test.sh` (C1 in-page probe),
+  `tests/capture-domswap.test.sh` (C2 in-page probe), + 4 deterministic build-flow-unit scenarios
+  (dom_settle→wait, 1-candidate non-empty, navigate-after-dom_settle look-ahead).
+- **HUMAN-only validation flagged (cannot be automated):** a live headed re-record via
+  `record.cmd <name> <url> --seconds N` driving real Chrome on (a) a >80-char descriptive link and
+  (b) a pure client-side DOM-swap SPA, then `verify` + `compile` + `run.sh`, to confirm C1/C2
+  end-to-end on a real page. All in-page mechanisms are verified autonomously; only the real headed
+  capture needs a person.
+- The whole web-ui-followup batch (D1, D2, C1, C2) is now complete and on master.
 - [ ] HUMAN-only: a live headed re-record (record.cmd driving real Chrome on a real long-text link +
       a pure-DOM-swap SPA) to confirm C1/C2 end-to-end. Every autonomously-verifiable mechanism is
       covered; only the real headed capture needs a person.
