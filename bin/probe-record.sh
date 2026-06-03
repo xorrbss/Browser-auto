@@ -142,7 +142,7 @@ HELPEOF
 		echo "$assert_lines"
 		echo ''
 		echo "echo \"  ✓ ${name}.test.sh passed\""
-	} > "$out"
+	} | tr -d '\r' > "$out"   # generated scripts are LF (.gitattributes enforces *.sh eol=lf)
 
 	echo "[probe] compiled -> $out"
 }
