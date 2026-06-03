@@ -9,7 +9,7 @@
 // URLs are DERIVED from runId + test name (artifacts/<runId>/<name>/video.webm), never
 // from the report's absolute `artifacts` path string (which is host-specific).
 
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -18,6 +18,18 @@ export const ARTIFACTS_DIR = path.join(PROBE_ROOT, 'artifacts');
 
 // run.sh: RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
 const RUN_ID_RE = /^\d{8}-\d{6}-\d+$/;
+
+// Compare RUN_IDs (YYYYMMDD-HHMMSS-PID) ascending. The PID ($$) is variable-width, so a plain
+// string sort mis-orders same-second runs (e.g. "-1000" < "-9"); compare the timestamp prefix
+// lexicographically and the trailing PID numerically so prune/ordering pick the right run.
+function cmpRunId(a, b) {
+	const ai = a.lastIndexOf('-');
+	const bi = b.lastIndexOf('-');
+	const ap = a.slice(0, ai);
+	const bp = b.slice(0, bi);
+	if (ap !== bp) return ap < bp ? -1 : 1;
+	return (Number(a.slice(ai + 1)) || 0) - (Number(b.slice(bi + 1)) || 0);
+}
 
 // runId -> { mtimeMs, data }
 const cache = new Map();
@@ -106,8 +118,7 @@ export async function listRuns() {
 	}
 	const ids = entries.filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name)).map((e) => e.name);
 	const runs = (await Promise.all(ids.map(getRunCached))).filter(Boolean);
-	// RUN_ID is YYYYMMDD-HHMMSS-PID, so lexicographic-descending == newest first.
-	runs.sort((a, b) => (a.runId < b.runId ? 1 : a.runId > b.runId ? -1 : 0));
+	runs.sort((a, b) => cmpRunId(b.runId, a.runId)); // newest first (PID-numeric, same-second safe)
 	return runs.map(({ tests, ...summary }) => summary);
 }
 
@@ -115,6 +126,36 @@ export async function listRuns() {
 export async function getRun(runId) {
 	if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return null;
 	return getRunCached(runId);
+}
+
+// pruneArtifacts(keep): delete all but the newest `keep` RUN_ID dirs under artifacts/ (disk
+// hygiene; the disk runs ~97% full). Only touches dirs matching RUN_ID_RE (never "standalone"
+// or anything else), only under ARTIFACTS_DIR. Returns the dropped run ids.
+export async function pruneArtifacts(keep) {
+	// Never mass-delete on a bad/negative keep (a negative would otherwise clamp to "keep 0").
+	if (!Number.isFinite(keep) || keep < 0) return { kept: 0, pruned: [] };
+	let entries;
+	try {
+		entries = await readdir(ARTIFACTS_DIR, { withFileTypes: true });
+	} catch {
+		return { kept: 0, pruned: [] };
+	}
+	const ids = entries
+		.filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name))
+		.map((e) => e.name)
+		.sort(cmpRunId); // ascending (oldest first), same-second safe
+	const drop = ids.slice(0, Math.max(0, ids.length - Math.max(0, keep)));
+	const pruned = [];
+	for (const id of drop) {
+		try {
+			await rm(path.join(ARTIFACTS_DIR, id), { recursive: true, force: true });
+			cache.delete(id);
+			pruned.push(id);
+		} catch {
+			/* best-effort */
+		}
+	}
+	return { kept: ids.length - pruned.length, pruned };
 }
 
 // getTrends(): pass-rate over time + per-test pass/fail history, oldest→newest. Read-only;
@@ -129,7 +170,7 @@ export async function getTrends() {
 	const ids = entries
 		.filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name))
 		.map((e) => e.name)
-		.sort(); // RUN_ID is sortable lexicographically == chronological ascending
+		.sort(cmpRunId); // chronological ascending (PID-numeric, same-second safe)
 	const runs = [];
 	const tests = {}; // testName -> [{ runId, startedAt, status }]
 	for (const id of ids) {

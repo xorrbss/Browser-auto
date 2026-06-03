@@ -203,12 +203,30 @@ async function loadTrends() {
 let authJob = null;
 
 async function loadAuth() {
+	const node = $('#auth-list');
 	try {
 		const { apps } = await getJson('/api/auth');
-		$('#auth-list').textContent = apps.length ? apps.join(', ') : '(none)';
+		node.replaceChildren();
+		if (!apps.length) {
+			node.append(document.createTextNode('(none)'));
+			return;
+		}
+		for (const a of apps) {
+			node.append(el('span', { class: 'auth-chip' }, a, el('button', { class: 'chip-x', type: 'button', title: 'delete cached state', onclick: () => deleteAuth(a) }, '✕')));
+		}
 	} catch {
-		$('#auth-list').textContent = '(error)';
+		node.textContent = '(error)';
 	}
+}
+
+async function deleteAuth(app) {
+	if (!confirm(`Delete cached auth state for "${app}"? Tests using it will need re-auth.`)) return;
+	try {
+		await fetch(`/api/auth/${encodeURIComponent(app)}/delete`, { method: 'POST' });
+	} catch {
+		/* ignore; loadAuth re-syncs */
+	}
+	loadAuth();
 }
 
 async function startAuth() {
@@ -242,14 +260,64 @@ async function startAuth() {
 	refreshQueue();
 }
 
+// ---------- jobs history (uses existing /api/queue + /api/jobs/:id/stream) ----------
+
+async function loadJobs() {
+	const list = $('#jobs-list');
+	try {
+		const q = await getJson('/api/queue');
+		const ordered = [];
+		const seen = new Set();
+		for (const j of [q.running, ...q.pending, ...q.recent]) {
+			if (j && !seen.has(j.id)) {
+				seen.add(j.id);
+				ordered.push(j);
+			}
+		}
+		list.replaceChildren();
+		if (!ordered.length) {
+			list.append(el('div', { class: 'hint' }, 'No jobs yet.'));
+			return;
+		}
+		for (const j of ordered) {
+			const cls = j.status === 'done' ? 'pass' : j.status === 'failed' || j.status === 'cancelled' ? 'fail' : 'run';
+			list.append(
+				el(
+					'button',
+					{ class: 'run-row', type: 'button', dataset: { job: j.id }, onclick: () => openJob(j.id) },
+					el('span', { class: 'badge ' + cls }, (j.status || '').toUpperCase()),
+					el(
+						'span',
+						{ class: 'run-meta' },
+						el('span', { class: 'run-id' }, j.label || j.kind || j.id),
+						el('span', { class: 'run-sub' }, `${j.id} • ${j.kind}${j.exitCode != null ? ` • exit ${j.exitCode}` : ''}`),
+					),
+				),
+			);
+		}
+	} catch (e) {
+		list.replaceChildren(el('div', { class: 'error' }, `Failed to load jobs: ${e.message}`));
+	}
+}
+
+function openJob(id) {
+	for (const b of document.querySelectorAll('#jobs-list .run-row')) b.classList.toggle('active', b.dataset.job === id);
+	const log = $('#jobs-log');
+	log.hidden = false;
+	$('#jobs-detail').replaceChildren(el('div', { class: 'detail-head' }, el('h2', {}, `job ${id}`)));
+	// replays the buffered log (and streams live if still running); refresh the list at end.
+	streamJob(id, log, () => loadJobs());
+}
+
 // ---------- view switching ----------
 
-const NAV = { runs: '#nav-runs', flows: '#nav-flows', trends: '#nav-trends', auth: '#nav-auth' };
+const NAV = { runs: '#nav-runs', flows: '#nav-flows', trends: '#nav-trends', auth: '#nav-auth', jobs: '#nav-jobs' };
 
 function loadView(view) {
 	if (view === 'flows') loadFlows();
 	else if (view === 'trends') loadTrends();
 	else if (view === 'auth') loadAuth();
+	else if (view === 'jobs') loadJobs();
 	else {
 		loadRuns();
 		if (selectedRunId) selectRun(selectedRunId);
