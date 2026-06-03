@@ -77,10 +77,11 @@ run.sh              suite runner + CI gate
 lib/                env, cleanup, preflight, assert, report  (leaves; one-way deps)
 tests/*.test.sh     one journey each (standalone-runnable)
 setup/auth.*.sh     one-time human OTP login -> state save  (Phase 1)
-bin/probe-record.sh authoring: scaffold (snapshot+stub) | capture (record) -> compile -> .test.sh
+bin/probe-record.sh authoring: scaffold (snapshot+stub) | capture (record) | verify (repair) -> compile
 bin/capture.js      in-page recorder injected via --init-script (capture mode)
-bin/build-flow.js   raw captured events -> flow.json (+ gitignored values sidecar)
-flows/              declarative twins (no @eN field); *.values.json sidecars (gitignored)
+bin/build-flow.js   raw captured events -> flow.json (+ gitignored values/candidates sidecars)
+bin/verify-flow.sh  optional: re-drive a flow, verify/repair each locator or promote to needs_review
+flows/              declarative twins (no @eN field); *.values.json / *.candidates.json (gitignored)
 fixtures/auth/      cached *.state.json  (gitignored — secrets)
 baselines/          committed golden snapshots/screenshots
 artifacts/<run>/    per-run video/screenshots/report  (gitignored)
@@ -146,7 +147,16 @@ bash bin/probe-record.sh capture checkout https://app.example.com/cart --app mya
 #    -> flows/checkout.values.json   (gitignored sidecar: real input values; {{input_N}} tokens in the flow)
 
 # 2. Resolve any needs_review steps (no unique locator found — pick one of the listed
-#    candidates), fill flows/checkout.values.json, then compile + run as above:
+#    candidates) and fill flows/checkout.values.json.
+
+# 3. (optional) VERIFY-REPAIR: re-drive the flow once to confirm each locator still resolves.
+#    The captured in-page uniqueness is only an estimate of how the engine's `find` resolves, so
+#    a step can pass capture yet fail replay; verify auto-repairs from the candidate ladder
+#    (flows/checkout.candidates.json) or promotes a step to needs_review. It re-executes the
+#    journey (side effects, same build) headless, so run it on a safe/idempotent flow.
+bash bin/probe-record.sh verify flows/checkout.flow.json
+
+# 4. Compile + run:
 bash bin/probe-record.sh compile flows/checkout.flow.json
 bash run.sh checkout
 ```

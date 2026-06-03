@@ -107,6 +107,18 @@ Last Updated: 2026-06-02
     포함 chrome.exe(=Chrome-for-Testing)만 Stop-Process(Program Files chrome 절대 보존) + 데몬 kill →
     run.sh preflight 재워밍. ② **MSYS2: `kill -INT <bg_pid>`는 백그라운드 프로세스 트랩에 SIGINT 미전달**
     (실 Ctrl-C는 foreground group이라 정상 전달). SIGINT 자동테스트는 foreground 자식→부모 `kill -INT $$`로.
+- 2026-06-03 (이어서): **P2.6 verify-repair 구현 (사용자 요청, 보류 해제). branch feat/verify-repair.**
+  - **bin/verify-flow.sh** (신규): `probe-record.sh verify <flow>`로 호출. 캡처된 flow를 헤드리스 재생하며
+    각 find step의 로케이터를 `find … hover`(비파괴)로 검증 → 실패 시 후보 사다리(candidates 사이드카)에서
+    복구, 없으면 needs_review 승격 후 flow.json 재작성. lib/env.sh+assert.sh 재사용(bin→lib). 재생은 파괴적
+    (동일빌드 replay, 부작용)·첫 미해결 step에서 정지(이후 미검증) — 의도된 동작. fill/select는 values.json 치환.
+  - **build-flow.js**: `flows/<name>.candidates.json`(per-step 사다리) 사이드카 추가 — verify의 복구 소스. gitignore.
+  - **probe-record.sh**: `verify` dispatch(→verify-flow.sh exec). **.gitignore**: `*.candidates.json`, `*.flow.json.incomplete`.
+  - **버그 1건 자체발견·수정**: 빈 연관배열 `${#REPAIR[@]}`가 `set -u`에서 unbound → 카운터 가드(`repaired+promoted`)로 교체.
+  - **검증**: 3 경로 라이브(repair rc0 / verified rc0 / promote rc1) ✓. tests/verify-flow.test.sh(repair+promote, 헤드리스)
+    추가, **suite 6/6 GREEN**. 적대적 리뷰 진행(verify-flow.sh 집중).
+  - **잔여 한계**: cardinality≠identity — hover로 해결돼도 wrong-element 가능(0.27.0 시맨틱 count 프리미티브 부재);
+    round-trip이 backstop. design.md OPEN RISKS 갱신.
 
 ## Current Execution Contract
 
