@@ -1,0 +1,17 @@
+{
+  "name": "ianatour",
+  "startUrl": "https://www.iana.org/",
+  "steps": [
+    { "kind": "find", "by": "text", "value": "Domain Names", "action": "click" },
+    { "kind": "wait", "until": "url", "value": "**/domains" },
+    { "kind": "find", "by": "text", "value": "Root Zone Management", "action": "click" },
+    { "kind": "wait", "until": "url", "value": "**/domains/root" },
+    { "kind": "find", "by": "text", "value": "Top-Level Domains", "action": "click" },
+    { "kind": "wait", "until": "url", "value": "**/domains/root/db" },
+    { "kind": "find", "by": "text", "value": ".abarth", "action": "click" },
+    { "kind": "wait", "until": "url", "value": "**/domains/root/db/abarth.html" }
+  ],
+  "asserts": [
+    { "kind": "url", "value": "**/domains/root/db/abarth.html" }
+  ]
+}
