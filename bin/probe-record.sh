@@ -30,6 +30,7 @@ usage() {
 	echo "usage:" >&2
 	echo "  bin/probe-record.sh scaffold <name> <startUrl>           # snapshot + flow.json stub (no key)" >&2
 	echo "  bin/probe-record.sh capture  <name> <startUrl> [--app a] [--seconds N] # record a live journey -> flow.json" >&2
+	echo "  bin/probe-record.sh verify   <flows/name.flow.json>      # re-drive + verify/repair locators (optional)" >&2
 	echo "  bin/probe-record.sh compile  <flows/name.flow.json>      # flow.json -> runnable test.sh" >&2
 	exit 2
 }
@@ -345,6 +346,7 @@ capture() {
 case "${1:-}" in
 	scaffold) shift; [ $# -eq 2 ] || usage; scaffold "$1" "$2" ;;
 	capture)  shift; [ $# -ge 2 ] || usage; capture "$@" ;;
+	verify)   shift; [ $# -eq 1 ] || usage; exec bash "${PROBE_ROOT}/bin/verify-flow.sh" "$1" ;;
 	compile)  shift; [ $# -eq 1 ] || usage; compile "$1" ;;
 	*) usage ;;
 esac
