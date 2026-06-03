@@ -2,7 +2,7 @@
 // global queue status. Flows view lives in flows.js. Shared helpers in util.js.
 
 import { $, el, getJson, fmtMs, fmtTime, streamJob, cancelJob } from './util.js';
-import { initFlows, loadFlows } from './flows.js';
+import { initFlows, loadFlows, reconcileFlowJob } from './flows.js';
 
 // ---------- Runs dashboard ----------
 
@@ -152,30 +152,121 @@ async function refreshQueue() {
 			node.textContent = q.pending.length ? `${q.pending.length} queued` : 'idle';
 			node.className = 'qstatus';
 		}
+		// Self-heal per-view job controls: the shared single SSE stream (util.js) can be
+		// pre-empted when another view starts a job, so a view's own onEnd may never fire.
+		// Reconcile against the queue here (runs every 2s) so stuck cancel buttons clear and
+		// lists refresh once a job is no longer running/pending.
+		const activeIds = new Set([q.running && q.running.id, ...q.pending.map((p) => p.id)].filter(Boolean));
+		if (authJob && !activeIds.has(authJob)) {
+			authJob = null;
+			$('#auth-cancel').hidden = true;
+			loadAuth(); // a finished auth may have saved a new state
+		}
+		reconcileFlowJob(activeIds);
 	} catch {
 		/* leave last status */
 	}
 }
 
-// ---------- view switching ----------
+// ---------- P3: trends (read-only) ----------
 
-function setView(view) {
-	document.body.dataset.view = view;
-	$('#nav-runs').classList.toggle('active', view === 'runs');
-	$('#nav-flows').classList.toggle('active', view === 'flows');
-	if (view === 'flows') loadFlows();
+async function loadTrends() {
+	const box = $('#trends');
+	try {
+		const { runs, tests } = await getJson('/api/trends');
+		box.replaceChildren();
+		if (!runs.length) {
+			box.append(el('div', { class: 'hint' }, 'No runs yet.'));
+			return;
+		}
+		const table = el('table', { class: 'trend-table' });
+		const head = el('tr', {}, el('th', { class: 'tname' }, 'test'));
+		runs.forEach((r) => head.append(el('th', { class: r.total === 0 ? 'none' : r.failed === 0 ? 'pass' : 'fail', title: `${r.runId} — ${r.passed}/${r.total}` }, `${r.passRate}%`)));
+		table.append(head);
+		for (const name of Object.keys(tests).sort()) {
+			const byRun = Object.fromEntries(tests[name].map((h) => [h.runId, h.status]));
+			const row = el('tr', {}, el('td', { class: 'tname' }, name));
+			runs.forEach((r) => {
+				const st = byRun[r.runId] || 'none';
+				row.append(el('td', {}, el('span', { class: 'dot ' + st, title: `${name} @ ${r.runId}: ${st}` })));
+			});
+			table.append(row);
+		}
+		box.append(el('div', { class: 'trend-sub' }, `${runs.length} run(s), oldest → newest. Newest pass-rate: ${runs[runs.length - 1].passRate}%`), table);
+	} catch (e) {
+		box.replaceChildren(el('div', { class: 'error' }, `Failed to load trends: ${e.message}`));
+	}
 }
 
-$('#nav-runs').addEventListener('click', () => setView('runs'));
-$('#nav-flows').addEventListener('click', () => setView('flows'));
-$('#run').addEventListener('click', runSuite);
-$('#refresh').addEventListener('click', () => {
-	if (document.body.dataset.view === 'flows') loadFlows();
+// ---------- P3: auth (control-plane wrapper over setup/auth.sh) ----------
+
+let authJob = null;
+
+async function loadAuth() {
+	try {
+		const { apps } = await getJson('/api/auth');
+		$('#auth-list').textContent = apps.length ? apps.join(', ') : '(none)';
+	} catch {
+		$('#auth-list').textContent = '(error)';
+	}
+}
+
+async function startAuth() {
+	if (authJob) return; // one auth in flight at a time (avoid orphaning the tracked job)
+	const app = $('#auth-app').value.trim();
+	const loginUrl = $('#auth-login').value.trim();
+	const successUrl = $('#auth-success').value.trim();
+	const log = $('#auth-log');
+	log.hidden = false;
+	log.textContent = 'starting auth…';
+	let resp;
+	try {
+		resp = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, loginUrl, successUrl }) });
+	} catch (e) {
+		log.textContent = `auth failed: ${e.message}`;
+		return;
+	}
+	if (!resp.ok) {
+		const e = await resp.json().catch(() => ({ error: resp.statusText }));
+		log.textContent = `auth rejected: ${e.error || resp.status}`;
+		return;
+	}
+	const { job } = await resp.json();
+	authJob = job.id;
+	$('#auth-cancel').hidden = false;
+	streamJob(job.id, log, () => {
+		authJob = null;
+		$('#auth-cancel').hidden = true;
+		loadAuth(); // a new state file may now exist
+	});
+	refreshQueue();
+}
+
+// ---------- view switching ----------
+
+const NAV = { runs: '#nav-runs', flows: '#nav-flows', trends: '#nav-trends', auth: '#nav-auth' };
+
+function loadView(view) {
+	if (view === 'flows') loadFlows();
+	else if (view === 'trends') loadTrends();
+	else if (view === 'auth') loadAuth();
 	else {
 		loadRuns();
 		if (selectedRunId) selectRun(selectedRunId);
 	}
-});
+}
+
+function setView(view) {
+	document.body.dataset.view = view;
+	for (const [v, sel] of Object.entries(NAV)) $(sel).classList.toggle('active', v === view);
+	loadView(view);
+}
+
+for (const [v, sel] of Object.entries(NAV)) $(sel).addEventListener('click', () => setView(v));
+$('#run').addEventListener('click', runSuite);
+$('#auth-btn').addEventListener('click', startAuth);
+$('#auth-cancel').addEventListener('click', () => authJob && cancelJob(authJob));
+$('#refresh').addEventListener('click', () => loadView(document.body.dataset.view));
 
 // ---------- init ----------
 

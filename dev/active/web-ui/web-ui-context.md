@@ -68,6 +68,35 @@ Last Updated: 2026-06-03
   - **Footgun reaffirmed**: invoke the CLI via Git-Bash array args, never `cmd.exe /c <.cmd>`
     (cmd.exe re-parses → injection even with shell:false).
 
+- 2026-06-03: **P3 (optional polish) — trends + auth built; scheduling deferred.** index.js
+  getTrends() (read-only aggregate of report.json → per-run passRate + per-test history),
+  webui/auth.js (listAuthStates — app NAMES only, never secret content), server.js GET
+  /api/trends, GET /api/auth, POST /api/auth (enqueue setup/auth.sh as a serial browser job for
+  headed human OTP), public Trends + Auth views + 4-button nav. Verified via API (trends agg,
+  auth validation rejects bad input pre-enqueue) + headless DOM (Trends table renders, Auth form,
+  no Runs/Flows regression). **Scheduling DEFERRED (YAGNI)** — OS/CI (Task Scheduler/cron →
+  run.sh) is the right home; an in-app scheduler only runs while the server is open. Rationale in
+  web-ui-plan.md. WF-Review-P3 + suite gate running. Remaining HUMAN steps: live headed recording
+  (P2) + live OTP auth (P3). Pruned junk artifacts (kept the 7/7 run).
+
+- 2026-06-03: **P3 reviewed + fixed + merged → WEB UI BUILD COMPLETE.** WF-Review-P3 (15/14
+  confirmed, 0 critical/security): 1 MED (single shared SSE stream pre-empts another view's job
+  → stuck cancel button / no list refresh) → self-heal via the 2s `refreshQueue` poll reconciling
+  authJob/activeFlowJob against /api/queue; LOW fixes: cache key on report.json mtime (not dir),
+  trends total=0 neutral header, skip empty-name trend rows, guard double-auth-start, README
+  timeout-coupling note. suite 7/7 GREEN (P3 gate). Merged --no-ff. **All phases P0–P3 on master;
+  scheduling deferred (YAGNI).** Loop ended (no autonomous work remains — only the 2 human steps).
+
+## FINAL STATUS (2026-06-03)
+- master: P0 (05843c9) → P1 (4f023ef) → P2 (c3393d4) → P3 (this milestone). Working tree clean
+  except untracked .heartbeat/.claude/dev/process (never committed).
+- Whole web UI demoable: `node webui/server.js` → http://127.0.0.1:4310 (Runs / Flows / Trends /
+  Auth). Zero npm deps. Existing CLI untouched; `bash run.sh` 7/7 GREEN.
+- HUMAN-only remaining: (1) a live headed **recording** (P2 — drive real Chrome), (2) a live
+  **OTP auth** (P3). Both are control-plane-by-design (the human action can't be automated).
+- If resumed later: ideas = surface job history/recent-jobs panel, per-flow run shortcut, or
+  (only if a real need appears) OS-level scheduling docs. Otherwise the build is done.
+
 ## Execution contract
 
 - Web layer lives ONLY under `webui/`. Backend = Node; it **spawns the existing bash CLI**

@@ -77,10 +77,14 @@ async function parseRun(runId) {
 }
 
 async function getRunCached(runId) {
-	const dir = path.join(ARTIFACTS_DIR, runId);
+	// Key the cache on report.json's OWN mtime, not the run dir's: a directory's mtime only
+	// moves on entry add/remove, so an in-place rewrite of report.json (same filename) would
+	// otherwise serve a stale parse. Statting the file also naturally returns null until the
+	// report exists (run still in progress).
+	const reportPath = path.join(ARTIFACTS_DIR, runId, 'report.json');
 	let st;
 	try {
-		st = await stat(dir);
+		st = await stat(reportPath);
 	} catch {
 		cache.delete(runId);
 		return null;
@@ -111,4 +115,38 @@ export async function listRuns() {
 export async function getRun(runId) {
 	if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return null;
 	return getRunCached(runId);
+}
+
+// getTrends(): pass-rate over time + per-test pass/fail history, oldest→newest. Read-only;
+// reuses the same mtime-cached per-run parse. Pure aggregation over report.json.
+export async function getTrends() {
+	let entries;
+	try {
+		entries = await readdir(ARTIFACTS_DIR, { withFileTypes: true });
+	} catch {
+		return { runs: [], tests: {} };
+	}
+	const ids = entries
+		.filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name))
+		.map((e) => e.name)
+		.sort(); // RUN_ID is sortable lexicographically == chronological ascending
+	const runs = [];
+	const tests = {}; // testName -> [{ runId, startedAt, status }]
+	for (const id of ids) {
+		const r = await getRunCached(id);
+		if (!r) continue;
+		runs.push({
+			runId: r.runId,
+			startedAt: r.startedAt,
+			total: r.total,
+			passed: r.passed,
+			failed: r.failed,
+			passRate: r.total ? Math.round((r.passed / r.total) * 100) : 0,
+		});
+		for (const t of r.tests) {
+			if (!t.name) continue; // skip nameless rows (report.sh drops them too) — no ghost trend row
+			(tests[t.name] ||= []).push({ runId: r.runId, startedAt: r.startedAt, status: t.status });
+		}
+	}
+	return { runs, tests };
 }

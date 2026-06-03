@@ -23,6 +23,10 @@
 //   POST /api/flows/:name/values  { values }          -> write the {{input_N}} sidecar
 //   POST /api/verify           -> enqueue verify-repair re-drive (browser, serial); { job }
 //   POST /api/compile          -> compile flow -> tests/<name>.test.sh (sync, daemon-free)
+// Routes (P3 — trends + auth):
+//   GET  /api/trends           -> { runs:[{passRate...}], tests:{name:[{status}]} } (read-only)
+//   GET  /api/auth             -> { apps:[<cached state names>] }
+//   POST /api/auth             -> enqueue setup/auth.sh (headed OTP, serial); { job, app }
 //
 // Run: `node webui/server.js`  (WEBUI_PORT overrides the default port).
 
@@ -30,10 +34,11 @@ import http from 'node:http';
 import { createReadStream, statSync } from 'node:fs';
 import { pipeline } from 'node:stream';
 import path from 'node:path';
-import { listRuns, getRun, ARTIFACTS_DIR } from './index.js';
+import { listRuns, getRun, getTrends, ARTIFACTS_DIR } from './index.js';
 import { enqueue, jobStatus, subscribe, queueState, cancel, killRunning } from './jobs.js';
 import { gitBash, recordCmd } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
+import { listAuthStates, validApp } from './auth.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const HOST = '127.0.0.1';
@@ -290,6 +295,29 @@ const server = http.createServer(async (req, res) => {
 				return sendJson(res, 200, { ok: code === 0, code, output, testFile: code === 0 ? `tests/${name}.test.sh` : null });
 			}
 
+			if (p === '/api/auth') {
+				const app = String(bodyJson.app || '').trim();
+				const loginUrl = String(bodyJson.loginUrl || '').trim();
+				const successUrl = String(bodyJson.successUrl || '').trim();
+				if (!validApp(app)) return sendJson(res, 400, { error: 'invalid app name (use [A-Za-z0-9_-])' });
+				let lu;
+				try {
+					lu = new URL(loginUrl);
+				} catch {
+					return sendJson(res, 400, { error: 'invalid loginUrl' });
+				}
+				if (lu.protocol !== 'http:' && lu.protocol !== 'https:') {
+					return sendJson(res, 400, { error: 'loginUrl must be http(s)' });
+				}
+				if (!successUrl || successUrl.length > 2048 || successUrl.includes('\0')) {
+					return sendJson(res, 400, { error: 'invalid successUrl' });
+				}
+				// setup/auth.sh opens headed Chrome for human OTP, then saves fixtures/auth/<app>.state.json.
+				// Browser job -> through the single-slot serial queue. (successUrl is an inert arg via Git-Bash.)
+				const job = enqueue({ kind: 'auth', label: `auth ${app}`, spawnFn: () => gitBash('setup/auth.sh', [app, loginUrl, successUrl]) });
+				return sendJson(res, 202, { job, app });
+			}
+
 			const mResolve = /^\/api\/flows\/([^/]+)\/resolve$/.exec(p);
 			if (mResolve) {
 				let fname;
@@ -343,6 +371,14 @@ const server = http.createServer(async (req, res) => {
 
 		if (p === '/api/queue') {
 			return sendJson(res, 200, queueState());
+		}
+
+		if (p === '/api/trends') {
+			return sendJson(res, 200, await getTrends());
+		}
+
+		if (p === '/api/auth') {
+			return sendJson(res, 200, { apps: await listAuthStates() });
 		}
 
 		if (p === '/api/flows') {

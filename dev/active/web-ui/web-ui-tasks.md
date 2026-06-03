@@ -79,11 +79,32 @@ auto-opens in the dashboard. Serial queue proven; cancel + watchdog + graceful s
       editor (candidate-picker→resolve, values, verify, gated compile) are all verified; only a
       live human-driven headed recording remains (seed-#5 pattern).
 
-## Phase 3 — Policy (optional)
+## Phase 3 — Policy (optional polish) — built + verified; review in progress
 
-- [ ] Auth (setup/auth.sh) UI
-- [ ] Scheduling / pass-rate trends
+- [x] Pass-rate trends: index.js getTrends() + GET /api/trends + Trends view (test×run dot table)
+      — read-only, no queue. Verified via API + headless DOM (table renders, passRate).
+- [x] Auth UI: webui/auth.js (listAuthStates, names-only) + GET /api/auth + POST /api/auth
+      (enqueue setup/auth.sh as a serial browser job, headed OTP) + Auth view (form + state list).
+      Verified: validation rejects bad input pre-enqueue; cached-list renders. Full OTP = human.
+- [x] Scheduling: DEFERRED (YAGNI) with rationale (OS/CI owns cron; no in-app scheduler) —
+      documented in web-ui-plan.md + webui/README.md, not built.
+- [x] WF-Review-P3 (19 agents, 15 findings/14 confirmed; 1 MED, rest LOW; 0 critical/security)
+      → fixes all applied + re-verified: MED single-shared-SSE stuck-control → self-heal in the
+      2s queue poll (reconcile authJob/activeFlowJob vs /api/queue); LOW: cache key on
+      report.json mtime, trends total=0 neutral header, skip empty-name trend rows, guard
+      double-auth, README timeout-coupling note.
+- [x] suite GREEN (P3 gate 7/7 exit 0); fixes webui-only (isolated). Final smoke: all 4 views
+      render (Runs/Flows/Trends/Auth), no regression. **P3 committed + merged to master.**
+
+## BUILD COMPLETE
+P0+P1+P2+P3 all merged to master; scheduling deferred (YAGNI, documented). Whole web UI is
+demoable: `node webui/server.js` → http://127.0.0.1:4310. Existing CLI untouched, `bash run.sh`
+7/7 GREEN. Remaining = the two HUMAN-only steps below.
 
 ## Open questions / blockers
 
-- (none yet) — WF-Arch pending.
+- (none) — P0–P2 core goal met + merged; P3 trends/auth done, scheduling deferred.
+
+## Remaining HUMAN-only steps (cannot be done autonomously)
+- Live headed **recording** (P2): drive real Chrome via ● Record / record.cmd to capture a flow.
+- Live **OTP auth** (P3): complete a real login+OTP in the headed window via the Auth form.
