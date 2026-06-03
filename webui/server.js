@@ -15,6 +15,14 @@
 //   GET  /api/queue            -> { busy, running, pending[], recent[] }  (serialization proof)
 //   GET  /api/jobs/:id         -> job status | 404
 //   GET  /api/jobs/:id/stream  -> SSE live log (replay buffer + live lines + end)
+// Routes (P2 — recorder + flow editor, flows.js):
+//   POST /api/record           -> enqueue record.cmd capture (headed, serial); { job, flow }
+//   GET  /api/flows            -> [{ name, steps, needsReview, inputTokens, compiled }]
+//   GET  /api/flows/:name      -> flow detail (steps, needsReviewSteps, values, compilable)
+//   POST /api/flows/:name/resolve { step, candidate } -> pick a candidate (human flow.json edit)
+//   POST /api/flows/:name/values  { values }          -> write the {{input_N}} sidecar
+//   POST /api/verify           -> enqueue verify-repair re-drive (browser, serial); { job }
+//   POST /api/compile          -> compile flow -> tests/<name>.test.sh (sync, daemon-free)
 //
 // Run: `node webui/server.js`  (WEBUI_PORT overrides the default port).
 
@@ -24,7 +32,8 @@ import { pipeline } from 'node:stream';
 import path from 'node:path';
 import { listRuns, getRun, ARTIFACTS_DIR } from './index.js';
 import { enqueue, jobStatus, subscribe, queueState, cancel, killRunning } from './jobs.js';
-import { gitBash } from './spawn.js';
+import { gitBash, recordCmd } from './spawn.js';
+import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const HOST = '127.0.0.1';
@@ -69,6 +78,24 @@ function readBody(req, limit = 1 << 20) {
 		});
 		req.on('end', () => resolve(data));
 		req.on('error', reject);
+	});
+}
+
+// Parse a JSON request body ({} when empty). Throws on malformed JSON (caller -> 400).
+async function readJson(req) {
+	const body = await readBody(req);
+	return body.trim() ? JSON.parse(body) : {};
+}
+
+// Run a child to completion, capturing merged stdout+stderr. For the deterministic, NON-browser
+// compile step (it never touches the daemon, so it does NOT go through the serial queue).
+function runCapture(child) {
+	return new Promise((resolve) => {
+		let out = '';
+		child.stdout?.on('data', (d) => (out += d));
+		child.stderr?.on('data', (d) => (out += d));
+		child.on('error', (e) => resolve({ code: -1, output: out + `\n[spawn error] ${e.message}` }));
+		child.on('close', (c) => resolve({ code: c == null ? -1 : c, output: out }));
 	});
 }
 
@@ -163,6 +190,20 @@ const server = http.createServer(async (req, res) => {
 		const p = url.pathname;
 
 		if (req.method === 'POST') {
+			// CSRF guard: browsers send Origin on cross-origin POST. Refuse anything not from us
+			// (these endpoints spawn processes; a malicious page must not drive them).
+			const origin = req.headers.origin;
+			if (origin) {
+				let oh;
+				try {
+					oh = new URL(origin).host;
+				} catch {
+					return sendJson(res, 403, { error: 'bad origin' });
+				}
+				if (oh !== `${HOST}:${PORT}` && oh !== `localhost:${PORT}`) {
+					return sendJson(res, 403, { error: 'cross-origin POST refused' });
+				}
+			}
 			if (p === '/api/run') {
 				let body;
 				try {
@@ -190,6 +231,89 @@ const server = http.createServer(async (req, res) => {
 			if (mCancel) {
 				return cancel(mCancel[1]) ? sendJson(res, 200, { ok: true }) : notFound(res, 'no such job');
 			}
+
+			// --- P2: recorder + flow editor ---
+			let bodyJson;
+			try {
+				bodyJson = await readJson(req);
+			} catch {
+				return sendJson(res, 400, { error: 'invalid JSON body' });
+			}
+
+			if (p === '/api/record') {
+				const name = String(bodyJson.name || '').trim();
+				const startUrl = String(bodyJson.startUrl || '').trim();
+				const app = bodyJson.app ? String(bodyJson.app).trim() : '';
+				let seconds = parseInt(bodyJson.seconds, 10);
+				if (!Number.isFinite(seconds)) seconds = 120;
+				seconds = Math.min(Math.max(seconds, 5), 1800); // clamp 5s..30min
+				if (!validName(name)) return sendJson(res, 400, { error: 'invalid flow name (use [A-Za-z0-9_-])' });
+				let parsedUrl;
+				try {
+					parsedUrl = new URL(startUrl);
+				} catch {
+					return sendJson(res, 400, { error: 'invalid startUrl' });
+				}
+				if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+					return sendJson(res, 400, { error: 'startUrl must be http(s)' });
+				}
+				if (app && !validName(app)) return sendJson(res, 400, { error: 'invalid app name' });
+				// Re-recording overwrites flows/<name>.flow.json (and may lose manual resolutions);
+				// require an explicit overwrite flag so it is never silent.
+				if (flowExists(name) && bodyJson.overwrite !== true) {
+					return sendJson(res, 409, { error: `flow '${name}' already exists — re-record will overwrite it`, exists: true });
+				}
+				const job = enqueue({
+					kind: 'record',
+					label: `record ${name} (${seconds}s)`,
+					spawnFn: () => recordCmd(name, startUrl, { app: app || undefined, seconds }),
+				});
+				return sendJson(res, 202, { job, flow: name });
+			}
+
+			if (p === '/api/verify') {
+				const name = String(bodyJson.name || '').trim();
+				if (!flowExists(name)) return sendJson(res, 400, { error: 'no such flow' });
+				const job = enqueue({
+					kind: 'verify',
+					label: `verify ${name}`,
+					spawnFn: () => gitBash('bin/probe-record.sh', ['verify', `flows/${name}.flow.json`]),
+				});
+				return sendJson(res, 202, { job });
+			}
+
+			if (p === '/api/compile') {
+				const name = String(bodyJson.name || '').trim();
+				if (!flowExists(name)) return sendJson(res, 400, { error: 'no such flow' });
+				// compile is deterministic + daemon-free -> run directly (not via the serial queue).
+				const { code, output } = await runCapture(gitBash('bin/probe-record.sh', ['compile', `flows/${name}.flow.json`]));
+				return sendJson(res, 200, { ok: code === 0, code, output, testFile: code === 0 ? `tests/${name}.test.sh` : null });
+			}
+
+			const mResolve = /^\/api\/flows\/([^/]+)\/resolve$/.exec(p);
+			if (mResolve) {
+				let fname;
+				try {
+					fname = decodeURIComponent(mResolve[1]);
+				} catch {
+					return notFound(res, 'no such flow');
+				}
+				const r = await resolveStep(fname, parseInt(bodyJson.step, 10), parseInt(bodyJson.candidate, 10));
+				return r.ok ? sendJson(res, 200, { ok: true, flow: await getFlow(fname) }) : sendJson(res, 400, r);
+			}
+
+			const mValues = /^\/api\/flows\/([^/]+)\/values$/.exec(p);
+			if (mValues) {
+				let fname;
+				try {
+					fname = decodeURIComponent(mValues[1]);
+				} catch {
+					return notFound(res, 'no such flow');
+				}
+				const r = await saveValues(fname, bodyJson.values);
+				return r.ok ? sendJson(res, 200, { ok: true, flow: await getFlow(fname) }) : sendJson(res, 400, r);
+			}
+
 			return notFound(res);
 		}
 
@@ -219,6 +343,22 @@ const server = http.createServer(async (req, res) => {
 
 		if (p === '/api/queue') {
 			return sendJson(res, 200, queueState());
+		}
+
+		if (p === '/api/flows') {
+			return sendJson(res, 200, { flows: await listFlows() });
+		}
+
+		const mFlow = /^\/api\/flows\/([^/]+)$/.exec(p);
+		if (mFlow) {
+			let name;
+			try {
+				name = decodeURIComponent(mFlow[1]);
+			} catch {
+				return notFound(res, 'no such flow');
+			}
+			const flow = await getFlow(name);
+			return flow ? sendJson(res, 200, flow) : notFound(res, 'no such flow');
 		}
 
 		const mJob = /^\/api\/jobs\/([^/]+?)(\/stream)?$/.exec(p);

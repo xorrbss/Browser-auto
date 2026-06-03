@@ -3,29 +3,64 @@
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>agent-qa — runs</title>
+	<title>agent-qa</title>
 	<link rel="stylesheet" href="/app.css" />
 </head>
-<body>
+<body data-view="runs">
 	<header>
 		<h1>agent-qa</h1>
-		<span class="sub">results dashboard</span>
-		<button id="refresh" type="button" title="Reload runs">↻ refresh</button>
+		<span class="sub">web UI</span>
+		<nav class="nav">
+			<button id="nav-runs" type="button" class="active">Runs</button>
+			<button id="nav-flows" type="button">Flows</button>
+		</nav>
+		<span id="qstatus" class="qstatus">idle</span>
+		<button id="refresh" type="button" title="Reload">↻</button>
 	</header>
+
 	<div class="runbar">
 		<input id="glob" type="text" autocomplete="off" spellcheck="false"
 			placeholder="test glob (optional) — e.g. login or nav-*" />
 		<button id="run" type="button">▶ Run suite</button>
-		<span id="qstatus" class="qstatus">idle</span>
 	</div>
+
 	<main>
-		<aside id="runs" class="runs">
-			<div class="hint">loading runs…</div>
-		</aside>
-		<section id="detail" class="detail">
-			<div class="placeholder">Select a run on the left.</div>
-		</section>
+		<!-- Runs view -->
+		<div class="view view-runs">
+			<aside id="runs" class="runs"><div class="hint">loading runs…</div></aside>
+			<section id="detail" class="detail"><div class="placeholder">Select a run on the left.</div></section>
+		</div>
+
+		<!-- Flows view -->
+		<div class="view view-flows">
+			<section class="flows-pane">
+				<div class="recorder">
+					<h3>Record a journey</h3>
+					<p class="note">Opens a real headed Chrome (via record.cmd) and auto-stops after N seconds.
+						You drive the page; the recorder builds the flow. One browser job at a time.</p>
+					<div class="rec-form">
+						<input id="rec-name" placeholder="flow name (e.g. checkout)" autocomplete="off" spellcheck="false" />
+						<input id="rec-url" placeholder="https://app.example.com/start" autocomplete="off" spellcheck="false" />
+						<input id="rec-app" placeholder="app (optional, cached auth)" autocomplete="off" spellcheck="false" />
+						<input id="rec-seconds" type="number" min="5" max="1800" value="120" title="auto-stop seconds" />
+						<button id="rec-btn" type="button">● Record</button>
+						<button id="rec-cancel" type="button" class="cancel-btn" hidden>✕ cancel</button>
+					</div>
+					<pre id="rec-log" class="joblog" hidden></pre>
+				</div>
+				<div class="flows-main">
+					<aside id="flows-list" class="runs"><div class="hint">loading flows…</div></aside>
+					<section class="editor-col">
+						<div id="flow-editor"><div class="placeholder">Select a flow to edit.</div></div>
+						<div id="flow-jobbar" hidden><button id="flow-cancel" type="button" class="cancel-btn">✕ cancel</button></div>
+						<pre id="flow-log" class="joblog" hidden></pre>
+						<pre id="compile-out" class="compile-out" hidden></pre>
+					</section>
+				</div>
+			</section>
+		</div>
 	</main>
+
 	<script type="module" src="/app.js"></script>
 </body>
 </html>

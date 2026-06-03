@@ -49,6 +49,25 @@ Last Updated: 2026-06-03
     SLOWER until orphans clear (saw a full suite go 262s→461s after a cancel; still GREEN, well
     under the 20min watchdog). Inherent to the single shared daemon; not a code defect.
 
+- 2026-06-03: **P2 recorder + flow editor: BUILT, hardened, merged.** spawn.recordCmd
+  (Git-Bash `bin/probe-record.sh capture` — NOT cmd.exe), webui/flows.js (pure-FS list/get/
+  resolve/saveValues + write mutex), server.js (POST /api/record,/verify,/compile,
+  /flows/:name/{resolve,values}; GET /api/flows[/:name]; readJson; runCapture; Origin/CSRF
+  guard), public/{util.js(new, shared streamJob),app.js(entry, Runs+nav),flows.js(new, Flows
+  view),index.html(Runs/Flows nav)}. Backend verified via API; frontend via headless agent-
+  browser (modules render, view switch, candidate-picker click→resolve, concurrency mutex).
+  **WF-Review-P2 (30 agents, 25/24 confirmed) caught a CRITICAL**: `spawn('cmd.exe','/c',
+  'record.cmd',name,startUrl,...)` let cmd.exe re-parse args → a startUrl with `&`/`"` →
+  arbitrary command exec (one agent PoC'd `mkdir`). **Fixed by dropping cmd.exe entirely**
+  (Git-Bash array args, no shell re-parse) + `new URL()` validation + Origin/CSRF guard + 9
+  LOW fixes (overwrite 409, onEnd success gate, persistent log node, cancel buttons, %-escape
+  404, press render, write mutex). All re-verified. suite 7/7 GREEN (gate). Merged --no-ff.
+  - **Design note**: record/verify drive the browser → through the single-slot queue; compile
+    is deterministic + daemon-free → runs un-queued (sync, returns output). needs_review
+    "resolve" is the documented human flow.json edit in flows.js (NO CLI subcommand exists).
+  - **Footgun reaffirmed**: invoke the CLI via Git-Bash array args, never `cmd.exe /c <.cmd>`
+    (cmd.exe re-parses → injection even with shell:false).
+
 ## Execution contract
 
 - Web layer lives ONLY under `webui/`. Backend = Node; it **spawns the existing bash CLI**
