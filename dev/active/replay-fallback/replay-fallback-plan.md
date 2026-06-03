@@ -106,4 +106,17 @@ wild is out of autonomous scope; the example.com mechanism test covers the code 
   - Post-fix gates: `bash -n` OK, 0 NUL, byte-identity still ✓, compile-fallback unit GREEN standalone.
   - Out of scope (noted, not changed — minimal-change discipline): `verify-flow.test.sh` shares the
     fixed-name pattern but writes only `_vrt_*.flow.json` (no `.test.sh` straggler), lower risk.
-  - RUNNING: full `bash run.sh` re-gate (post-fix). NEXT: on GREEN → logical commits → `--no-ff` merge.
+  - **Post-fix full `bash run.sh` = 11/11 GREEN** (faster run: replay-fallback 76s, verify-flow 118s —
+    confirming the earlier 600s was transient daemon degradation, not the feature).
+  - **DONE — merged to master as `782f685`** (`--no-ff`): 3 logical commits (feat / test / docs).
+    feat/replay-fallback retained (not deleted). Track complete.
+
+## Status: COMPLETE & MERGED (master 782f685)
+
+Demoable: add `"replayFallback": true` to any flow.json, `bash bin/probe-record.sh compile <flow>`,
+then `bash run.sh <name>` — a flaky primary locator now retries down its capture-time-unique fallback
+ladder (loud `⚠ FALLBACK` on use; RED if none resolve). Off by default; existing flows unchanged.
+
+HUMAN-ONLY follow-up (FLAG): a real headed re-capture of a drift-prone authenticated site to watch a
+fallback fire in the wild remains out of autonomous scope — the example.com mechanism test + the
+synthetic unit test cover every code path, but live drift behaviour on a real app needs a person.
