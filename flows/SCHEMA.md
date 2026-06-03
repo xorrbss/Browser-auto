@@ -71,6 +71,32 @@ candidate ladder or **promotes** it to `needs_review`, then rewrites the flow. T
 a **gitignored** `flows/<name>.candidates.json` sidecar (per-step `{by, value, name?}` alternates,
 written by capture); it is page structure, not PII, and is regenerated on each capture.
 
+### Replay fallback (opt-in, `replayFallback: true`)
+
+An OPTIONAL top-level boolean. **Absent/false (the default) ⇒ compile output is byte-identical to
+not having the feature** — existing flows are unaffected by construction. When `true`, `compile`
+bakes a per-step *fallback ladder* into each RESOLVED `find` step of the generated test: at replay,
+if the step's primary locator fails, it retries down capture-time-UNIQUE sibling candidates (from the
+gitignored `<name>.candidates.json` sidecar) instead of immediately going red. This reduces FLAKE on
+healthy journeys; it is **not** a `needs_review` reducer (a `needs_review` step has no count==1
+candidate by definition, so it has nothing safe to fall back to — `compile` still refuses it).
+
+- **Eligibility** (a fallback may only ever be as strong as the primary it replaces): a sibling
+  candidate is used only if `count == 1` at capture, value ≤ 80 chars and name ≤ 80 chars (not
+  overLong), `by != "role"` (role+name is unreliable on 0.27.0), and it is not the primary itself.
+- **Loud on use**: when a fallback actually fires at replay, the test prints a `⚠ FALLBACK` line to
+  stderr naming the failed primary and the substituted locator — a fallback is never silent.
+- **Fail-loud at compile**: `replayFallback: true` requires a non-stale candidates sidecar
+  (`._steps` must equal the flow's step count, the same guard `verify` uses); otherwise `compile`
+  refuses rather than silently downgrading. The compiled `.test.sh` is self-contained (the sidecar is
+  only an authoring-time input — it is not needed at run time).
+- **Residual risk (inherent, documented)**: `cardinality ≠ identity` — a candidate that was unique at
+  capture can resolve to a *different* single element at replay if the page drifts, so a fallback
+  could act on the wrong element (a false-green). 0.27.0 has no semantic-count primitive at replay to
+  re-verify uniqueness, so this is mitigated, not eliminated, by the count==1 bar + non-role filter +
+  opt-in + the loud log + the flow's own downstream steps/asserts. **Leave it off unless a flow is
+  flaky enough to need it**, and review runs where the `⚠ FALLBACK` line appears.
+
 ### Parameterized input values (flows/*.flow.json is git-committed)
 
 `fill`/`type`/`select` steps store **`{{input_N}}` tokens**, never the literal value, in the

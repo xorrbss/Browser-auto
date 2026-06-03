@@ -56,32 +56,78 @@ compile() {
 	starturl="$(jq -r '.startUrl' "$flow")"
 	local out="${PROBE_ROOT}/tests/${name}.test.sh"
 
+	# REPLAY FALLBACK (opt-in: flow.replayFallback==true). Build a per-step ladder of
+	# capture-time-UNIQUE sibling candidates from the gitignored candidates sidecar so a transient
+	# PRIMARY-locator failure at replay retries down the ladder instead of going red (flake
+	# reduction). Absent/false => fb_json stays "{}" and the body jq below is byte-identical to the
+	# no-fallback path (existing flows unchanged by construction). The eligibility filter is the
+	# SAME bar capture applied to a primary (count==1, not overLong, engine-supported locator, not
+	# the primary itself), so a fallback is never weaker than the primary it stands in for. The
+	# residual wrong-element risk (cardinality!=identity at replay) is surfaced LOUDLY by _find_fb;
+	# see flows/SCHEMA.md. This only helps RESOLVED steps: needs_review steps have no count==1
+	# candidate by definition, so this is resilience, not a needs_review reducer.
+	local replay_fallback fb_json="{}"
+	replay_fallback="$(jq -r '.replayFallback // false' "$flow")"
+	if [ "$replay_fallback" = "true" ]; then
+		local candfile="${PROBE_ROOT}/flows/${name}.candidates.json"
+		[ -s "$candfile" ] || { echo "[probe] compile refused: replayFallback set but no candidates sidecar ($candfile). Re-capture (or remove replayFallback)." >&2; exit 1; }
+		local cand_steps flow_steps
+		cand_steps="$(jq -r '._steps // empty' "$candfile" 2>/dev/null || true)"
+		flow_steps="$(jq -r '.steps | length' "$flow")"
+		{ [ -n "$cand_steps" ] && [ "$cand_steps" = "$flow_steps" ]; } || { echo "[probe] compile refused: candidates sidecar stale/unreadable (sidecar steps='${cand_steps:-?}' != flow steps=$flow_steps). Re-capture before compiling with replayFallback." >&2; exit 1; }
+		fb_json="$(jq -c --slurpfile cand "$candfile" '
+			($cand[0].byStep // {}) as $by
+			| [ .steps | to_entries[] | .key as $i | .value as $s
+			    | select($s.kind=="find" and ($s.needs_review|not) and ($s.by!=null))
+			    | { key: ($i|tostring),
+			        value: ( ($by[($i|tostring)] // [])
+			                 | map(select(
+			                     (.count==1)
+			                     and ((.value|length) <= 80)
+			                     and ((.name==null) or ((.name|length) <= 80))
+			                     and (.by != "role")
+			                     and ((.by != $s.by) or (.value != $s.value) or (((.name // "")) != ($s.name // ""))) ))
+			                 | map({by, value} + (if .name then {name} else {} end)) ) }
+			    | select(.value | length > 0) ]
+			| from_entries
+		' "$flow")"
+		[ "$fb_json" = "{}" ] && echo "[probe] NOTE: replayFallback set but no step had a usable (count==1, engine-supported, <=80c) fallback candidate -- compiling without fallback." >&2 || true
+	fi
+
 	# Build the runnable body lines. Steps become agent-browser `batch` commands EXCEPT
 	# `wait until:url`, which compiles to a `wait_url` poll (lib/assert.sh) because 0.27.0
 	# `wait --url` hangs on glob patterns. So the body is a sequence of batch SEGMENTS split at
 	# every url-wait: jq coalesces consecutive batch commands into one segment, base64-encodes
 	# each (survives quotes/spaces/tokens), and emits `_run_batch '<b64>'` / `wait_url '<glob>'`.
 	local body_lines
-	body_lines="$(jq -r '
+	body_lines="$(jq -r --argjson fb "$fb_json" '
+		def findcmd($s):
+			["find", $s.by, $s.value, $s.action]
+			+ (if $s.action == "select"
+			     then (if $s.val then [$s.val] elif $s.text then [$s.text] else [] end)
+			     else (if $s.text then [$s.text] elif $s.val then [$s.val] else [] end) end)
+			+ (if $s.name then ["--name", $s.name] else [] end)
+			+ (if ($s.by | test("^(text|label|placeholder|alt|title)$")) then ["--exact"] else [] end);
 		.steps
-		| map(
-			if .kind == "find" then
-				{t:"c", v:(["find", .by, .value, .action]
-				 + (if .action == "select"
-				      then (if .val then [.val] elif .text then [.text] else [] end)
-				      else (if .text then [.text] elif .val then [.val] else [] end) end)
-				 + (if .name then ["--name", .name] else [] end)
-				 + (if (.by | test("^(text|label|placeholder|alt|title)$")) then ["--exact"] else [] end))}
-			elif .kind == "wait" and .until == "url" then {t:"w", v:.value}
-			elif .kind == "wait" then {t:"c", v:["wait", ("--" + .until), .value]}
-			elif .kind == "press" then {t:"c", v:["press", .value]}
+		| to_entries
+		| map(.key as $i | .value as $s |
+			if $s.kind == "find" then
+				( ($fb[$i|tostring]) as $flist |
+				  if ($flist | type) == "array" and ($flist | length) > 0
+				  then {t:"f", v:( [findcmd($s)] + ($flist | map(findcmd(. + {action:$s.action} + (if $s.text then {text:$s.text} else {} end) + (if $s.val then {val:$s.val} else {} end)))) )}
+				  else {t:"c", v:findcmd($s)} end )
+			elif $s.kind == "wait" and $s.until == "url" then {t:"w", v:$s.value}
+			elif $s.kind == "wait" then {t:"c", v:["wait", ("--" + $s.until), $s.value]}
+			elif $s.kind == "press" then {t:"c", v:["press", $s.value]}
 			else empty end)
 		| reduce .[] as $s ([];
 			if $s.t == "w" then . + [{w:$s.v}]
+			elif $s.t == "f" then . + [{f:$s.v}]
 			elif (length > 0 and (.[-1] | has("b"))) then (.[0:-1] + [{b:(.[-1].b + [$s.v])}])
 			else . + [{b:[$s.v]}] end)
 		| .[]
 		| if has("w") then ("wait_url " + (.w | @sh))
+		  elif has("f") then ("_find_fb " + ((.f | @json | @base64) | @sh))
 		  else ("_run_batch " + ((.b | @json | @base64) | @sh)) end
 	' "$flow")"
 
@@ -117,14 +163,21 @@ compile() {
 		echo "$open_line"
 		echo 'AB record start "$ARTDIR/video.webm" >/dev/null'
 		echo ''
-		# _run_batch helper: decode a base64 batch template, substitute {{input_N}} tokens from the
-		# gitignored values sidecar at RUNTIME (so PII never enters the committed test/flow), then
-		# run it — fail loud on any unfilled token. One helper, called per batch segment; harmless
-		# (walk no-ops) for token-free flows, so all batches go through the same path.
-		if printf '%s' "$body_lines" | grep -q '_run_batch'; then
+		# Runtime helpers baked into the test. _run_batch decodes a base64 batch template and
+		# substitutes {{input_N}} tokens from the gitignored values sidecar (PII never enters the
+		# committed test/flow), failing loud on any unfilled token. _find_fb (opt-in replayFallback)
+		# tries a primary locator then capture-time-unique fallbacks, logging loudly on any fallback.
+		# Both read $_VALUES_JSON, so define it once if EITHER helper appears. Order: values, then
+		# helpers, then a trailing blank — kept byte-identical to the pre-fallback output whenever no
+		# _find_fb is present (so existing flows recompile unchanged).
+		if printf '%s' "$body_lines" | grep -Eq '_run_batch|_find_fb'; then
 			echo "_VALUES_FILE=\"\$DIR/flows/${name}.values.json\""
 			cat <<'HELPEOF'
 _VALUES_JSON="{}"; [ -s "$_VALUES_FILE" ] && _VALUES_JSON="$(cat "$_VALUES_FILE")"
+HELPEOF
+		fi
+		if printf '%s' "$body_lines" | grep -q '_run_batch'; then
+			cat <<'HELPEOF'
 _run_batch() {
 	local _body
 	_body="$(printf %s "$1" | base64 -d | jq -c --argjson v "$_VALUES_JSON" \
@@ -135,8 +188,43 @@ _run_batch() {
 	BATCH --bail <<<"$_body"
 }
 HELPEOF
-			echo ''
 		fi
+		if printf '%s' "$body_lines" | grep -q '_find_fb'; then
+			cat <<'HELPEOF'
+_find_fb() {
+	# Opt-in replay fallback (flow.replayFallback). $1 = base64 of [primaryCmd, fallbackCmd...],
+	# each a `find` argv array. Substitute {{input_N}} tokens (fail-loud on missing), then try each
+	# command as a SINGLE-command `batch --json` (same stdin-JSON path as _run_batch — dodges the
+	# shell token-splitting trap for values with spaces) judging .[0].success: the FIRST success
+	# returns 0; a fallback (index>0) is logged LOUDLY; if every command fails the step FAILS
+	# (return 1) — never a silent false-green.
+	local _cmds _n _i _suc _primary _desc _one _out _err=""
+	_cmds="$(printf %s "$1" | base64 -d | jq -c --argjson v "$_VALUES_JSON" \
+		'walk(if type=="string" then gsub("[{][{](?<k>[A-Za-z0-9_]+)[}][}]"; ($v[.k] // ("__AQA_MISSING__"+.k))) else . end)')"
+	case "$_cmds" in
+		*__AQA_MISSING__*) echo "  ✗ missing value(s) in $_VALUES_FILE — fill the gitignored sidecar before replay" >&2; exit 1 ;;
+	esac
+	_primary="$(printf %s "$_cmds" | jq -r '.[0] | join(" ")')"
+	_n="$(printf %s "$_cmds" | jq 'length')"
+	for (( _i=0; _i<_n; _i++ )); do
+		_one="$(printf %s "$_cmds" | jq -c "[.[$_i]]")"
+		_out="$(AB batch --json <<<"$_one" 2>/dev/null || true)"
+		_suc="$(printf %s "$_out" | jq -r '.[0].success // false' 2>/dev/null || echo false)"
+		[ "$_i" = 0 ] && _err="$(printf %s "$_out" | jq -r '.[0].error // empty' 2>/dev/null || true)"
+		if [ "$_suc" = "true" ]; then
+			if [ "$_i" -gt 0 ]; then
+				_desc="$(printf %s "$_cmds" | jq -r ".[$_i] | join(\" \")")"
+				echo "  ⚠ FALLBACK: primary [$_primary] failed; replayed via capture-time-unique fallback #$_i [$_desc]. Verify the page did not drift to a wrong element." >&2
+			fi
+			return 0
+		fi
+	done
+	echo "  ✗ _find_fb: no locator resolved — primary [$_primary]${_err:+ -> $_err} ($((_n-1)) fallback(s) also failed)" >&2
+	return 1
+}
+HELPEOF
+		fi
+		if printf '%s' "$body_lines" | grep -Eq '_run_batch|_find_fb'; then echo ''; fi
 		echo "$body_lines"
 		echo ''
 		echo "$assert_lines"

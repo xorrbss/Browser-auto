@@ -161,6 +161,13 @@ bash bin/probe-record.sh compile flows/checkout.flow.json
 bash run.sh checkout
 ```
 
+**Optional: replay fallback** (`"replayFallback": true` in the flow.json). Off by default. When set,
+`compile` bakes a per-step fallback ladder into the test so a flaky primary locator retries down
+capture-time-**unique** sibling candidates at replay (logging a loud `⚠ FALLBACK` whenever it fires)
+instead of going red. It reduces flake on healthy journeys but carries an inherent wrong-element risk
+(a once-unique candidate can match a different element after drift), so it is opt-in, loud, and
+filtered to count==1 / non-overLong / engine-supported locators only. See `flows/SCHEMA.md`.
+
 **Capture scope & limitations** (by design — the recorder fails loud or marks `needs_review`
 rather than guessing):
 
