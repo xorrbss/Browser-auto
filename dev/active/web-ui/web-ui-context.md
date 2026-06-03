@@ -33,6 +33,22 @@ Last Updated: 2026-06-03
   queue + spawn run.sh via Git-Bash + SSE live log; re-run full suite at the P1 milestone
   since P1 introduces a code path that interacts with run.sh).
 
+- 2026-06-03: **P1 run-trigger + single-slot serial queue + SSE: BUILT, hardened, merged.**
+  webui/spawn.js (gitBash + killTree), webui/jobs.js (serial promise-chain queue, ring-buffer
+  log, SSE fan-out, watchdog, cancel), server.js (POST /api/run, GET /api/queue,
+  /api/jobs/:id[/stream], SIGINT/SIGTERM shutdown), app.js (run bar + EventSource log + cancel).
+  **Serialization PROVEN** (j2.startedAt ≥ j1.endedAt; queue snapshot busy+pending). SSE live +
+  reconnect-replay verified. **Full suite via web 7/7 exit 0** (GREEN gate). WF-Review-P1 (32
+  agents, 27 findings/16 confirmed; 0 serialization/injection/XSS breaks) → fixed: child
+  watchdog (WEBUI_JOB_TIMEOUT_MS, default 20min) + `taskkill /PID <pid> /T /F` tree-kill +
+  cancel route + shutdown kill (HIGH: wedged child could brick the queue / orphan the
+  run.sh→agent-browser→Chrome tree); EventSource close-before-open + reconnect-clear + onerror.
+  Cancel-of-running verified (tree-killed, queue freed). Merged --no-ff to master.
+  - **NEW footgun**: cancelling/killing a RUNNING browser job `taskkill /T`s the shared
+    agent-browser daemon too → the next run.sh preflight re-warms it but runs noticeably
+    SLOWER until orphans clear (saw a full suite go 262s→461s after a cancel; still GREEN, well
+    under the 20min watchdog). Inherent to the single shared daemon; not a code defect.
+
 ## Execution contract
 
 - Web layer lives ONLY under `webui/`. Backend = Node; it **spawns the existing bash CLI**

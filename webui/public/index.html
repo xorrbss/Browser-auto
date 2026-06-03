@@ -12,6 +12,12 @@
 		<span class="sub">results dashboard</span>
 		<button id="refresh" type="button" title="Reload runs">↻ refresh</button>
 	</header>
+	<div class="runbar">
+		<input id="glob" type="text" autocomplete="off" spellcheck="false"
+			placeholder="test glob (optional) — e.g. login or nav-*" />
+		<button id="run" type="button">▶ Run suite</button>
+		<span id="qstatus" class="qstatus">idle</span>
+	</div>
 	<main>
 		<aside id="runs" class="runs">
 			<div class="hint">loading runs…</div>

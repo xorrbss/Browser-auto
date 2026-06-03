@@ -10,6 +10,11 @@
 //   GET /api/runs              -> { runs: [summary...] }   (index.js, fs-authoritative)
 //   GET /api/runs/:id          -> run detail (per-test rows) | 404
 //   GET /artifacts/<path>      -> static file under artifacts/ with HTTP Range (video scrub)
+// Routes (P1 — run trigger via the single-slot serial queue, jobs.js + spawn.js):
+//   POST /api/run              -> enqueue `run.sh [glob]`; { job } (202)
+//   GET  /api/queue            -> { busy, running, pending[], recent[] }  (serialization proof)
+//   GET  /api/jobs/:id         -> job status | 404
+//   GET  /api/jobs/:id/stream  -> SSE live log (replay buffer + live lines + end)
 //
 // Run: `node webui/server.js`  (WEBUI_PORT overrides the default port).
 
@@ -18,6 +23,8 @@ import { createReadStream, statSync } from 'node:fs';
 import { pipeline } from 'node:stream';
 import path from 'node:path';
 import { listRuns, getRun, ARTIFACTS_DIR } from './index.js';
+import { enqueue, jobStatus, subscribe, queueState, cancel, killRunning } from './jobs.js';
+import { gitBash } from './spawn.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const HOST = '127.0.0.1';
@@ -45,6 +52,25 @@ function sendJson(res, code, obj) {
 }
 
 const notFound = (res, msg = 'not found') => sendJson(res, 404, { error: msg });
+
+// Collect a (small) request body. Rejects if it exceeds `limit` bytes.
+function readBody(req, limit = 1 << 20) {
+	return new Promise((resolve, reject) => {
+		let data = '';
+		let size = 0;
+		req.on('data', (c) => {
+			size += c.length;
+			if (size > limit) {
+				reject(new Error('body too large'));
+				req.destroy();
+			} else {
+				data += c;
+			}
+		});
+		req.on('end', () => resolve(data));
+		req.on('error', reject);
+	});
+}
 
 // Resolve reqPath under base, refusing any traversal / NUL / absolute escape. Returns an
 // absolute path guaranteed to sit inside base, or null.
@@ -136,6 +162,37 @@ const server = http.createServer(async (req, res) => {
 		const url = new URL(req.url, `http://${HOST}:${PORT}`);
 		const p = url.pathname;
 
+		if (req.method === 'POST') {
+			if (p === '/api/run') {
+				let body;
+				try {
+					body = await readBody(req);
+				} catch {
+					return sendJson(res, 413, { error: 'body too large' });
+				}
+				let glob = '';
+				if (body.trim()) {
+					try {
+						glob = String(JSON.parse(body).glob || '').trim();
+					} catch {
+						return sendJson(res, 400, { error: 'invalid JSON body' });
+					}
+				}
+				// Restrict to a test-name glob so nothing shell-special reaches the CLI arg.
+				if (glob && !/^[A-Za-z0-9_*?-]+$/.test(glob)) {
+					return sendJson(res, 400, { error: 'invalid test glob' });
+				}
+				const label = glob ? `run.sh ${glob}` : 'run.sh (all)';
+				const job = enqueue({ kind: 'run', label, spawnFn: () => gitBash('run.sh', glob ? [glob] : []) });
+				return sendJson(res, 202, { job });
+			}
+			const mCancel = /^\/api\/jobs\/([^/]+)\/cancel$/.exec(p);
+			if (mCancel) {
+				return cancel(mCancel[1]) ? sendJson(res, 200, { ok: true }) : notFound(res, 'no such job');
+			}
+			return notFound(res);
+		}
+
 		if (req.method !== 'GET' && req.method !== 'HEAD') {
 			return sendJson(res, 405, { error: 'method not allowed' });
 		}
@@ -158,6 +215,22 @@ const server = http.createServer(async (req, res) => {
 			}
 			const run = await getRun(id);
 			return run ? sendJson(res, 200, run) : notFound(res, 'no such run');
+		}
+
+		if (p === '/api/queue') {
+			return sendJson(res, 200, queueState());
+		}
+
+		const mJob = /^\/api\/jobs\/([^/]+?)(\/stream)?$/.exec(p);
+		if (mJob) {
+			const id = mJob[1];
+			if (mJob[2]) {
+				// SSE: subscribe() owns the response lifecycle (replay + live + end/close).
+				if (!subscribe(id, res)) return notFound(res, 'no such job');
+				return;
+			}
+			const js = jobStatus(id);
+			return js ? sendJson(res, 200, js) : notFound(res, 'no such job');
 		}
 
 		if (p.startsWith('/artifacts/')) {
@@ -185,6 +258,20 @@ server.on('error', (e) => {
 	}
 	process.exit(1);
 });
+
+// Graceful shutdown: tree-kill any in-flight browser job so the run.sh -> agent-browser ->
+// Chrome tree is not orphaned (an orphaned daemon wedges the next run). Then exit.
+let shuttingDown = false;
+function shutdown(sig) {
+	if (shuttingDown) return;
+	shuttingDown = true;
+	console.log(`[webui] ${sig} — killing any running job and exiting`);
+	killRunning();
+	server.close();
+	process.exit(0);
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 server.listen(PORT, HOST, () => {
 	console.log(`[webui] listening on http://${HOST}:${PORT}`);
