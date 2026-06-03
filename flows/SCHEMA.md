@@ -44,15 +44,20 @@ construction. Every step targets an element by a *semantic locator* only.
   then fails with `os error 10060`; only plain substrings work). Instead `compile` emits a
   `wait_url '<glob>'` call (lib/assert.sh) that polls the reliable `get url` and matches with the
   same logic as `assert_url`. This splits the surrounding `batch` at each url-wait boundary.
-  `until:text`/`until:load` waits DO work and stay inline in the batch.
+  `until:text`/`until:load` waits DO work and stay inline in the batch. Capture also emits an
+  inline settle wait (`until:text` on the next step's target, else `until:load networkidle`) when
+  a click swaps a large DOM subtree but changes **no** URL (a pure client-side SPA route).
 
 ### needs_review (additive field on a `find` step)
 
 When recording finds **no unique stable locator** for an element, the step is emitted with:
 
 - `needs_review` (boolean true) — the step is **non-compilable** until a human/agent resolves it.
-- `candidates` (array of ≥2 `{by, value, name?, count}`) — the alternatives observed, with
-  their in-page match counts. A needs_review step carries **no accepted top-level by/value**.
+- `candidates` (a **non-empty** array of `{by, value, name?, count}`, usually ≥2) — the
+  alternatives observed, with their in-page match counts. A needs_review step carries **no
+  accepted top-level by/value**. Long (>80-char) exact-text / role-name values are included here
+  for review but are **never auto-accepted** as a step's primary locator (too fragile), so such a
+  step stays `needs_review` — the ladder is never left empty.
 
 Absent field == false; hand-written flows are unaffected. `compile` **refuses** (exits
 non-zero, lists the offending steps) on any `needs_review:true` — never a silent drop, never

@@ -76,4 +76,26 @@ if bash "$DIR/bin/probe-record.sh" compile "$FLOW" >/dev/null 2>&1; then
 	fail "compile accepted a needs_review flow (must refuse)"
 fi
 
+# 13. dom_settle (C2): a pure DOM-swap marker (click changed the DOM, not the URL) compiles to an
+#     explicit settle wait — until:text on the NEXT find's literal text when available, else
+#     until:load networkidle. With no URL change anywhere the trailing assert stays on the start path.
+REC2="$TMP/records2.json"; FLOWS2="$TMP/flows2"; mkdir -p "$FLOWS2"
+cat > "$REC2" <<'JSON'
+[
+ {"seq":1,"action_type":"click","url_at_capture":"https://app.example.com/dash","primary":{"by":"text","value":"Open"},"candidates":[{"by":"text","value":"Open","count":1}],"is_navigation_boundary":false},
+ {"seq":2,"action_type":"dom_settle","url_at_capture":"https://app.example.com/dash","primary":null,"candidates":[],"is_navigation_boundary":false},
+ {"seq":3,"action_type":"click","url_at_capture":"https://app.example.com/dash","primary":{"by":"text","value":"Details"},"candidates":[{"by":"text","value":"Details","count":1}],"is_navigation_boundary":false},
+ {"seq":4,"action_type":"dom_settle","url_at_capture":"https://app.example.com/dash","primary":null,"candidates":[],"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" dsflow "https://app.example.com/dash" "" "$REC2" "$FLOWS2" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on the dom_settle stream"
+FLOW2="$FLOWS2/dsflow.flow.json"
+eq "$(jq -rc '.steps[0]|[.kind,.by,.value,.action]' "$FLOW2")" '["find","text","Open","click"]' "ds step0 click"
+eq "$(jq -rc '.steps[1]|[.kind,.until,.value]' "$FLOW2")" '["wait","text","Details"]' "ds step1 until:text from next find"
+eq "$(jq -rc '.steps[2]|[.kind,.by,.value,.action]' "$FLOW2")" '["find","text","Details","click"]' "ds step2 click"
+eq "$(jq -rc '.steps[3]|[.kind,.until,.value]' "$FLOW2")" '["wait","load","networkidle"]' "ds step3 until:load fallback"
+eq "$(jq -rc '.asserts[0]|[.kind,.value]' "$FLOW2")" '["url","**/dash"]' "ds trailing url assert (no nav)"
+eq "$(jq -r '[.steps[]|select(.needs_review==true)]|length' "$FLOW2")" '0' "ds no needs_review"
+
 echo "  ✓ build-flow-unit.test.sh passed"
