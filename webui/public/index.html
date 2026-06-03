@@ -13,6 +13,8 @@
 		<nav class="nav">
 			<button id="nav-runs" type="button" class="active">Runs</button>
 			<button id="nav-flows" type="button">Flows</button>
+			<button id="nav-trends" type="button">Trends</button>
+			<button id="nav-auth" type="button">Auth</button>
 		</nav>
 		<span id="qstatus" class="qstatus">idle</span>
 		<button id="refresh" type="button" title="Reload">↻</button>
@@ -57,6 +59,34 @@
 						<pre id="compile-out" class="compile-out" hidden></pre>
 					</section>
 				</div>
+			</section>
+		</div>
+
+		<!-- Trends view -->
+		<div class="view view-trends">
+			<section class="pane">
+				<h3>Pass-rate trends</h3>
+				<div id="trends"><div class="hint">loading trends…</div></div>
+			</section>
+		</div>
+
+		<!-- Auth view -->
+		<div class="view view-auth">
+			<section class="pane">
+				<h3>Authenticate an app (one-time OTP login)</h3>
+				<p class="note">Opens a real headed Chrome window; complete the login + OTP by hand.
+					The script waits for the success URL, then caches
+					<code>fixtures/auth/&lt;app&gt;.state.json</code> so tests replay logged-in. One
+					browser job at a time.</p>
+				<div class="rec-form">
+					<input id="auth-app" placeholder="app (e.g. myapp)" autocomplete="off" spellcheck="false" />
+					<input id="auth-login" placeholder="https://app.example.com/login" autocomplete="off" spellcheck="false" />
+					<input id="auth-success" placeholder="success URL glob — e.g. **/dashboard" autocomplete="off" spellcheck="false" />
+					<button id="auth-btn" type="button">🔑 Authenticate</button>
+					<button id="auth-cancel" type="button" class="cancel-btn" hidden>✕ cancel</button>
+				</div>
+				<p class="note">Cached states: <span id="auth-list">—</span></p>
+				<pre id="auth-log" class="joblog" hidden></pre>
 			</section>
 		</div>
 	</main>

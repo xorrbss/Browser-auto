@@ -44,7 +44,22 @@ repo root) so `"type":"module"` is scoped to `webui/` and never changes how the 
   auto-stop is the only web-drivable stop), resolve `needs_review` (candidate picker) + fill
   `{{input_N}}` values (a UI-owned `flow.json`/`values.json` edit — the documented human
   step, NOT a CLI reimplementation) → `verify` → `compile`.
-- **P3 — Policy:** auth UI, scheduling, trends.
+- **P3 — Policy:** **pass-rate trends** (read-only aggregate of `report.json` across runs —
+  `GET /api/trends`, Trends view) and an **auth wrapper** (`POST /api/auth` → `setup/auth.sh`
+  as a serial headed-Chrome job for human OTP → `fixtures/auth/<app>.state.json`; `GET /api/auth`
+  lists cached app names only). **Scheduling is intentionally NOT built (YAGNI):** an in-app
+  scheduler would only run while this localhost server is open — recurring runs belong to the OS
+  (Windows Task Scheduler / cron invoking `bash run.sh`), which is how the CI gate is meant to be
+  driven.
+
+## Notes / limits
+
+- **Auth timeout coupling:** a headed auth waits up to `HUMAN_TIMEOUT_MS` (default 300000 = 5min,
+  read by `setup/auth.sh`) for the human OTP; the queue watchdog tree-kills any job after
+  `WEBUI_JOB_TIMEOUT_MS` (default 20min). If you raise `HUMAN_TIMEOUT_MS` above the watchdog,
+  raise `WEBUI_JOB_TIMEOUT_MS` too, or the watchdog will kill Chrome mid-login.
+- **Human-only steps:** a live recording (drive real Chrome) and a live OTP login cannot be
+  automated — they are the one manual action in each of P2 / P3.
 
 ## Files (P0)
 

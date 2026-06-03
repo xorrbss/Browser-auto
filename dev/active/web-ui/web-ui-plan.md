@@ -69,8 +69,20 @@ run appears in the dashboard.
   then `compile` to produce `tests/<name>.test.sh`; the compiled test then runs via P1.
   End-to-end record→edit→verify→compile→run demonstrated on a safe site.
 
-### P3 — Policy (optional / later)
-Auth (`setup/auth.sh`) UI, scheduling, pass-rate trends.
+### P3 — Policy (optional polish)
+- **Pass-rate trends (done):** `getTrends()` aggregates `artifacts/*/report.json` across runs →
+  per-run pass-rate + per-test pass/fail history; `GET /api/trends` + a Trends view (table of
+  test × run dots). Read-only, no queue.
+- **Auth UI (done):** `POST /api/auth` enqueues `setup/auth.sh <app> <login> <success>` as a
+  serial **browser** job (headed Chrome, human OTP) → caches `fixtures/auth/<app>.state.json`;
+  `GET /api/auth` lists cached app **names** (never secret content); Auth view form + state list.
+  Full e2e (the OTP itself) needs a human.
+- **Scheduling — DEFERRED (YAGNI), rationale:** scheduling a localhost dev UI would need a
+  persistent in-process scheduler that only runs while the server is open — the wrong place for
+  it. Recurring runs belong to the OS/CI (Windows Task Scheduler / cron invoking `bash run.sh`),
+  which is how the CI gate is meant to be driven. Adding a stateful scheduler (or a dep) to a
+  thin localhost control plane violates KISS/YAGNI for no demonstrated need. Documented here +
+  in webui/README.md rather than built.
 
 ## Verification gates (every change)
 

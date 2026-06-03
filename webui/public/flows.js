@@ -249,6 +249,18 @@ function startRecord() {
 		});
 }
 
+// reconcileFlowJob(activeIds): self-heal stuck flow-job controls. The shared single SSE stream
+// (util.js) may be pre-empted when another view starts a job, so this view's onEnd never fires;
+// the global 2s queue poll calls this — if our tracked job is no longer running/pending, clear
+// it and hide its cancel controls.
+export function reconcileFlowJob(activeIds) {
+	if (activeFlowJob && !activeIds.has(activeFlowJob)) {
+		activeFlowJob = null;
+		$('#rec-cancel').hidden = true;
+		$('#flow-jobbar').hidden = true;
+	}
+}
+
 export function initFlows() {
 	$('#rec-btn').addEventListener('click', startRecord);
 	$('#rec-cancel').addEventListener('click', () => activeFlowJob && cancelJob(activeFlowJob));

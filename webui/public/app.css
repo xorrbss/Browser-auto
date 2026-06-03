@@ -171,10 +171,29 @@ header #qstatus { margin-left: auto; }
 header #refresh { margin-left: 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
 
 .view { flex: 1; min-height: 0; }
-.view-runs, .view-flows { display: none; }
+.view-runs, .view-flows, .view-trends, .view-auth { display: none; }
 body[data-view="runs"] .view-runs { display: flex; }
 body[data-view="flows"] .view-flows { display: flex; }
-body[data-view="flows"] .runbar { display: none; }
+body[data-view="trends"] .view-trends { display: block; overflow-y: auto; }
+body[data-view="auth"] .view-auth { display: block; overflow-y: auto; }
+.runbar { display: none; }
+body[data-view="runs"] .runbar { display: flex; }
+
+.pane { padding: 18px 22px; max-width: 1100px; }
+.pane h3 { margin: 0 0 10px; font-size: 15px; }
+.pane .note code { color: var(--text); }
+.trend-sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+.trend-table { border-collapse: collapse; font-size: 12px; }
+.trend-table th, .trend-table td { padding: 4px 9px; text-align: center; border-bottom: 1px solid var(--border); }
+.trend-table th.tname, .trend-table td.tname { text-align: left; font-family: ui-monospace, Consolas, monospace; color: var(--text); }
+.trend-table th.pass { color: var(--pass); }
+.trend-table th.fail { color: var(--fail); }
+.trend-table th.none { color: var(--muted); }
+.dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--border); }
+.dot.pass { background: var(--pass); }
+.dot.fail { background: var(--fail); }
+.dot.none { background: var(--border); opacity: 0.4; }
+#auth-list { color: var(--text); }
 
 .flows-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .recorder { padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--panel); }
