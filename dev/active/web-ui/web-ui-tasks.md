@@ -32,15 +32,24 @@ Legend: [ ] todo · [~] in progress · [x] done · [!] blocked
 P0 = DEMOABLE: `node webui/server.js` → http://127.0.0.1:4310 → runs list → run detail
 (per-test pass/fail + inline video with seeking). Zero browser launches, zero npm deps.
 
-## Phase 1 — Run trigger + serial queue
+## Phase 1 — Run trigger + serial queue  ✅ DONE (merged to master)
 
-- [ ] Single-slot browser-job queue (server-owned)
-- [ ] `POST /api/runs` → spawn `run.sh [glob]` (Git Bash) through the queue
-- [ ] SSE live stdout stream to the page
-- [ ] On completion: index new run, surface pass/fail, link into dashboard
-- [ ] Acceptance: live log streams; new run indexed; **two concurrent Run requests do NOT
-      run two browser jobs at once** (queue depth observable; no wedge)
-- [ ] suite GREEN; commit; `--no-ff` merge milestone to master
+- [x] Single-slot serial promise-chain queue (webui/jobs.js); jobFn awaits child 'close'
+- [x] webui/spawn.js gitBash() → `bash.exe run.sh [glob]` shell:false cwd=PROBE_ROOT
+- [x] `POST /api/run` (enqueue) + `GET /api/queue` + `GET /api/jobs/:id` + SSE `/stream`
+- [x] SSE live stdout stream (ring buffer + replay-on-connect + end frame); UI run bar + log
+- [x] On completion: parse RUN_ID from stream, index new run, surface pass/fail, deep-link
+- [x] Acceptance PROVEN: live log streams; new run indexed; **two enqueued jobs → snapshot
+      {busy, running:j1, pending:[j2]}; j2.startedAt ≥ j1.endedAt (no concurrent browser job)**
+- [x] WF-Review-P1 (27 findings/16 confirmed) → fixes: child watchdog timeout + taskkill /T
+      tree-kill + POST /api/jobs/:id/cancel + SIGINT/SIGTERM shutdown kill (HIGH: queue could
+      be bricked by a wedged child / orphan tree on shutdown); EventSource close-before-open;
+      reconnect-clear (no dup); es.onerror. All re-verified (cancel running → tree-killed,
+      queue freed; reconnect replay clean).
+- [x] **suite GREEN via the web path itself: full suite 7/7 exit 0; merged --no-ff to master**
+
+P1 = DEMOABLE: Run bar → ▶ Run suite (optional glob) → live SSE log → pass/fail → new run
+auto-opens in the dashboard. Serial queue proven; cancel + watchdog + graceful shutdown.
 
 ## Phase 2 — Recorder + Flow editor
 
