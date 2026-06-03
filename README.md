@@ -174,17 +174,22 @@ rather than guessing):
   drag, and file-upload are excluded (replay auto-scrolls to each element).
 - **Sensitive fields** (password / OTP / card / SSN — by type/autocomplete/inputmode) are
   masked at capture and never written; their `{{input_N}}` token must be filled by hand.
-- **No unique stable locator → `needs_review`** (with ≥2 candidates), never a fragile guess.
+- **No unique stable locator → `needs_review`** (with a non-empty candidate ladder, usually ≥2),
+  never a fragile guess.
   This is expected for icon-only buttons whose only accessible name is `aria-label` (the
   engine's `find role --name` is unreliable on 0.27.0, so role is only a low-priority
   candidate), duplicate-text grids (N identical "Edit" rows), closed shadow roots, and links
-  or buttons whose visible text is **very long** (>80 chars — no exact-text locator; the
-  candidate list can come back empty). Tip: when recording, click the **short labelled**
-  control, not a long descriptive block. Resolve a `needs_review` step by picking a candidate,
-  or run `verify` (which re-drives and repairs from the captured ladder where it can).
-- **SPA navigation:** `history.pushState`/`replaceState`/hash changes are captured as
-  wait-gates; a pure DOM-swap router that changes no URL produces no wait signal — replay
-  then leans on the next locator's implicit wait.
+  or buttons whose visible text is **very long** (>80 chars). Long exact text IS kept as a
+  reviewable candidate (the ladder is never empty), but is **not auto-accepted** as the step's
+  primary locator because long exact text is fragile — the step stays `needs_review`. Tip: when
+  recording, click the **short labelled** control, not a long descriptive block. Resolve a
+  `needs_review` step by picking a candidate, or run `verify` (re-drives and repairs from the
+  captured ladder where it can).
+- **SPA navigation:** `history.pushState`/`replaceState`/hash changes are captured as url
+  wait-gates. A pure DOM-swap router that changes **no** URL is detected heuristically (a click
+  that triggers a large DOM mutation with no URL change) and emits a settle wait — `until:text`
+  on the next step's target when available, else `until:load networkidle`. A swap below the
+  mutation threshold still falls back to the next locator's implicit wait.
 - **Data integrity:** a silent sessionStorage quota / private-mode write loss is caught by a
   seq-advance health-check and fails the capture loudly (never a quietly-incomplete flow).
 

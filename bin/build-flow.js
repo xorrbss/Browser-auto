@@ -106,6 +106,22 @@ for (let i = 0; i < records.length; i++) {
     maybeWait(to);
     continue;
   }
+  if (t === 'dom_settle') {
+    // C2: a pure DOM-swap (the click changed the DOM but NOT the URL, so `navigate` never fired).
+    // Emit an explicit settle wait so replay doesn't race the next locator. Prefer waiting on the
+    // NEXT find step's literal text/label (the new view's content); else fall back to networkidle.
+    let nextTxt = null;
+    for (let j = i + 1; j < records.length; j++) {
+      const r = records[j];
+      if (r.action_type === 'dom_settle') continue;
+      if (r.action_type === 'navigate') break;   // a real nav follows -> let its url-wait gate settle it; don't borrow post-nav text (which would wait on the OLD page)
+      if (r.primary && (r.primary.by === 'text' || r.primary.by === 'label')) nextTxt = r.primary.value;
+      break;
+    }
+    if (nextTxt) steps.push({ kind: 'wait', until: 'text', value: nextTxt });
+    else steps.push({ kind: 'wait', until: 'load', value: 'networkidle' });
+    continue;
+  }
   if (t === 'click') { actionFind(rec, 'click'); }
   else if (t === 'key') { steps.push({ kind: 'press', value: rec.input_value || 'Enter' }); }
   else if (t === 'input') {

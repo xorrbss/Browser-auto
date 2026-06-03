@@ -8,9 +8,11 @@
 // Buffer (sessionStorage, synchronous write-through = durability):
 //   __aqa_buf = ordered JSON array of RecordedAction; __aqa_seq = monotonic counter;
 //   __aqa_prevurl = last-seen href sentinel (full-doc nav detector).
-// RecordedAction: {seq, action_type:'click'|'input'|'select'|'key'|'navigate',
+// RecordedAction: {seq, action_type:'click'|'input'|'select'|'key'|'navigate'|'dom_settle',
 //   url_at_capture, primary:{by,value,name?}|null, candidates:[{by,value,name?,count}],
 //   input_value(masked->null), masked?, insufficient?, is_navigation_boundary, from?}
+// A 'dom_settle' marker is emitted after a click that swapped a large DOM subtree WITHOUT changing
+// the URL (a pure client-side SPA route) — build-flow turns it into an explicit settle wait.
 // Security: sensitive fields (password/OTP/card/...) are masked AT CAPTURE — the secret
 // is never written to the buffer. The host applies the same mask again (2nd gate).
 (function () {
@@ -167,10 +169,15 @@
   // candidate (kept for human needs_review use), and the engine-supported locators lead.
   // (Robust v2: a verify-repair replay probing each candidate via `find ... hover --json`.)
   var WKIND = { testid: 50, text: 40, label: 38, placeholder: 32, role: 24, alt: 18, title: 12 };
+  // C1: a locator whose value/name exceeds 80 chars is KEPT in the candidate ladder (so a
+  // needs_review step always offers a reviewable option — the engine empirically matches long
+  // exact text) but is BARRED from auto-primary selection in emit() below: long exact text/labels
+  // are too fragile to promote unattended, so such a step stays needs_review for a human or
+  // verify-repair to accept. (Previously pushCand dropped them entirely, leaving an empty ladder.)
+  function overLong(c) { return ((c.value || '').length > 80) || (!!c.name && c.name.length > 80); }
   function pushCand(list, by, value, name) {
     value = normalize(value);
     if (!value) return;
-    if (value.length > 80) return;
     for (var i = 0; i < list.length; i++) if (list[i].by === by && list[i].value === value && list[i].name === name) return;
     list.push({ by: by, value: value, name: name });
   }
@@ -183,9 +190,9 @@
       if (tid) { pushCand(list, 'testid', tid); break; }
       n = n.parentNode; hops++;
     }
-    // P2 role+name
+    // P2 role+name (long names stay in the ladder for review; overLong() bars them from auto-primary)
     var role = roleOf(el), name = accName(el);
-    if (role && name) { var c = { by: 'role', value: role, name: name }; if (!c.value || normalize(name).length > 80) {} else list.push(c); }
+    if (role && name) list.push({ by: 'role', value: role, name: name });
     // P3 label (form controls)
     var lt = labelText(el); if (lt) pushCand(list, 'label', lt);
     // P4 exact visible text (name-from-contents)
@@ -236,7 +243,9 @@
       for (var i = 0; i < cands.length; i++) { var r = countCandidate(cands[i], el); cands[i].count = r.count; cands[i]._count = r.count; cands[i]._hit = r.matchesTarget; }
       cands.sort(function (a, b) { return score(b) - score(a); });
       var primary = null;
-      for (var j = 0; j < cands.length; j++) { if (cands[j]._count === 1 && cands[j]._hit) { primary = { by: cands[j].by, value: cands[j].value }; if (cands[j].name) primary.name = cands[j].name; break; } }
+      // C1: skip overLong candidates — a unique long-text match is real but too fragile to auto-accept;
+      // leaving primary null keeps the step needs_review while the long value stays in the ladder.
+      for (var j = 0; j < cands.length; j++) { if (cands[j]._count === 1 && cands[j]._hit && !overLong(cands[j])) { primary = { by: cands[j].by, value: cands[j].value }; if (cands[j].name) primary.name = cands[j].name; break; } }
       var top = cands.slice(0, Math.max(2, 0)).map(function (c) { var o = { by: c.by, value: c.value, count: c.count }; if (c.name) o.name = c.name; return o; });
       var insufficient = top.length < 2;
       var rec = { action_type: action_type, primary: primary, candidates: top, is_navigation_boundary: false };
@@ -287,6 +296,43 @@
   }, true);
   document.addEventListener('focusout', function () { commitPend(); }, true);
 
+  // --- pure DOM-swap detector (C2): SPA routers that swap the view WITHOUT changing the URL emit
+  // no nav gate, so replay would race the next locator. A MutationObserver accumulates the size of
+  // added/removed element subtrees; after each click, once the settle window elapses, if the URL
+  // did NOT change yet a significant swap occurred, we record a 'dom_settle' marker. URL-changing
+  // navs (pushState/hash/full-doc) are already gated by navMark and skipped here (href changed).
+  // Best-effort: a missed detection just falls back to the next locator's implicit wait. ---
+  var DOM_SWAP_MIN = 12;          // accumulated added+removed element count that counts as a swap
+  var DOM_SWAP_SETTLE_MS = 350;   // window after a click in which the swap must register
+  var mutAcc = 0, mutConsumed = 0;  // mutConsumed = high-water mark already attributed to a dom_settle
+  function subtreeCount(node) {
+    if (!node || node.nodeType !== 1) return 0;
+    try { return 1 + node.querySelectorAll('*').length; } catch (e) { return 1; }
+  }
+  try {
+    var mo = new MutationObserver(function (recs) {
+      for (var i = 0; i < recs.length; i++) {
+        var m = recs[i], j;
+        for (j = 0; j < m.addedNodes.length; j++) mutAcc += subtreeCount(m.addedNodes[j]);
+        for (j = 0; j < m.removedNodes.length; j++) mutAcc += subtreeCount(m.removedNodes[j]);
+      }
+    });
+    mo.observe(document.documentElement || document, { childList: true, subtree: true });
+  } catch (e) {}
+  function armDomSwap() {
+    var urlBefore = location.href, mutBefore = mutAcc;
+    setTimeout(function () {
+      if (location.href !== urlBefore) return;          // a real navigation already emitted a gate
+      // Count only mutation NOT already attributed to an earlier dom_settle: when several clicks
+      // land inside one settle window over a single swap, this records the marker exactly once
+      // (no duplicates) while still never missing a genuinely fresh swap.
+      var base = mutBefore > mutConsumed ? mutBefore : mutConsumed;
+      if ((mutAcc - base) < DOM_SWAP_MIN) return;       // no fresh significant swap -> rely on implicit wait
+      mutConsumed = mutAcc;
+      record({ action_type: 'dom_settle', primary: null, candidates: [], is_navigation_boundary: false });
+    }, DOM_SWAP_SETTLE_MS);
+  }
+
   // --- clicks (commit pending input first; label dedup; interactive ancestor) ---
   var lastLabelControl = null, lastLabelAt = 0;
   document.addEventListener('click', function (e) {
@@ -297,6 +343,7 @@
     if (lastLabelControl === el && (now - lastLabelAt) < 700) { lastLabelAt = now; return; } // suppress label->control dup
     if (raw.tagName === 'LABEL' || (raw.closest && raw.closest('label'))) { lastLabelControl = el; lastLabelAt = now; }
     emit('click', el);
+    armDomSwap();   // C2: watch for a no-URL-change DOM swap caused by this click
   }, true);
 
   // --- Enter key ---
