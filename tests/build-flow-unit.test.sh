@@ -63,7 +63,15 @@ eq "$(jq -r '.input_1' "$VALUES")" 'a@b.com' "values input_1"
 eq "$(jq -r '.input_3' "$VALUES")" 'US' "values input_3"
 eq "$(jq -r 'has("input_2")' "$VALUES")" 'false' "masked password value must NOT be in values.json"
 
-# 11. compile must REFUSE a flow with a needs_review step (exit non-zero, no test written)
+# 11. candidates sidecar (verify-repair ladder): nested {_steps, byStep}, per-step entries carry
+#     `count` (so verify only repairs to a capture-time-unique candidate), keyed by flow step index.
+CAND="$FLOWS/uflow.candidates.json"
+[ -s "$CAND" ] || fail "no candidates.json sidecar produced"
+eq "$(jq -r '._steps' "$CAND")" "$(jq -r '.steps|length' "$FLOW")" "candidates _steps matches flow step count"
+eq "$(jq -rc '.byStep["0"][0]|[.by,.value,.count]' "$CAND")" '["testid","checkout-btn",1]' "step0 ladder entry carries count"
+eq "$(jq -r '.byStep|has("6")' "$CAND")" 'true' "needs_review step (#6) also has a ladder"
+
+# 12. compile must REFUSE a flow with a needs_review step (exit non-zero, no test written)
 if bash "$DIR/bin/probe-record.sh" compile "$FLOW" >/dev/null 2>&1; then
 	fail "compile accepted a needs_review flow (must refuse)"
 fi

@@ -128,13 +128,17 @@ seed where they conflict (the seed's blockers below were empirically wrong).
   Structural ceiling of any recorder; round-trip on same build is the backstop.
 - **wrong-element-but-count==1**: cardinality ≠ identity; mutated SPA between action and drain.
   Mitigated by per-boundary drain (read while element exists) + matchesTarget at capture.
-  - **verify-repair replay (v2, DEFERRED 2026-06-03)**: a post-capture step that re-drives the flow
-    and non-destructively probes each locator (`find … hover --json`), recovering down the candidate
-    ladder or promoting to needs_review, would further mitigate the three risks above. Deferred:
-    (a) the top risk (accname/role divergence) is already blunted by WKIND ranking testid/text/label
-    above the unreliable role; (b) `compile → run.sh` round-trip is the existing locator backstop;
-    (c) a step-by-step replay+repair engine duplicates run.sh and is a large new layer (KISS/YAGNI).
-    Pick up as a separate bin/verify-flow.* if needs_review frequency proves too high in practice.
+  - **verify-repair replay (IMPLEMENTED 2026-06-03, P2.6)**: `bin/verify-flow.sh` (opt-in
+    `probe-record.sh verify <flow>`) re-drives the flow and non-destructively probes each locator
+    (`find … hover`); on failure it repairs down the captured candidate ladder
+    (`flows/<name>.candidates.json` sidecar, written by build-flow.js) or promotes the step to
+    needs_review, then rewrites flow.json. Directly mitigates the three risks above (accname
+    divergence / record-time-uniqueness-only / stale locator) by catching find-failures at the
+    same build before compile. Re-drive is destructive (same-build replay, side effects) and stops
+    at the first unresolved step (later steps unverified) — both intentional. Reuses lib/env.sh +
+    lib/assert.sh (bin→lib). Regression: tests/verify-flow.test.sh (repair + promote, headless).
+    Residual: cardinality≠identity means a hover-resolving repair can still be the wrong element
+    (no count primitive for semantic locators on 0.27.0); round-trip remains the backstop.
 - **closed shadow roots / cross-origin iframes** unreachable → thin candidates → needs_review (not silent).
 - **duplicate-text grids** (N 'Edit' rows, no testid) → every step needs_review (correct fail-loud;
   schema has no scope/index to auto-resolve).

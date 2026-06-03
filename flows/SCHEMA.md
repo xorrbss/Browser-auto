@@ -58,6 +58,14 @@ Absent field == false; hand-written flows are unaffected. `compile` **refuses** 
 non-zero, lists the offending steps) on any `needs_review:true` — never a silent drop, never
 a fragile/positional fallback.
 
+**verify-repair (optional, `probe-record.sh verify`).** Because in-page uniqueness is only an
+estimate of how the engine's `find` resolves (an open risk), a step can pass capture yet fail at
+replay. `verify` re-drives the flow and, for each `find` step, non-destructively probes the
+locator (`find … hover`); if it no longer resolves it **repairs** the step from the captured
+candidate ladder or **promotes** it to `needs_review`, then rewrites the flow. The ladder lives in
+a **gitignored** `flows/<name>.candidates.json` sidecar (per-step `{by, value, name?}` alternates,
+written by capture); it is page structure, not PII, and is regenerated on each capture.
+
 ### Parameterized input values (flows/*.flow.json is git-committed)
 
 `fill`/`type`/`select` steps store **`{{input_N}}` tokens**, never the literal value, in the

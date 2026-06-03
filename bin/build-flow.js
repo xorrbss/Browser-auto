@@ -48,6 +48,16 @@ let inputN = 0;
 const warns = [];
 let needsReview = 0, maskedCount = 0;
 let lastUrl = startUrl;
+// Per find-step candidate ladder (the captured alternates), keyed by flow step index. Written to
+// the gitignored <name>.candidates.json sidecar so the optional `verify` step can REPAIR a step
+// whose primary locator no longer resolves at replay (down the ladder) before promoting it to
+// needs_review. Page structure, not PII; regenerated on each capture.
+const candidatesByStep = {};
+function ladderOf(rec) {
+  // keep count: verify only repairs to a capture-time-UNIQUE candidate (count==1), the same bar
+  // capture applied to the primary, so it never "repairs" to a non-unique (wrong-element) locator.
+  return (rec.candidates || []).map((c) => { const o = { by: c.by, value: c.value }; if (c.name) o.name = c.name; if (c.count != null) o.count = c.count; return o; });
+}
 
 function actionFind(rec, action, extra) {
   const p = rec.primary;
@@ -56,6 +66,7 @@ function actionFind(rec, action, extra) {
     const step = { kind: 'find', needs_review: true, candidates: (rec.candidates || []).slice(0, Math.max(2, (rec.candidates || []).length)) };
     if (action) step.action = action;
     steps.push(step);
+    candidatesByStep[steps.length - 1] = ladderOf(rec);
     warns.push(`needs_review step #${steps.length - 1} (${rec.action_type}): ` +
       (rec.candidates || []).map((c) => `${c.by}:${c.value}${c.count != null ? '(' + c.count + ')' : ''}`).join(', '));
     return;
@@ -65,6 +76,7 @@ function actionFind(rec, action, extra) {
   step.action = action;
   if (extra) Object.assign(step, extra);
   steps.push(step);
+  candidatesByStep[steps.length - 1] = ladderOf(rec);
 }
 
 function token(realValue) {
@@ -134,10 +146,21 @@ if (Object.keys(values).length) {
   valuesPath = path.join(flowsDir, name + '.values.json');
   fs.writeFileSync(valuesPath, JSON.stringify(values, null, 2) + '\n');
 }
+const candPath = path.join(flowsDir, name + '.candidates.json');
+let candWritten = false;
+if (Object.keys(candidatesByStep).length) {
+  // `_steps` lets `verify` detect a flow whose steps were structurally edited after capture (the
+  // ladder indices would no longer line up). Always (re)write fresh, or remove a stale sidecar.
+  fs.writeFileSync(candPath, JSON.stringify({ _steps: steps.length, byStep: candidatesByStep }, null, 2) + '\n');
+  candWritten = true;
+} else if (fs.existsSync(candPath)) {
+  fs.unlinkSync(candPath);
+}
 
 // summary
 console.error(`[build-flow] wrote ${flowPath}`);
 console.error(`[build-flow] steps=${steps.length} needs_review=${needsReview} masked=${maskedCount} values=${Object.keys(values).length}`);
 if (valuesPath) console.error(`[build-flow] values sidecar (gitignored) -> ${valuesPath}  keys: ${Object.keys(values).join(', ')}`);
+if (candWritten) console.error(`[build-flow] candidates sidecar (gitignored) -> ${candPath}  (repair ladder for \`verify\`)`);
 if (warns.length) { console.error('[build-flow] WARNINGS:'); warns.forEach((w) => console.error('  - ' + w)); }
 if (needsReview) console.error(`[build-flow] NOTE: ${needsReview} step(s) need_review — resolve them in ${flowPath}; compile will refuse until then.`);
