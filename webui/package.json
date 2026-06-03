@@ -1,0 +1,10 @@
+{
+	"name": "agent-qa-webui",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Local web UI (control plane) over the agent-qa bash CLI. Zero runtime dependencies.",
+	"scripts": {
+		"start": "node server.js"
+	}
+}
