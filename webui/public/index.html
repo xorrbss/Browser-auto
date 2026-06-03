@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>agent-qa — runs</title>
+	<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+	<header>
+		<h1>agent-qa</h1>
+		<span class="sub">results dashboard</span>
+		<button id="refresh" type="button" title="Reload runs">↻ refresh</button>
+	</header>
+	<main>
+		<aside id="runs" class="runs">
+			<div class="hint">loading runs…</div>
+		</aside>
+		<section id="detail" class="detail">
+			<div class="placeholder">Select a run on the left.</div>
+		</section>
+	</main>
+	<script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -28,19 +28,19 @@ plane actually work.
 4. **localhost-only** to start (spawns processes + drives a real browser → never expose
    externally). All web artifacts isolated under a new `webui/` folder.
 
-## Architecture
+## Architecture — LOCKED (WF-Arch, 2026-06-03)
 
-> **Decided by WF-Arch** (adversarial compare → judge → synthesize). See
-> web-ui-context.md "DECISIONS". Shape (confirmed by the constraints above):
->
-> `[browser SPA/pages] —HTTP + SSE→ [local Node server] —child_process→ existing bash CLI`
-> `(run.sh / probe-record.sh / verify-flow.sh / setup/auth.sh)` + `record.cmd` (PowerShell).
->
-> - **Backend:** Node (same ecosystem as agent-browser). Spawns CLI, streams stdout over
->   SSE, serves `artifacts/` statically, indexes `report.json`. Single-slot browser job
->   queue.
-> - **Index store + frontend framework:** locked by WF-Arch (disk at 96% ⇒ minimize
->   node_modules; KISS ⇒ prefer no-build / zero-dep unless a judge finds a fatal flaw).
+`[browser, vanilla JS] —HTTP + SSE→ [raw node:http server] —child_process→ bash CLI / record.cmd`
+
+- **Backend:** raw `node:http`, switch dispatch, `127.0.0.1` only. **Zero npm deps.**
+- **Live log (P1+):** SSE. **Index:** in-process mtime-keyed Map cache over fs-scan of
+  `artifacts/*/report.json` (no sqlite — experimental on v24). **Frontend:** no-build
+  vanilla JS/HTML/CSS. **Serial queue (P1+):** single-slot promise chain, jobFn awaits
+  child `'close'`. **Spawn:** Git-Bash `bash.exe` for the CLI, `cmd.exe`+`record.cmd` for
+  the recorder; `shell:false`+array args.
+- `package.json` is inside `webui/` (not repo root) — `"type":"module"` scoped to webui/.
+- Full rationale + the two judge-proven fixes (broken stdin recorder-stop → `--seconds`;
+  no-CLI needs_review "resolve" → UI-owned flow.json edit): see web-ui-context.md DECISIONS.
 
 ## Phases (value/risk order — each independently demoable; start at P0)
 

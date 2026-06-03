@@ -1,0 +1,6 @@
+# webui keeps NO runtime deps and NO source of truth of its own — the filesystem
+# (artifacts/, flows/) is authoritative. Ignore anything generated/installed.
+node_modules/
+logs/
+data/
+*.log

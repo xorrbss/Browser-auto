@@ -10,21 +10,27 @@ Legend: [ ] todo · [~] in progress · [x] done · [!] blocked
       capture-mode context)
 - [x] Confirm env (Git Bash tool, Node v24, disk, clean tree); cut `feat/web-ui-p0`
 - [x] Write plan / context / tasks docs by hand
-- [~] WF-Arch: adversarial compare candidate stacks → judge → synthesize a decision
-- [ ] (gate) Confirm stack with user if WF-Arch surfaces a genuine fork
-- [ ] Record final architecture in web-ui-context.md DECISIONS + plan Architecture
-- [ ] Commit foundation docs
+- [x] WF-Arch: adversarial compare candidate stacks → judge → synthesize a decision
+- [x] (gate) No user fork — `userDecisionNeeded=false`; constraints determined the stack
+- [x] Record final architecture in web-ui-context.md DECISIONS + plan Architecture
+- [x] Commit foundation docs (4358560)
 
 ## Phase 0 — Results dashboard  (browser drive = 0)
 
-- [ ] `webui/` scaffold (server entry, static dir, .gitignore additions, run instructions)
-- [ ] Index `artifacts/*/report.json` → runs list (run-id, timestamp, pass/fail, rows)
-- [ ] `GET /api/runs`, `GET /api/runs/:id` (parsed from report.json)
-- [ ] Static serving of `artifacts/<run-id>/<test>/video.webm` + report files
-- [ ] Dashboard page: runs list → run detail (per-test status/duration, video, report)
-- [ ] Acceptance: start server, parse `/api/runs` against real artifacts, play a video.
-      No browser launches. Verify by field parsing, not exit code.
-- [ ] `bash run.sh` suite still GREEN; commit
+- [x] `webui/` scaffold (server.js, index.js, public/, package.json, .gitignore, README)
+- [x] Index `artifacts/*/report.json` → runs list (run-id, timestamp, pass/fail, rows)
+- [x] `GET /api/runs`, `GET /api/runs/:id` (parsed from report.json, mtime cache)
+- [x] Static serving of `artifacts/<run-id>/<test>/video.webm` (Range) + report files
+- [x] Dashboard page: runs list → run detail (per-test status/duration, video, report)
+- [x] Acceptance: server up; `/api/runs`+`/api/runs/:id` parsed against real artifacts;
+      video full(200)+Range(206); traversal guarded. Verified by field parsing, not exit code.
+- [x] WF-Review-P0 (5-dim adversarial review; 18 findings/14 confirmed) → 6 distinct fixes
+      applied (stream pipeline crash+fd-leak, %-decode 404, EADDRINUSE handler, RUN_ID date
+      round-trip, 416 Accept-Ranges, static TOCTOU) → all re-verified empirically
+- [x] GREEN baseline 7/7; **P0 committed + merged to master (--no-ff)**
+
+P0 = DEMOABLE: `node webui/server.js` → http://127.0.0.1:4310 → runs list → run detail
+(per-test pass/fail + inline video with seeking). Zero browser launches, zero npm deps.
 
 ## Phase 1 — Run trigger + serial queue
 
