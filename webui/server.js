@@ -36,8 +36,9 @@ import http from 'node:http';
 import { createReadStream, statSync } from 'node:fs';
 import { pipeline } from 'node:stream';
 import path from 'node:path';
+import os from 'node:os';
 import { listRuns, getRun, getTrends, pruneArtifacts, ARTIFACTS_DIR } from './index.js';
-import { enqueue, jobStatus, subscribe, queueState, cancel, killRunning } from './jobs.js';
+import { enqueue, jobStatus, subscribe, queueState, cancel, stop, killRunning } from './jobs.js';
 import { gitBash, recordCmd } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
 import { listAuthStates, validApp, deleteAuthState } from './auth.js';
@@ -274,15 +275,26 @@ const server = http.createServer(async (req, res) => {
 				if (flowExists(name) && bodyJson.overwrite !== true) {
 					return sendJson(res, 409, { error: `flow '${name}' already exists — re-record will overwrite it`, exists: true });
 				}
+				// Per-recording stop-file the UI can touch for a graceful early finish (in tmpdir, not
+				// the repo). jobs.stop() writes it; capture() watches it; runJob's finally removes it.
+				const stopFile = path.join(os.tmpdir(), `aqa-stop-${name}-${Date.now()}`);
 				const job = enqueue({
 					kind: 'record',
 					label: `record ${name} (${seconds}s)`,
-					spawnFn: () => recordCmd(name, startUrl, { app: app || undefined, seconds }),
+					spawnFn: () => recordCmd(name, startUrl, { app: app || undefined, seconds, stopFile }),
+					stopFile,
 				});
 				return sendJson(res, 202, { job, flow: name });
 			}
 
-			if (p === '/api/verify') {
+			// Graceful early finish of a running recording (a COMPLETE capture; vs cancel's kill).
+				// Body-less POST; sits after readJson, so the UI sends a "{}" body (see util.stopJob).
+				const mStop = /^\/api\/jobs\/([^/]+)\/stop$/.exec(p);
+				if (mStop) {
+					return stop(mStop[1]) ? sendJson(res, 200, { ok: true }) : sendJson(res, 409, { error: 'job not stoppable (not a running recording)' });
+				}
+
+				if (p === '/api/verify') {
 				const name = String(bodyJson.name || '').trim();
 				if (!flowExists(name)) return sendJson(res, 400, { error: 'no such flow' });
 				const job = enqueue({

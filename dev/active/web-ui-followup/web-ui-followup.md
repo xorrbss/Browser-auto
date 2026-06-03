@@ -109,6 +109,35 @@ alt/title/aria-label already captured; pushState/replaceState/hashchange nav alr
   end-to-end on a real page. All in-page mechanisms are verified autonomously; only the real headed
   capture needs a person.
 - The whole web-ui-followup batch (D1, D2, C1, C2) is now complete and on master.
+
+## Track E — web recorder graceful "stop now" (branch: feat/webui-record-stop) [2026-06-04]
+User asked: web record had only the N-second auto-stop or "✕ 취소" (force taskkill → partial/degraded
+capture); no normal early-finish. ROOT: capture()'s manual stop reads /dev/tty (Enter), unreachable
+from the non-tty web spawn. FIX: a file-based stop signal (graceful = COMPLETE capture).
+- bin/probe-record.sh capture: reads AQA_CAPTURE_STOPFILE into `stopfile`; clears a stale file at
+  start; `_stopfile_hit` helper; BOTH watch loops (timed --seconds + /dev/tty) break on it → fall
+  through to the SAME drain path as auto-stop. Standalone (record.cmd, no env) is unaffected
+  (stopfile empty → helper always false → zero behavior change).
+- webui/spawn.js: gitBash(scriptRel,args,extraEnv) merges extraEnv over process.env; recordCmd passes
+  the stop-file path as AQA_CAPTURE_STOPFILE.
+- webui/jobs.js: enqueue({stopFile}); stop(id) writes the file (only the running job, only if it has
+  a stopFile) — distinct from cancel(id)'s tree-kill; runJob finally rmSync's it.
+- webui/server.js: record handler builds a tmpdir stop-file (flow-name + timestamp); POST
+  /api/jobs/:id/stop → jobs.stop (after readJson, so the client sends a "{}" body).
+- webui/public: util.stopJob; flows.js shows/hides #rec-stop (incl. reconcile) + click→stopJob;
+  index.html "■ 지금 종료" button; app.css .stop-btn (accent, vs the red .cancel-btn).
+- VERIFIED: suite 9/9 GREEN (gate3, + re-gate after fixes). Adversarial review (12 agents, 7 findings
+  / 3 confirmed, ALL low) → all fixed:
+  - startup lost-signal race: capture() deleted the stop-file at startup, racing an early stop click
+    (sub-second window) → DROPPED the start-of-run `rm`; webui's fresh timestamped path + finally
+    rmSync already guarantee no stale file. Standalone record.cmd unaffected (stopfile empty → no-op).
+  - stop on a still-QUEUED record job 409'd silently → util.stopJob returns r.ok; flows.js shows an
+    "아직 대기 중…" note in the rec-log on a non-ok stop.
+  - (refuted: 2× cosmetic over-indent of the /stop block, Win-backslash path empirically OK, 1
+    duplicate race verdict.) _stopfile_hit helper unit-checked (no signal→continue / signal→break /
+    empty→never breaks).
+- HUMAN end-to-end: a real headed web record + pressing "■ 지금 종료" (its drain is the SAME complete
+  path as --seconds auto-stop, which the suite already exercises).
 - [ ] HUMAN-only: a live headed re-record (record.cmd driving real Chrome on a real long-text link +
       a pure-DOM-swap SPA) to confirm C1/C2 end-to-end. Every autonomously-verifiable mechanism is
       covered; only the real headed capture needs a person.

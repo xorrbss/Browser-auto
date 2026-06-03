@@ -15,10 +15,10 @@ const GIT_BASH = process.env.WEBUI_BASH || 'C:\\Program Files\\Git\\bin\\bash.ex
 
 // gitBash(scriptRel, args): run a bash CLI script (path relative to PROBE_ROOT), e.g.
 // gitBash('run.sh', ['login'])  ->  bash.exe run.sh login   (cwd = PROBE_ROOT).
-export function gitBash(scriptRel, args = []) {
+export function gitBash(scriptRel, args = [], extraEnv = null) {
 	return spawn(GIT_BASH, [scriptRel, ...args], {
 		cwd: PROBE_ROOT,
-		env: process.env,
+		env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
 		windowsHide: true,
 	});
 }
@@ -32,11 +32,13 @@ export function gitBash(scriptRel, args = []) {
 // inert argument. (Chrome is still shown by agent-browser's headed mode; only the bash console
 // is hidden.) --seconds is MANDATORY: capture()'s interactive /dev/tty stop is unreachable from
 // a non-tty spawn, so a timed auto-stop is the only web-drivable way to end a recording.
-export function recordCmd(name, startUrl, { app, seconds } = {}) {
+export function recordCmd(name, startUrl, { app, seconds, stopFile } = {}) {
 	const args = ['capture', name, startUrl];
 	if (app) args.push('--app', app);
 	args.push('--seconds', String(seconds));
-	return gitBash('bin/probe-record.sh', args);
+	// stopFile (optional): a path the web UI touches to request a GRACEFUL early finish; capture()
+	// watches AQA_CAPTURE_STOPFILE and breaks into its normal drain path (a complete flow).
+	return gitBash('bin/probe-record.sh', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
 }
 
 // killTree(pid): kill a process AND its whole descendant tree. On Windows child.kill()

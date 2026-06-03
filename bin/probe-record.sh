@@ -205,6 +205,15 @@ capture() {
 	fi
 
 	local recfile; recfile="$(mktemp)"; echo '[]' > "$recfile"
+	# Web-drivable GRACEFUL stop: the interactive /dev/tty stop is unreachable from a non-tty spawn
+	# (the web UI), so the UI signals a normal early finish by creating AQA_CAPTURE_STOPFILE. The
+	# watch loops below break on it and fall through to the SAME drain path as --seconds auto-stop —
+	# a COMPLETE capture, unlike a taskkill cancel (which yields a partial/degraded flow). We do NOT
+	# delete a pre-existing file at startup: webui uses a FRESH timestamped path per recording and
+	# removes it when the job ends, so there is never a stale file; deleting here would instead race a
+	# stop click that landed in the sub-second window before this line runs (review: lost-signal race).
+	# Standalone record.cmd leaves AQA_CAPTURE_STOPFILE unset → stopfile empty → the helper is never true.
+	local stopfile="${AQA_CAPTURE_STOPFILE:-}"
 	local flushed=0 degraded=0 cap_seq=0 cap_recovered=0 orig_tab="" newtab=0 _stopped=0 crossorigin=0 start_origin=""
 	# Drain the in-page buffer ONCE, then close. Judged via jq .success: a dead browser FAILS
 	# LOUD (write nothing) rather than emitting an empty flow.json. Idempotent (Enter + Ctrl-C
@@ -269,6 +278,8 @@ capture() {
 	# a top-level cross-origin nav (sessionStorage moves origin, losing events). Either stops us so
 	# we drain the original tab, write the partial flow, and fail loud — better than silently
 	# missing actions.
+	# True once the web UI has requested a graceful stop (file-based signal; tty-free).
+	_stopfile_hit() { [ -n "$stopfile" ] && [ -f "$stopfile" ]; }
 	_watch() {
 		local out cnt aurl aorig
 		out="$(agent-browser --session "$sess" tab list --json 2>/dev/null </dev/null || true)"
@@ -285,6 +296,7 @@ capture() {
 		local _end=$(( $(date +%s) + secs ))
 		while [ "$(date +%s)" -lt "$_end" ]; do
 			[ "$_stopped" = 1 ] && break
+			_stopfile_hit && { echo "[probe] stop signal received — finishing capture." >&2; break; }
 			if _watch; then break; fi
 			sleep 1
 		done
@@ -295,6 +307,7 @@ capture() {
 		printf '\n>>> Recording. Do your journey in the browser window, then press ENTER here to stop...\n'
 		while :; do
 			[ "$_stopped" = 1 ] && break
+			_stopfile_hit && { echo "[probe] stop signal received — finishing capture." >&2; break; }
 			if _watch; then break; fi
 			if read -t 1 -r _ </dev/tty; then break; fi
 		done
