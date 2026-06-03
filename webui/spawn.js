@@ -23,6 +23,22 @@ export function gitBash(scriptRel, args = []) {
 	});
 }
 
+// recordCmd(name, startUrl, {app, seconds}): launch the headed-Chrome recorder. We invoke
+// bin/probe-record.sh capture DIRECTLY via Git-Bash (exactly what record.cmd's body does:
+// `bash.exe bin/probe-record.sh capture %*`) rather than going through `cmd.exe /c record.cmd`.
+// Going through cmd.exe is a COMMAND-INJECTION hole: cmd.exe re-parses its own command line, so
+// a startUrl containing & | < > ^ " escapes the arg and runs arbitrary commands — defeating
+// shell:false. gitBash() passes an argv array to bash.exe with no shell, so startUrl is one
+// inert argument. (Chrome is still shown by agent-browser's headed mode; only the bash console
+// is hidden.) --seconds is MANDATORY: capture()'s interactive /dev/tty stop is unreachable from
+// a non-tty spawn, so a timed auto-stop is the only web-drivable way to end a recording.
+export function recordCmd(name, startUrl, { app, seconds } = {}) {
+	const args = ['capture', name, startUrl];
+	if (app) args.push('--app', app);
+	args.push('--seconds', String(seconds));
+	return gitBash('bin/probe-record.sh', args);
+}
+
 // killTree(pid): kill a process AND its whole descendant tree. On Windows child.kill()
 // only signals the top process — it does NOT reap bash -> run.sh -> agent-browser -> Chrome,
 // which would leave a wedged daemon. taskkill /T walks the tree; /F forces. Best-effort.

@@ -51,14 +51,33 @@ P0 = DEMOABLE: `node webui/server.js` → http://127.0.0.1:4310 → runs list �
 P1 = DEMOABLE: Run bar → ▶ Run suite (optional glob) → live SSE log → pass/fail → new run
 auto-opens in the dashboard. Serial queue proven; cancel + watchdog + graceful shutdown.
 
-## Phase 2 — Recorder + Flow editor
+## Phase 2 — Recorder + Flow editor  (built + verified; review in progress)
 
-- [ ] Trigger/collect a `record.cmd` capture (PowerShell spawn, serialized)
-- [ ] Show produced `flow.json`; needs_review candidate-picker UI
-- [ ] Fill `{{input_N}}` values → `flows/<name>.values.json`
-- [ ] `verify` (bin/verify-flow.sh) then `compile` → tests/<name>.test.sh
-- [ ] Acceptance: end-to-end record→edit→verify→compile→run on a safe site
-- [ ] suite GREEN; commit; merge milestone
+- [x] spawn.recordCmd (cmd.exe /c record.cmd … --seconds N mandatory); POST /api/record
+      → record job through the SAME serial queue (browser job)
+- [x] webui/flows.js (pure FS): listFlows/getFlow; resolveStep = write picked candidate as
+      step locator + delete needs_review/candidates (documented human edit); saveValues sidecar
+- [x] GET /api/flows, /api/flows/:name; POST /api/flows/:name/{resolve,values}
+- [x] POST /api/verify (browser job → queue); POST /api/compile (deterministic, un-queued, sync)
+- [x] Flow editor UI (flows.js + util.js split; app.js = entry): steps view, candidate-picker
+      radios, {{input_N}} values form, gated Compile (needs_review==0 && all values filled)
+- [x] Acceptance (autonomous parts PROVEN): list/get/resolve/values; compile refusal(unresolved)
+      + success(resolved)→tests/<name>.test.sh; verify nav-roundtrip browser job exit 0;
+      frontend modules render; view switch; **candidate radio click → resolve mutated flow.json**
+- [x] WF-Review-P2 (30 agents, 25 findings/24 confirmed) → fixes all re-verified:
+      **CRITICAL cmd.exe arg-injection via startUrl → RCE** (recordCmd used `cmd.exe /c
+      record.cmd`; cmd.exe re-parses args) → **fixed: recordCmd now spawns Git-Bash directly on
+      `bin/probe-record.sh capture` (no cmd.exe) + `new URL()` validation + Origin/CSRF guard**;
+      LOW: overwrite-guard (409 unless overwrite), recorder onEnd gated on success, persistent
+      flow-log/compile-out (no detached node), flow-job cancel buttons, `%`-escape→404 on
+      resolve/values, press-step rendering, serialized flow.json writes (no lost update).
+- [x] suite GREEN (gate 7/7 exit 0); fixes are webui-only (isolated). Frontend re-smoke after
+      restructure: runs render, flows render, candidate-picker click→resolve, concurrency mutex.
+- [ ] commit; --no-ff merge milestone
+- [!] **NEEDS HUMAN**: full headed `record.cmd` capture (human drives real Chrome → flow). The
+      spawn shape (now Git-Bash `probe-record.sh capture --seconds N`) + record-job wiring + the
+      editor (candidate-picker→resolve, values, verify, gated compile) are all verified; only a
+      live human-driven headed recording remains (seed-#5 pattern).
 
 ## Phase 3 — Policy (optional)
 

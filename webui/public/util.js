@@ -1,0 +1,76 @@
+// webui/public/util.js — tiny shared DOM/fetch helpers + the job SSE stream machinery,
+// imported by app.js (Runs view) and flows.js (Flows view). No framework, no build.
+
+export const $ = (sel) => document.querySelector(sel);
+
+// el('div', {class:'x', onclick:fn}, 'text', childNode, ...)
+export function el(tag, props = {}, ...children) {
+	const node = document.createElement(tag);
+	for (const [k, v] of Object.entries(props)) {
+		if (v == null) continue;
+		if (k === 'class') node.className = v;
+		else if (k === 'dataset') Object.assign(node.dataset, v);
+		else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+		else node.setAttribute(k, v);
+	}
+	for (const c of children) {
+		if (c == null) continue;
+		node.append(c.nodeType ? c : document.createTextNode(String(c)));
+	}
+	return node;
+}
+
+export async function getJson(url) {
+	const r = await fetch(url);
+	if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`);
+	return r.json();
+}
+
+export const fmtMs = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`);
+export const fmtTime = (iso) => {
+	if (!iso) return '';
+	const d = new Date(iso);
+	return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+};
+
+// Exactly one job stream is open at a time. Starting another closes the prior one, so a stale
+// job's 'end' never reaches the client (no view hijack); clearing on '(re)open' avoids
+// duplicated lines when the browser EventSource auto-reconnects after a transport drop.
+let currentEs = null;
+
+export function streamJob(jobId, logEl, onEnd) {
+	if (currentEs) {
+		currentEs.close();
+		currentEs = null;
+	}
+	const es = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/stream`);
+	currentEs = es;
+	es.addEventListener('open', () => {
+		logEl.textContent = '';
+	});
+	es.addEventListener('line', (ev) => {
+		const { line } = JSON.parse(ev.data);
+		const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4;
+		logEl.append(document.createTextNode(line + '\n'));
+		if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+	});
+	es.addEventListener('end', (ev) => {
+		es.close();
+		if (currentEs === es) currentEs = null;
+		if (onEnd) onEnd(JSON.parse(ev.data));
+	});
+	es.onerror = () => {
+		if (es.readyState === EventSource.CLOSED && currentEs === es) {
+			currentEs = null;
+			logEl.append(document.createTextNode('\n[webui] log stream closed — reload to view.\n'));
+		}
+	};
+}
+
+export async function cancelJob(id) {
+	try {
+		await fetch(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+	} catch {
+		/* the SSE end frame still reports the final state */
+	}
+}
