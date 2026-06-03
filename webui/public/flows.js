@@ -10,7 +10,7 @@ function stepSummary(s) {
 	if (s.kind === 'wait') return `wait ${s.until || ''}="${s.value || ''}"`;
 	if (s.kind === 'press') return `press ${s.value || ''}`;
 	if (s.kind === 'find') {
-		const loc = s.needs_review ? '⟨needs review⟩' : `${s.by || '?'}="${s.value || ''}"${s.name ? ` name="${s.name}"` : ''}`;
+		const loc = s.needs_review ? '⟨검토 필요⟩' : `${s.by || '?'}="${s.value || ''}"${s.name ? ` name="${s.name}"` : ''}`;
 		const arg = s.text != null ? ` "${s.text}"` : s.val != null ? ` =${s.val}` : '';
 		return `find ${loc} → ${s.action || ''}${arg}`;
 	}
@@ -37,7 +37,7 @@ export async function loadFlows() {
 		const { flows } = await getJson('/api/flows');
 		list.replaceChildren();
 		if (!flows.length) {
-			list.append(el('div', { class: 'hint' }, 'No flows yet. Record one above.'));
+			list.append(el('div', { class: 'hint' }, '아직 플로우가 없습니다. 위에서 녹화하세요.'));
 			return;
 		}
 		for (const f of flows) {
@@ -46,18 +46,18 @@ export async function loadFlows() {
 				el(
 					'button',
 					{ class: 'run-row' + (f.name === selectedFlow ? ' active' : ''), type: 'button', dataset: { flow: f.name }, onclick: () => openFlow(f.name) },
-					el('span', { class: 'badge ' + (ok ? 'pass' : 'run') }, ok ? 'OK' : `${f.needsReview}⚠`),
+					el('span', { class: 'badge ' + (ok ? 'pass' : 'run') }, ok ? '정상' : `${f.needsReview}⚠`),
 					el(
 						'span',
 						{ class: 'run-meta' },
 						el('span', { class: 'run-id' }, f.name),
-						el('span', { class: 'run-sub' }, `${f.steps} steps${f.inputTokens.length ? ` • ${f.inputTokens.length} input` : ''}${f.compiled ? ' • compiled' : ''}`),
+						el('span', { class: 'run-sub' }, `${f.steps}단계${f.inputTokens.length ? ` • 입력 ${f.inputTokens.length}` : ''}${f.compiled ? ' • 컴파일됨' : ''}`),
 					),
 				),
 			);
 		}
 	} catch (e) {
-		list.replaceChildren(el('div', { class: 'error' }, `Failed to load flows: ${e.message}`));
+		list.replaceChildren(el('div', { class: 'error' }, `플로우 목록을 불러오지 못했습니다: ${e.message}`));
 	}
 }
 
@@ -69,11 +69,11 @@ async function openFlow(name) {
 	for (const b of document.querySelectorAll('#flows-list .run-row')) b.classList.toggle('active', b.dataset.flow === name);
 	if (switching) resetFlowOutputs(); // clear another flow's stale log/output (but keep a just-finished verify log on same-flow reload)
 	const ed = $('#flow-editor');
-	ed.replaceChildren(el('div', { class: 'placeholder' }, 'Loading…'));
+	ed.replaceChildren(el('div', { class: 'placeholder' }, '로딩 중…'));
 	try {
 		renderEditor(await getJson(`/api/flows/${encodeURIComponent(name)}`));
 	} catch (e) {
-		ed.replaceChildren(el('div', { class: 'error' }, `Failed to load flow: ${e.message}`));
+		ed.replaceChildren(el('div', { class: 'error' }, `플로우를 불러오지 못했습니다: ${e.message}`));
 	}
 }
 
@@ -84,7 +84,7 @@ function renderEditor(flow) {
 	const head = el(
 		'div',
 		{ class: 'detail-head' },
-		el('span', { class: 'badge ' + (ok ? 'pass' : 'run') }, ok ? 'RESOLVED' : `${flow.needsReviewSteps.length}⚠`),
+		el('span', { class: 'badge ' + (ok ? 'pass' : 'run') }, ok ? '해결됨' : `${flow.needsReviewSteps.length}⚠`),
 		el('h2', {}, flow.name),
 		el('span', { class: 'detail-sub' }, flow.startUrl + (flow.app ? ` • app:${flow.app}` : '')),
 	);
@@ -116,24 +116,24 @@ function renderEditor(flow) {
 	if (flow.inputTokens.length) {
 		const form = el('div', { class: 'values' });
 		flow.inputTokens.forEach((t) => {
-			form.append(el('label', { class: 'val-row' }, el('span', {}, t), el('input', { id: `val-${t}`, value: flow.values[t] || '', placeholder: 'value', autocomplete: 'off' })));
+			form.append(el('label', { class: 'val-row' }, el('span', {}, t), el('input', { id: `val-${t}`, value: flow.values[t] || '', placeholder: '값', autocomplete: 'off' })));
 		});
-		const saveBtn = el('button', { type: 'button', class: 'btn', onclick: () => saveValues(flow.name, flow.inputTokens) }, 'Save values');
-		valuesBox = el('div', { class: 'values-box' }, el('h3', {}, 'Input values'), form, saveBtn);
+		const saveBtn = el('button', { type: 'button', class: 'btn', onclick: () => saveValues(flow.name, flow.inputTokens) }, '값 저장');
+		valuesBox = el('div', { class: 'values-box' }, el('h3', {}, '입력 값'), form, saveBtn);
 	}
 
 	// Actions: verify (browser job) + gated compile
-	const compileBtn = el('button', { type: 'button', class: 'btn primary', onclick: () => compile(flow.name) }, '⚙ Compile → test');
+	const compileBtn = el('button', { type: 'button', class: 'btn primary', onclick: () => compile(flow.name) }, '⚙ 컴파일 → 테스트');
 	if (!flow.compilable) {
 		compileBtn.disabled = true;
-		compileBtn.title = flow.needsReviewSteps.length ? 'resolve all needs_review steps first' : `fill all input values first (missing: ${flow.missingValues.join(', ')})`;
+		compileBtn.title = flow.needsReviewSteps.length ? '먼저 모든 검토 필요 단계를 해결하세요' : `먼저 모든 입력 값을 채우세요 (누락: ${flow.missingValues.join(', ')})`;
 	}
 	const actions = el(
 		'div',
 		{ class: 'actions' },
-		el('button', { type: 'button', class: 'btn', onclick: () => verify(flow.name) }, '↻ Verify (re-drive)'),
+		el('button', { type: 'button', class: 'btn', onclick: () => verify(flow.name) }, '↻ 검증 (재실행)'),
 		compileBtn,
-		flow.compiled ? el('span', { class: 'detail-sub' }, `tests/${flow.name}.test.sh exists`) : null,
+		flow.compiled ? el('span', { class: 'detail-sub' }, `tests/${flow.name}.test.sh 존재`) : null,
 	);
 
 	ed.replaceChildren(head, steps, valuesBox, actions);
@@ -151,10 +151,10 @@ async function resolve(name, step, candidate) {
 			renderEditor(data.flow);
 			loadFlows();
 		} else {
-			alert(`Resolve failed: ${data.error || r.status}`);
+			alert(`해결 실패: ${data.error || r.status}`);
 		}
 	} catch (e) {
-		alert(`Resolve failed: ${e.message}`);
+		alert(`해결 실패: ${e.message}`);
 	}
 }
 
@@ -169,9 +169,9 @@ async function saveValues(name, tokens) {
 		});
 		const data = await r.json();
 		if (data.flow) renderEditor(data.flow);
-		else alert(`Save failed: ${data.error || r.status}`);
+		else alert(`저장 실패: ${data.error || r.status}`);
 	} catch (e) {
-		alert(`Save failed: ${e.message}`);
+		alert(`저장 실패: ${e.message}`);
 	}
 }
 
@@ -182,7 +182,7 @@ async function verify(name) {
 		const r = await fetch('/api/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
 		if (!r.ok) {
 			const e = await r.json().catch(() => ({}));
-			log.textContent = `verify rejected: ${e.error || r.status}`;
+			log.textContent = `검증 거부됨: ${e.error || r.status}`;
 			return;
 		}
 		const { job } = await r.json();
@@ -194,21 +194,21 @@ async function verify(name) {
 			openFlow(name); // re-drive may repair/promote steps -> reload (same-flow: keeps the log)
 		});
 	} catch (e) {
-		log.textContent = `verify failed: ${e.message}`;
+		log.textContent = `검증 실패: ${e.message}`;
 	}
 }
 
 async function compile(name) {
 	const out = $('#compile-out');
 	out.hidden = false;
-	out.textContent = 'compiling…';
+	out.textContent = '컴파일 중…';
 	try {
 		const r = await fetch('/api/compile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
 		const data = await r.json();
-		out.textContent = (data.ok ? `✓ compiled → ${data.testFile}\n\n` : `✗ compile failed (exit ${data.code})\n\n`) + (data.output || data.error || '');
+		out.textContent = (data.ok ? `✓ 컴파일됨 → ${data.testFile}\n\n` : `✗ 컴파일 실패 (종료 ${data.code})\n\n`) + (data.output || data.error || '');
 		if (data.ok) loadFlows();
 	} catch (e) {
-		out.textContent = `compile failed: ${e.message}`;
+		out.textContent = `컴파일 실패: ${e.message}`;
 	}
 }
 
@@ -221,7 +221,7 @@ function startRecord() {
 	const seconds = parseInt($('#rec-seconds').value, 10) || 120;
 	const log = $('#rec-log');
 	log.hidden = false;
-	log.textContent = 'starting recorder…';
+	log.textContent = '녹화 시작 중…';
 	fetch('/api/record', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -230,7 +230,7 @@ function startRecord() {
 		.then((r) => r.json().then((d) => ({ ok: r.ok, d })))
 		.then(({ ok, d }) => {
 			if (!ok) {
-				log.textContent = `record rejected: ${d.error || 'error'}` + (d.exists ? ' (a flow with this name exists — re-recording overwrites it)' : '');
+				log.textContent = `녹화 거부됨: ${d.error || 'error'}` + (d.exists ? ' (같은 이름의 플로우가 있습니다 — 다시 녹화하면 덮어씁니다)' : '');
 				return;
 			}
 			activeFlowJob = d.job.id;
@@ -245,7 +245,7 @@ function startRecord() {
 			});
 		})
 		.catch((e) => {
-			log.textContent = `record failed: ${e.message}`;
+			log.textContent = `녹화 실패: ${e.message}`;
 		});
 }
 
