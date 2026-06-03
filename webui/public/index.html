@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,53 +9,53 @@
 <body data-view="runs">
 	<header>
 		<h1>agent-qa</h1>
-		<span class="sub">web UI</span>
+		<span class="sub">웹 UI</span>
 		<nav class="nav">
-			<button id="nav-runs" type="button" class="active">Runs</button>
-			<button id="nav-flows" type="button">Flows</button>
-			<button id="nav-trends" type="button">Trends</button>
-			<button id="nav-auth" type="button">Auth</button>
-			<button id="nav-jobs" type="button">Jobs</button>
+			<button id="nav-runs" type="button" class="active">실행</button>
+			<button id="nav-flows" type="button">플로우</button>
+			<button id="nav-trends" type="button">추세</button>
+			<button id="nav-auth" type="button">인증</button>
+			<button id="nav-jobs" type="button">작업</button>
 		</nav>
-		<span id="qstatus" class="qstatus">idle</span>
-		<button id="refresh" type="button" title="Reload">↻</button>
+		<span id="qstatus" class="qstatus">대기</span>
+		<button id="refresh" type="button" title="새로고침">↻</button>
 	</header>
 
 	<div class="runbar">
 		<input id="glob" type="text" autocomplete="off" spellcheck="false"
-			placeholder="test glob (optional) — e.g. login or nav-*" />
-		<button id="run" type="button">▶ Run suite</button>
+			placeholder="테스트 glob (선택) — 예: login 또는 nav-*" />
+		<button id="run" type="button">▶ 스위트 실행</button>
 	</div>
 
 	<main>
 		<!-- Runs view -->
 		<div class="view view-runs">
-			<aside id="runs" class="runs"><div class="hint">loading runs…</div></aside>
-			<section id="detail" class="detail"><div class="placeholder">Select a run on the left.</div></section>
+			<aside id="runs" class="runs"><div class="hint">실행 목록 로딩 중…</div></aside>
+			<section id="detail" class="detail"><div class="placeholder">왼쪽에서 실행을 선택하세요.</div></section>
 		</div>
 
 		<!-- Flows view -->
 		<div class="view view-flows">
 			<section class="flows-pane">
 				<div class="recorder">
-					<h3>Record a journey</h3>
-					<p class="note">Opens a real headed Chrome (via record.cmd) and auto-stops after N seconds.
-						You drive the page; the recorder builds the flow. One browser job at a time.</p>
+					<h3>여정 녹화</h3>
+					<p class="note">실제 헤디드 Chrome을 (record.cmd로) 열고 N초 후 자동 정지합니다.
+						사용자가 페이지를 조작하면 레코더가 플로우를 만듭니다. 브라우저 작업은 한 번에 하나씩.</p>
 					<div class="rec-form">
-						<input id="rec-name" placeholder="flow name (e.g. checkout)" autocomplete="off" spellcheck="false" />
+						<input id="rec-name" placeholder="플로우 이름 (예: checkout)" autocomplete="off" spellcheck="false" />
 						<input id="rec-url" placeholder="https://app.example.com/start" autocomplete="off" spellcheck="false" />
-						<input id="rec-app" placeholder="app (optional, cached auth)" autocomplete="off" spellcheck="false" />
-						<input id="rec-seconds" type="number" min="5" max="1800" value="120" title="auto-stop seconds" />
-						<button id="rec-btn" type="button">● Record</button>
-						<button id="rec-cancel" type="button" class="cancel-btn" hidden>✕ cancel</button>
+						<input id="rec-app" placeholder="앱 (선택, 캐시된 인증)" autocomplete="off" spellcheck="false" />
+						<input id="rec-seconds" type="number" min="5" max="1800" value="120" title="자동 정지 초" />
+						<button id="rec-btn" type="button">● 녹화</button>
+						<button id="rec-cancel" type="button" class="cancel-btn" hidden>✕ 취소</button>
 					</div>
 					<pre id="rec-log" class="joblog" hidden></pre>
 				</div>
 				<div class="flows-main">
-					<aside id="flows-list" class="runs"><div class="hint">loading flows…</div></aside>
+					<aside id="flows-list" class="runs"><div class="hint">플로우 로딩 중…</div></aside>
 					<section class="editor-col">
-						<div id="flow-editor"><div class="placeholder">Select a flow to edit.</div></div>
-						<div id="flow-jobbar" hidden><button id="flow-cancel" type="button" class="cancel-btn">✕ cancel</button></div>
+						<div id="flow-editor"><div class="placeholder">편집할 플로우를 선택하세요.</div></div>
+						<div id="flow-jobbar" hidden><button id="flow-cancel" type="button" class="cancel-btn">✕ 취소</button></div>
 						<pre id="flow-log" class="joblog" hidden></pre>
 						<pre id="compile-out" class="compile-out" hidden></pre>
 					</section>
@@ -66,36 +66,36 @@
 		<!-- Trends view -->
 		<div class="view view-trends">
 			<section class="pane">
-				<h3>Pass-rate trends</h3>
-				<div id="trends"><div class="hint">loading trends…</div></div>
+				<h3>통과율 추세</h3>
+				<div id="trends"><div class="hint">추세 로딩 중…</div></div>
 			</section>
 		</div>
 
 		<!-- Auth view -->
 		<div class="view view-auth">
 			<section class="pane">
-				<h3>Authenticate an app (one-time OTP login)</h3>
-				<p class="note">Opens a real headed Chrome window; complete the login + OTP by hand.
-					The script waits for the success URL, then caches
-					<code>fixtures/auth/&lt;app&gt;.state.json</code> so tests replay logged-in. One
-					browser job at a time.</p>
+				<h3>앱 인증 (1회 OTP 로그인)</h3>
+				<p class="note">실제 헤디드 Chrome 창을 엽니다. 로그인과 OTP를 직접 완료하세요.
+					스크립트가 성공 URL에 도달할 때까지 기다린 뒤
+					<code>fixtures/auth/&lt;app&gt;.state.json</code>을 캐시해 테스트가 로그인 상태로
+					재생됩니다. 브라우저 작업은 한 번에 하나씩.</p>
 				<div class="rec-form">
-					<input id="auth-app" placeholder="app (e.g. myapp)" autocomplete="off" spellcheck="false" />
+					<input id="auth-app" placeholder="앱 (예: myapp)" autocomplete="off" spellcheck="false" />
 					<input id="auth-login" placeholder="https://app.example.com/login" autocomplete="off" spellcheck="false" />
-					<input id="auth-success" placeholder="success URL glob — e.g. **/dashboard" autocomplete="off" spellcheck="false" />
-					<button id="auth-btn" type="button">🔑 Authenticate</button>
-					<button id="auth-cancel" type="button" class="cancel-btn" hidden>✕ cancel</button>
+					<input id="auth-success" placeholder="성공 URL glob — 예: **/dashboard" autocomplete="off" spellcheck="false" />
+					<button id="auth-btn" type="button">🔑 인증</button>
+					<button id="auth-cancel" type="button" class="cancel-btn" hidden>✕ 취소</button>
 				</div>
-				<p class="note">Cached states: <span id="auth-list">—</span></p>
+				<p class="note">캐시된 상태: <span id="auth-list">—</span></p>
 				<pre id="auth-log" class="joblog" hidden></pre>
 			</section>
 		</div>
 
 		<!-- Jobs view -->
 		<div class="view view-jobs">
-			<aside id="jobs-list" class="runs"><div class="hint">loading jobs…</div></aside>
+			<aside id="jobs-list" class="runs"><div class="hint">작업 로딩 중…</div></aside>
 			<section class="editor-col">
-				<div id="jobs-detail"><div class="placeholder">Select a job to view its log.</div></div>
+				<div id="jobs-detail"><div class="placeholder">로그를 볼 작업을 선택하세요.</div></div>
 				<pre id="jobs-log" class="joblog" hidden></pre>
 			</section>
 		</div>

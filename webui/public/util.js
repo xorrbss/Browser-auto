@@ -33,6 +33,12 @@ export const fmtTime = (iso) => {
 	return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 };
 
+// status -> Korean badge label (job/test/run states); unknown values fall back to upper-case.
+export const statusKo = (s) => {
+	const k = String(s == null ? '' : s).toLowerCase();
+	return { pass: '통과', fail: '실패', ok: '정상', done: '완료', failed: '실패', cancelled: '취소', running: '실행중', pending: '대기', queued: '대기' }[k] || String(s == null ? '' : s).toUpperCase();
+};
+
 // Exactly one job stream is open at a time. Starting another closes the prior one, so a stale
 // job's 'end' never reaches the client (no view hijack); clearing on '(re)open' avoids
 // duplicated lines when the browser EventSource auto-reconnects after a transport drop.
@@ -62,7 +68,7 @@ export function streamJob(jobId, logEl, onEnd) {
 	es.onerror = () => {
 		if (es.readyState === EventSource.CLOSED && currentEs === es) {
 			currentEs = null;
-			logEl.append(document.createTextNode('\n[webui] log stream closed — reload to view.\n'));
+			logEl.append(document.createTextNode('\n[webui] 로그 스트림이 닫혔습니다 — 새로고침하세요.\n'));
 		}
 	};
 }
