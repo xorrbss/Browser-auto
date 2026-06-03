@@ -1,7 +1,7 @@
 // webui/public/flows.js — Flows view: recorder control + flow editor (candidate picker,
 // {{input_N}} values, gated compile, verify). Imports shared helpers from util.js.
 
-import { $, el, getJson, streamJob, cancelJob } from './util.js';
+import { $, el, getJson, streamJob, cancelJob, stopJob } from './util.js';
 
 let selectedFlow = null;
 let activeFlowJob = null; // id of the in-flight record/verify job (single-slot queue)
@@ -234,10 +234,10 @@ function startRecord() {
 				return;
 			}
 			activeFlowJob = d.job.id;
-			$('#rec-cancel').hidden = false;
+			$('#rec-stop').hidden = false; $('#rec-cancel').hidden = false;
 			streamJob(d.job.id, log, (done) => {
 				activeFlowJob = null;
-				$('#rec-cancel').hidden = true;
+				$('#rec-stop').hidden = true; $('#rec-cancel').hidden = true;
 				loadFlows();
 				// only open the editor if the capture actually produced a flow (capture exits
 				// non-zero + writes nothing on 0 events / cross-origin / new-tab).
@@ -256,13 +256,22 @@ function startRecord() {
 export function reconcileFlowJob(activeIds) {
 	if (activeFlowJob && !activeIds.has(activeFlowJob)) {
 		activeFlowJob = null;
-		$('#rec-cancel').hidden = true;
+		$('#rec-stop').hidden = true; $('#rec-cancel').hidden = true;
 		$('#flow-jobbar').hidden = true;
 	}
 }
 
 export function initFlows() {
 	$('#rec-btn').addEventListener('click', startRecord);
+	$('#rec-stop').addEventListener('click', () => {
+		if (!activeFlowJob) return;
+		stopJob(activeFlowJob).then((ok) => {
+			if (ok) return; // a running recording will finish gracefully (complete capture)
+			const l = $('#rec-log');
+			l.hidden = false;
+			l.append(document.createTextNode('\n[webui] 아직 대기 중 — 녹화가 시작된 뒤에 종료할 수 있습니다.\n'));
+		});
+	});
 	$('#rec-cancel').addEventListener('click', () => activeFlowJob && cancelJob(activeFlowJob));
 	$('#flow-cancel').addEventListener('click', () => activeFlowJob && cancelJob(activeFlowJob));
 	loadFlows();

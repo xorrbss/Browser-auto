@@ -80,3 +80,14 @@ export async function cancelJob(id) {
 		/* the SSE end frame still reports the final state */
 	}
 }
+
+// stopJob(id): request a GRACEFUL early finish of a running recording (a COMPLETE capture) — vs
+// cancelJob's tree-kill (partial). Sends a "{}" body because /stop is parsed after the JSON reader.
+export async function stopJob(id) {
+	try {
+		const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+		return r.ok; // false (409) when the job is still queued — not yet a running recording
+	} catch {
+		return false; /* the SSE end frame still reports the final state */
+	}
+}

@@ -7,6 +7,7 @@
 // spawned. That structurally guarantees serialization. Read-only HTTP endpoints do NOT go
 // through here (they touch no daemon) and run concurrently.
 
+import fs from 'node:fs';
 import { killTree } from './spawn.js';
 
 const MAX_LOG = 2000; // per-job log ring-buffer cap
@@ -133,6 +134,7 @@ async function runJob(job) {
 		pushLine(job, `[webui] job error: ${(e && e.message) || e}`);
 	} finally {
 		if (timer) clearTimeout(timer);
+		if (job.stopFile) { try { fs.rmSync(job.stopFile, { force: true }); } catch {} } // clear the stop signal
 		job.child = null;
 		job.endedAt = Date.now();
 		runningId = null;
@@ -141,7 +143,7 @@ async function runJob(job) {
 }
 
 // enqueue({kind, label, spawnFn}) -> public job record. spawnFn() must return a ChildProcess.
-export function enqueue({ kind, label, spawnFn }) {
+export function enqueue({ kind, label, spawnFn, stopFile }) {
 	const id = `j${++seq}`;
 	const job = {
 		id,
@@ -157,6 +159,7 @@ export function enqueue({ kind, label, spawnFn }) {
 		child: null,
 		cancelled: false,
 		timedOut: false,
+		stopFile: stopFile || null,
 		spawnFn,
 		log: [],
 		subscribers: new Set(),
@@ -184,6 +187,24 @@ export function cancel(id) {
 		pushLine(job, '[webui] cancel requested — killing process tree');
 		killTree(job.pid);
 	}
+	return true;
+}
+
+// stop(id): GRACEFUL early finish of a running recording — create its stop-file so capture()'s
+// watch loop breaks into the SAME drain path as --seconds auto-stop (a COMPLETE flow), unlike
+// cancel()'s tree-kill (a partial/degraded capture). No-op unless the job has a stopFile and is the
+// one currently running. Returns true only when a stop signal was actually written.
+export function stop(id) {
+	const job = jobs.get(id);
+	if (!job || !job.stopFile) return false;
+	if (id !== runningId || job.status !== 'running') return false;
+	try {
+		fs.writeFileSync(job.stopFile, '');
+	} catch (e) {
+		pushLine(job, `[webui] stop signal write failed: ${(e && e.message) || e}`);
+		return false;
+	}
+	pushLine(job, '[webui] stop requested — finishing the recording (complete capture)…');
 	return true;
 }
 
