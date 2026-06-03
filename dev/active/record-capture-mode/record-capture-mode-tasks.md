@@ -15,7 +15,8 @@ Last Updated: 2026-06-02
   - P1.4 new-tab 감지(`tab list` 폴 → orig_tab drain → partial flow → exit1, 유닛+실와이어링 검증)
   - Infra.9 build-flow.js 브라우저-불요 유닛테스트(+compile needs_review 거부)
   - P2.7/P3 한계 문서화(README scope&limitations)
-  - **보류**: **#5 사람 녹화 round-trip(사람 필요)**
+  - **#5 사람 녹화 round-trip: DONE (2026-06-03)** — iana.org 4단계 녹화 → needs_review 4건 해결(실페이지
+    조사) → verify-repair → compile → run.sh ianatour 1/1 GREEN. ianatour 영구 회귀 테스트로 커밋. **seed acceptance 12/12.**
 - Phase 5 — **P2.6 verify-repair: DONE (2026-06-03, branch feat/verify-repair, suite 6/6 GREEN)**
   - bin/verify-flow.sh(재생+검증/복구/needs_review 승격) · build-flow.js candidates 사이드카 · probe-record.sh `verify` 모드
   - tests/verify-flow.test.sh(repair+promote) · README/SCHEMA/design 갱신 · 적대적 리뷰

@@ -177,7 +177,11 @@ rather than guessing):
 - **No unique stable locator → `needs_review`** (with ≥2 candidates), never a fragile guess.
   This is expected for icon-only buttons whose only accessible name is `aria-label` (the
   engine's `find role --name` is unreliable on 0.27.0, so role is only a low-priority
-  candidate), duplicate-text grids (N identical "Edit" rows), and closed shadow roots.
+  candidate), duplicate-text grids (N identical "Edit" rows), closed shadow roots, and links
+  or buttons whose visible text is **very long** (>80 chars — no exact-text locator; the
+  candidate list can come back empty). Tip: when recording, click the **short labelled**
+  control, not a long descriptive block. Resolve a `needs_review` step by picking a candidate,
+  or run `verify` (which re-drives and repairs from the captured ladder where it can).
 - **SPA navigation:** `history.pushState`/`replaceState`/hash changes are captured as
   wait-gates; a pure DOM-swap router that changes no URL produces no wait signal — replay
   then leans on the next locator's implicit wait.

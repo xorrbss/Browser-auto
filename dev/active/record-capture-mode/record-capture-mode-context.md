@@ -119,6 +119,15 @@ Last Updated: 2026-06-02
     추가, **suite 6/6 GREEN**. 적대적 리뷰 진행(verify-flow.sh 집중).
   - **잔여 한계**: cardinality≠identity — hover로 해결돼도 wrong-element 가능(0.27.0 시맨틱 count 프리미티브 부재);
     round-trip이 backstop. design.md OPEN RISKS 갱신.
+- 2026-06-03 (이어서): **#5 사람 녹화 round-trip GREEN → seed acceptance 12/12 충족. 목표 도달.**
+  사용자가 `record.cmd ianatour https://www.iana.org/ --seconds 40`로 4단계 네비 녹화(8 이벤트). 캡처 메커니즘
+  정상(이벤트/네비/wait/candidates 사이드카)이나 **iana 딥-네비가 캡처 품질 한계 노출**:
+  step #2·#4가 **후보 빈 배열**(사용자가 누른 게 >80자 긴 설명 블록 링크 → 텍스트 후보 len>80 거부 → 로케이터 無),
+  #0 "Domain Names" 중복(2 링크, 단 둘 다 /domains), #6 role:link(불안정). → **실페이지 eval 조사**로 진짜 텍스트
+  로케이터 확인(Root Zone Management / Top-Level Domains / .abarth) + #0 text로 4개 needs_review 전부 해결 →
+  **verify-repair(P2.6)로 재생검증: verified=4 promoted=0 'Safe to compile'** → compile → **run.sh ianatour 1/1 GREEN**.
+  사용자 선택으로 **ianatour를 영구 회귀 테스트로 커밋**(실 사람-녹화 round-trip). README 한계에 ">80자 텍스트→
+  needs_review, 짧은 라벨 컨트롤 클릭 팁" 추가. **모든 P0/P1/P2/P3/인프라 + 12 acceptance 완료 — 자율 작업 종결.**
 
 ## Current Execution Contract
 
