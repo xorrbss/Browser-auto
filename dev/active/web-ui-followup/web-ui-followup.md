@@ -59,9 +59,13 @@ alt/title/aria-label already captured; pushState/replaceState/hashchange nav alr
   the existing nav tests.
 
 ## STATUS
-- [ ] D1 Jobs view
-- [ ] D2 auth-delete + artifacts-retention + run-diff
-- [ ] webui-extras review + merge
-- [ ] C1 long-text candidates (engine pre-check first)
+- [x] D1 Jobs view (frontend-only; lists /api/queue jobs, replays log via SSE)
+- [x] D2 auth-delete (POST /api/auth/:app/delete) + artifacts-retention (pruneArtifacts on
+      startup, WEBUI_KEEP_RUNS). run-diff SKIPPED (Trends test×run table already shows pass↔fail).
+- [x] webui-extras review (7/7 confirmed) → fixes: cancelled-job stream now ends promptly
+      (subscribe terminal check incl 'cancelled'); KEEP_RUNS parse+clamp (0 honored, negative
+      can't wipe all) + pruneArtifacts(keep<0) guard; RUN_ID PID-numeric sort (same-second safe).
+      All re-verified; suite 7/7 GREEN. **Merged to master.**
+- [ ] C1 long-text candidates (engine pre-check first) — NEXT
 - [ ] C2 DOM-swap wait gate
 - [ ] capture-improve review + merge + re-validate

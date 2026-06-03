@@ -209,7 +209,10 @@ export function subscribe(id, res) {
 	});
 	if (typeof res.flushHeaders === 'function') res.flushHeaders();
 	for (const line of job.log) writeSse(res, 'line', { line });
-	if (job.status === 'done' || job.status === 'failed') {
+	// All terminal states (incl. 'cancelled') must short-circuit — finishJob already fired the
+	// one-and-only 'end' to the original subscribers, so a late subscriber (e.g. the Jobs view
+	// opening a historical job) would otherwise wait forever and leak the connection.
+	if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') {
 		writeSse(res, 'end', publicJob(job));
 		res.end();
 		return true;

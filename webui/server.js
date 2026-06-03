@@ -45,7 +45,10 @@ import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.WEBUI_PORT) || 4310;
-const KEEP_RUNS = Number(process.env.WEBUI_KEEP_RUNS) || 50; // artifacts retention (disk hygiene)
+// artifacts retention (disk hygiene). Explicit parse so 0 ("keep none") is honored and a
+// negative/NaN value can't slip through (a negative would otherwise prune ALL runs).
+const _keep = Number(process.env.WEBUI_KEEP_RUNS);
+const KEEP_RUNS = Number.isFinite(_keep) && _keep >= 0 ? Math.floor(_keep) : 50;
 
 const MIME = {
 	'.html': 'text/html; charset=utf-8',
