@@ -27,6 +27,8 @@
 //   GET  /api/trends           -> { runs:[{passRate...}], tests:{name:[{status}]} } (read-only)
 //   GET  /api/auth             -> { apps:[<cached state names>] }
 //   POST /api/auth             -> enqueue setup/auth.sh (headed OTP, serial); { job, app }
+//   POST /api/auth/:app/delete -> remove fixtures/auth/<app>.state.json; { ok, apps }
+//   GET  /api/trends           -> { runs, tests } (also: artifacts retention prunes on startup)
 //
 // Run: `node webui/server.js`  (WEBUI_PORT overrides the default port).
 
@@ -34,15 +36,16 @@ import http from 'node:http';
 import { createReadStream, statSync } from 'node:fs';
 import { pipeline } from 'node:stream';
 import path from 'node:path';
-import { listRuns, getRun, getTrends, ARTIFACTS_DIR } from './index.js';
+import { listRuns, getRun, getTrends, pruneArtifacts, ARTIFACTS_DIR } from './index.js';
 import { enqueue, jobStatus, subscribe, queueState, cancel, killRunning } from './jobs.js';
 import { gitBash, recordCmd } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
-import { listAuthStates, validApp } from './auth.js';
+import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.WEBUI_PORT) || 4310;
+const KEEP_RUNS = Number(process.env.WEBUI_KEEP_RUNS) || 50; // artifacts retention (disk hygiene)
 
 const MIME = {
 	'.html': 'text/html; charset=utf-8',
@@ -318,6 +321,18 @@ const server = http.createServer(async (req, res) => {
 				return sendJson(res, 202, { job, app });
 			}
 
+			const mAuthDel = /^\/api\/auth\/([^/]+)\/delete$/.exec(p);
+			if (mAuthDel) {
+				let app;
+				try {
+					app = decodeURIComponent(mAuthDel[1]);
+				} catch {
+					return sendJson(res, 400, { error: 'invalid app name' });
+				}
+				const r = await deleteAuthState(app);
+				return r.ok ? sendJson(res, 200, { ok: true, apps: await listAuthStates() }) : sendJson(res, 400, r);
+			}
+
 			const mResolve = /^\/api\/flows\/([^/]+)\/resolve$/.exec(p);
 			if (mResolve) {
 				let fname;
@@ -452,4 +467,7 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 server.listen(PORT, HOST, () => {
 	console.log(`[webui] listening on http://${HOST}:${PORT}`);
 	console.log(`[webui] artifacts: ${ARTIFACTS_DIR}`);
+	pruneArtifacts(KEEP_RUNS).then((r) => {
+		if (r.pruned.length) console.log(`[webui] pruned ${r.pruned.length} old run dir(s), kept newest ${r.kept} (WEBUI_KEEP_RUNS=${KEEP_RUNS})`);
+	});
 });

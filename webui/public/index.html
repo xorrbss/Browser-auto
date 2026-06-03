@@ -15,6 +15,7 @@
 			<button id="nav-flows" type="button">Flows</button>
 			<button id="nav-trends" type="button">Trends</button>
 			<button id="nav-auth" type="button">Auth</button>
+			<button id="nav-jobs" type="button">Jobs</button>
 		</nav>
 		<span id="qstatus" class="qstatus">idle</span>
 		<button id="refresh" type="button" title="Reload">↻</button>
@@ -87,6 +88,15 @@
 				</div>
 				<p class="note">Cached states: <span id="auth-list">—</span></p>
 				<pre id="auth-log" class="joblog" hidden></pre>
+			</section>
+		</div>
+
+		<!-- Jobs view -->
+		<div class="view view-jobs">
+			<aside id="jobs-list" class="runs"><div class="hint">loading jobs…</div></aside>
+			<section class="editor-col">
+				<div id="jobs-detail"><div class="placeholder">Select a job to view its log.</div></div>
+				<pre id="jobs-log" class="joblog" hidden></pre>
 			</section>
 		</div>
 	</main>

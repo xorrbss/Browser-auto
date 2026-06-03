@@ -9,7 +9,7 @@
 // URLs are DERIVED from runId + test name (artifacts/<runId>/<name>/video.webm), never
 // from the report's absolute `artifacts` path string (which is host-specific).
 
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -115,6 +115,34 @@ export async function listRuns() {
 export async function getRun(runId) {
 	if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return null;
 	return getRunCached(runId);
+}
+
+// pruneArtifacts(keep): delete all but the newest `keep` RUN_ID dirs under artifacts/ (disk
+// hygiene; the disk runs ~97% full). Only touches dirs matching RUN_ID_RE (never "standalone"
+// or anything else), only under ARTIFACTS_DIR. Returns the dropped run ids.
+export async function pruneArtifacts(keep) {
+	let entries;
+	try {
+		entries = await readdir(ARTIFACTS_DIR, { withFileTypes: true });
+	} catch {
+		return { kept: 0, pruned: [] };
+	}
+	const ids = entries
+		.filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name))
+		.map((e) => e.name)
+		.sort(); // ascending == oldest first
+	const drop = ids.slice(0, Math.max(0, ids.length - Math.max(0, keep)));
+	const pruned = [];
+	for (const id of drop) {
+		try {
+			await rm(path.join(ARTIFACTS_DIR, id), { recursive: true, force: true });
+			cache.delete(id);
+			pruned.push(id);
+		} catch {
+			/* best-effort */
+		}
+	}
+	return { kept: ids.length - pruned.length, pruned };
 }
 
 // getTrends(): pass-rate over time + per-test pass/fail history, oldest→newest. Read-only;
