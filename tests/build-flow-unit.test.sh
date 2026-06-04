@@ -133,4 +133,35 @@ eq "$(jq -rc '.steps[1]|[.kind,.until,.value]' "$FLOW4")" '["wait","load","netwo
 eq "$(jq -rc '.steps[2]|[.kind,.until,.value]' "$FLOW4")" '["wait","url","**/b"]' "navds url-wait gate AFTER the settle"
 eq "$(jq -rc '.steps[3]|[.kind,.value]' "$FLOW4")" '["find","OnPageB"]' "navds step3 find on page B"
 
+# 16. scroll (#2): a valid page-scroll record -> {kind:scroll,dir,px}; malformed scrolls (bad dir /
+#     px<=0) are DROPPED; and compile emits a STANDALONE `AB scroll <dir> <px>` line (splits the batch,
+#     never a _run_batch command — batch rejects scroll).
+REC5="$TMP/records5.json"; FLOWS5="$TMP/flows5"; mkdir -p "$FLOWS5"
+cat > "$REC5" <<'JSON'
+[
+ {"seq":1,"action_type":"click","url_at_capture":"https://app.example.com/feed","primary":{"by":"text","value":"Open"},"candidates":[{"by":"text","value":"Open","count":1}],"is_navigation_boundary":false},
+ {"seq":2,"action_type":"scroll","dir":"down","px":700,"primary":null,"candidates":[],"is_navigation_boundary":false},
+ {"seq":3,"action_type":"scroll","dir":"sideways","px":50,"primary":null,"candidates":[],"is_navigation_boundary":false},
+ {"seq":4,"action_type":"scroll","dir":"down","px":0,"primary":null,"candidates":[],"is_navigation_boundary":false},
+ {"seq":5,"action_type":"click","url_at_capture":"https://app.example.com/feed","primary":{"by":"text","value":"Loaded"},"candidates":[{"by":"text","value":"Loaded","count":1}],"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" scflow "https://app.example.com/feed" "" "$REC5" "$FLOWS5" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on the scroll stream"
+FLOW5="$FLOWS5/scflow.flow.json"
+eq "$(jq -r '.steps|length' "$FLOW5")" '3' "scroll: the two malformed records (bad dir / px<=0) dropped"
+eq "$(jq -rc '.steps[0]|[.kind,.value,.action]' "$FLOW5")" '["find","Open","click"]' "scroll step0 click"
+eq "$(jq -rc '.steps[1]|[.kind,.dir,.px]' "$FLOW5")" '["scroll","down",700]' "scroll step1 -> {kind:scroll,dir:down,px:700}"
+eq "$(jq -rc '.steps[2]|[.kind,.value]' "$FLOW5")" '["find","Loaded"]' "scroll step2 click after the dropped scrolls"
+# compile -> a standalone `AB scroll 'down' '700'` line (column 0, not inside a _run_batch).
+SCN="_bfu_scroll_$$"
+jq --arg n "$SCN" '.name=$n' "$FLOW5" > "$DIR/flows/$SCN.flow.json"
+bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$SCN.flow.json" >/dev/null 2>&1 || fail "scroll flow compile failed"
+grep -qE "^AB scroll 'down' '700'$" "$DIR/tests/$SCN.test.sh" || fail "compile must emit a standalone 'AB scroll down 700' line"
+# the scroll must SPLIT the batch: a _run_batch (find Open) BEFORE it, the scroll, a _run_batch (find
+# Loaded) AFTER (segment order B S B) — proving it is a standalone line, never coalesced into a batch.
+sseq="$(grep -oE "^_run_batch |^AB scroll " "$DIR/tests/$SCN.test.sh" | sed "s/_run_batch /B/; s/AB scroll /S/" | tr -d ' \n')"
+eq "$sseq" 'BSB' "scroll splits the batch: find-batch, scroll, find-batch (B S B)"
+rm -f "$DIR/flows/$SCN.flow.json" "$DIR/flows/$SCN.candidates.json" "$DIR/tests/$SCN.test.sh"
+
 echo "  ✓ build-flow-unit.test.sh passed"

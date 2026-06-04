@@ -374,6 +374,46 @@
     }, DOM_SWAP_SETTLE_MS);
   }
 
+  // --- explicit PAGE scroll (coalesced; #2) ---
+  // Only window.scrollY/X (page scroll) is tracked, so a scrollable CONTAINER's scroll never changes
+  // it and is inherently ignored (containers need a selector = out of scope). A gesture is debounced
+  // into ONE record: on settle, the net delta from the last committed position becomes a `scroll`
+  // action (dominant axis, |Δ| >= SCROLL_MIN). commitScroll() flushes any pending INPUT first so the
+  // buffer seq matches the journey, and it is called before every recorded click/key/nav so a
+  // scroll-then-action never reorders. Replay re-issues `scroll <dir> <px>` BY the delta (composes).
+  var SCROLL_SETTLE_MS = 250, SCROLL_MIN = 80;
+  var scrollTimer = null, scrollBaseY = 0, scrollBaseX = 0, scrollPending = false;
+  function _scrollY() { try { return Math.round(window.scrollY || window.pageYOffset || 0); } catch (e) { return 0; } }
+  function _scrollX() { try { return Math.round(window.scrollX || window.pageXOffset || 0); } catch (e) { return 0; } }
+  scrollBaseY = _scrollY(); scrollBaseX = _scrollX();
+  function commitScroll() {
+    if (scrollTimer) { clearTimeout(scrollTimer); scrollTimer = null; }
+    if (!scrollPending) return;
+    scrollPending = false;
+    commitPend();                              // commit any pending input BEFORE the scroll (seq order)
+    var y = _scrollY(), x = _scrollX(), dy = y - scrollBaseY, dx = x - scrollBaseX;
+    scrollBaseY = y; scrollBaseX = x;
+    var ay = Math.abs(dy), ax = Math.abs(dx);
+    if (Math.max(ay, ax) < SCROLL_MIN) return;  // jitter / trivial scroll -> drop
+    var dir, px;
+    if (ay >= ax) { dir = dy > 0 ? 'down' : 'up'; px = ay; } else { dir = dx > 0 ? 'right' : 'left'; px = ax; }
+    record({ action_type: 'scroll', dir: dir, px: px, primary: null, candidates: [], is_navigation_boundary: false });
+  }
+  window.addEventListener('scroll', function () {
+    scrollPending = true;
+    if (scrollTimer) clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(commitScroll, SCROLL_SETTLE_MS);
+  });
+  // flushAll: commit a pending INPUT and then a pending scroll, in that order. Bound to the Enter key
+  // and to teardown so a typed value is NEVER lost when the form submits / the context dies with no
+  // intervening focusout/change (commitScroll alone early-returns past its commitPend when no scroll
+  // is pending — that was a regression vs the prior unconditional commitPend teardown).
+  function flushAll() { commitPend(); commitScroll(); }
+  // resetScrollBase: re-anchor the scroll delta to the CURRENT page offset at a navigation boundary.
+  // The init-script does NOT re-run on SPA nav, so without this a stale pre-nav base would make the
+  // first post-nav scroll record a wrong direction/magnitude (a route change often resets scroll).
+  function resetScrollBase() { scrollBaseY = _scrollY(); scrollBaseX = _scrollX(); scrollPending = false; if (scrollTimer) { clearTimeout(scrollTimer); scrollTimer = null; } }
+
   // --- clicks (commit pending input first; label dedup; interactive ancestor) ---
   var lastLabelControl = null, lastLabelAt = 0;
   document.addEventListener('click', function (e) {
@@ -383,17 +423,18 @@
     var now = Date.now();
     if (lastLabelControl === el && (now - lastLabelAt) < 700) { lastLabelAt = now; return; } // suppress label->control dup
     if (raw.tagName === 'LABEL' || (raw.closest && raw.closest('label'))) { lastLabelControl = el; lastLabelAt = now; }
+    commitScroll();   // flush a pending scroll BEFORE this click so the buffer order matches the journey
     emit('click', el);
     armDomSwap();   // C2: watch for a no-URL-change DOM swap caused by this click
   }, true);
 
   // --- Enter key ---
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { var el = realTarget(e); emit('key', el, { input_value: 'Enter' }); }
+    if (e.key === 'Enter') { var el = realTarget(e); flushAll(); emit('key', el, { input_value: 'Enter' }); }
   }, true);
 
   // --- navigation: A(durable, via record) + B(history) + C(prevUrl sentinel) + D(teardown) ---
-  function navMark(from) { record({ action_type: 'navigate', from: from, primary: null, candidates: [], is_navigation_boundary: true }); }
+  function navMark(from) { commitScroll(); resetScrollBase(); record({ action_type: 'navigate', from: from, primary: null, candidates: [], is_navigation_boundary: true }); }
   ['pushState', 'replaceState'].forEach(function (m) {
     var orig = history[m];
     if (orig && !orig.__aqa) {
@@ -409,8 +450,10 @@
     if (prev && prev !== location.href) navMark(prev);
     try { ss.setItem(PREV, location.href); } catch (e) {}
   })();
-  // D: flush pending input before the context dies
-  window.addEventListener('pagehide', commitPend, true);
-  window.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') commitPend(); }, true);
-  window.addEventListener('beforeunload', commitPend, true);
+  // D: flush pending input + scroll before the context dies. MUST be flushAll (commitPend THEN
+  // commitScroll): commitScroll alone early-returns past its commitPend when no scroll is pending,
+  // which would drop a typed-but-uncommitted value at teardown (type-then-Enter-submit).
+  window.addEventListener('pagehide', flushAll, true);
+  window.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushAll(); }, true);
+  window.addEventListener('beforeunload', flushAll, true);
 })();

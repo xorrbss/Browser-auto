@@ -177,8 +177,14 @@ rather than guessing):
 - **Same-origin journeys persist losslessly** (the buffer lives in per-origin
   sessionStorage). Crossing a top-level origin boundary drops the prior origin's buffered
   actions; cross-origin iframes are unreachable. Stay on one origin for a clean recording.
-- **Actions covered:** click, text input (fill), select, Enter, navigation. Scroll, hover,
-  drag, and file-upload are excluded (replay auto-scrolls to each element).
+- **Actions covered:** click, text input (fill), select, Enter, navigation, and explicit **page
+  scroll** (coalesced per gesture → `scroll <dir> <px>`; mostly redundant since replay auto-scrolls to
+  each element, but it captures lazy-load / infinite-scroll reveals). `hover` is implicit (replay
+  hovers/scrolls to each target). **`drag` and file `upload` are excluded** — agent-browser's `drag`/
+  `upload` commands take a CSS selector or a stale `@ref` (both forbidden by this framework), the `find`
+  marker is transient, and drag targets are usually non-semantic `<div>`s with no stable locator, so
+  there is no reliable semantic replay path; forcing one would risk the silent-wrong-element matches
+  this framework exists to prevent. Container (non-page) scroll is likewise excluded (needs a selector).
 - **Sensitive fields** (password / OTP / card / SSN — by type/autocomplete/inputmode) are
   masked at capture and never written; their `{{input_N}}` token must be filled by hand.
 - **Icon-only buttons** whose only accessible name is `aria-label` ARE captured cleanly: an

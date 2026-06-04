@@ -141,6 +141,16 @@ for (let i = 0; i < records.length; i++) {
     if (rec.select_text != null && rec.select_text !== real) {
       warns.push(`select step (#${steps.length - 1}) option text "${rec.select_text}" != value "${real}"; verify 0.27.0 find select matching`);
     }
+  } else if (t === 'scroll') {
+    // #2: explicit page scroll -> a `scroll <dir> <px>` step (no locator). Defensive validation: a
+    // malformed record is dropped with a warning rather than emitting a junk step (capture.js only
+    // ever emits a valid dir + px >= SCROLL_MIN; this guards hand-written/corrupt records).
+    const px = Math.round(Number(rec.px));
+    if (['up', 'down', 'left', 'right'].indexOf(rec.dir) >= 0 && Number.isFinite(px) && px > 0) {
+      steps.push({ kind: 'scroll', dir: rec.dir, px });
+    } else {
+      warns.push(`dropped malformed scroll record (dir=${rec.dir}, px=${rec.px})`);
+    }
   }
 }
 

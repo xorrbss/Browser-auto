@@ -119,15 +119,18 @@ compile() {
 			elif $s.kind == "wait" and $s.until == "url" then {t:"w", v:$s.value}
 			elif $s.kind == "wait" then {t:"c", v:["wait", ("--" + $s.until), $s.value]}
 			elif $s.kind == "press" then {t:"c", v:["press", $s.value]}
+			elif $s.kind == "scroll" then {t:"s", v:[$s.dir, ($s.px|tostring)]}
 			else empty end)
 		| reduce .[] as $s ([];
 			if $s.t == "w" then . + [{w:$s.v}]
 			elif $s.t == "f" then . + [{f:$s.v}]
+			elif $s.t == "s" then . + [{s:$s.v}]
 			elif (length > 0 and (.[-1] | has("b"))) then (.[0:-1] + [{b:(.[-1].b + [$s.v])}])
 			else . + [{b:[$s.v]}] end)
 		| .[]
 		| if has("w") then ("wait_url " + (.w | @sh))
 		  elif has("f") then ("_find_fb " + ((.f | @json | @base64) | @sh))
+		  elif has("s") then ("AB scroll " + (.s[0]|@sh) + " " + (.s[1]|@sh))
 		  else ("_run_batch " + ((.b | @json | @base64) | @sh)) end
 	' "$flow")"
 
