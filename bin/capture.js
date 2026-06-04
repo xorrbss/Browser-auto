@@ -310,6 +310,11 @@
   function valueOf(el) {
     if (sensitive(el)) return null;
     try { if ('value' in el) return String(el.value).slice(0, 200); } catch (e) {}
+    // contenteditable has no .value, but the typed text lives in textContent. Without this it is
+    // captured as null -> build-flow treats null like a masked field and emits a {{input_N}} fill that
+    // silently no-ops at replay (false-green). `find <loc> fill <text>` is probe-verified to work on a
+    // contenteditable, so capture it faithfully (the value still goes to the gitignored values sidecar).
+    try { if (el.isContentEditable) return String(el.textContent == null ? '' : el.textContent).slice(0, 200); } catch (e) {}
     return null;
   }
 
