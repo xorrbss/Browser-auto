@@ -36,7 +36,7 @@ CAND_RAW="{}"; [ -s "$candfile" ] && CAND_RAW="$(cat "$candfile")"
 VALS_JSON="{}"; [ -s "$valsfile" ] && VALS_JSON="$(cat "$valsfile")"
 
 # `find` matches localized by-values exactly with --exact (mirrors compile()).
-_exactflag(){ case "$1" in text|label|placeholder|alt|title) printf '%s' "--exact";; *) printf '';; esac; }
+_exactflag(){ case "$1" in text|label|placeholder|alt|title|role) printf '%s' "--exact";; *) printf '';; esac; }
 
 # _subst <string> -> substitute {{input_N}} tokens from values.json, fail loud on a missing key.
 _subst(){

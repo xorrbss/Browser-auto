@@ -133,6 +133,18 @@
     if (token.length >= 8 && shannon(token) > 3.2) return true;
     return false;
   }
+  // looksAutoName: the STRUCTURAL subset of looksAuto for human-readable NAMES (aria-labels). It keeps
+  // the explicit dynamic-id patterns + the multi-number heuristic but DROPS the Shannon-entropy check,
+  // which is tuned for opaque ids and false-positives on legitimate multi-word / camelCase labels
+  // (e.g. "Toggle navigation menu"). A truly-dynamic label that slips past here at worst flakes red at
+  // replay (the --exact name won't match) — never a false-green — so erring readable here is correct.
+  function looksAutoName(v) {
+    if (!v) return false;
+    var token = v.replace(/\s+/g, '');
+    for (var i = 0; i < AUTOPAT.length; i++) if (AUTOPAT[i].test(token)) return true;
+    if ((token.match(/\d{3,}/g) || []).length >= 2) return true;
+    return false;
+  }
 
   // --- in-page uniqueness count, mirroring how replay `find` matches ---
   function countCandidate(c, target) {
@@ -236,6 +248,22 @@
     return el;
   }
 
+  // --- engine-reliability gate for a role+name PRIMARY (agent-browser 0.27.0) ---
+  // `find role <r> --name <n>` resolution is element-shape specific (probe-verified): it reliably
+  // matches an aria-label BUTTON (a native <button> or an explicit role="button"), but NOT a native
+  // <a>/<input>/<heading> (implicit role), and NOT a name sourced from aria-labelledby. So ONLY an
+  // aria-label button may become a role PRIMARY; every other role+name stays a needs_review candidate
+  // rather than a primary that would silently fail replay. (Native <input type=button> / <summary> map
+  // to role button via roleOf() but are unverified, so they are conservatively excluded here.)
+  function roleAriaLabelButton(el, c) {
+    if (c.by !== 'role' || c.value !== 'button' || !c.name) return false;
+    if (looksAutoName(c.name)) return false;   // a structurally auto-generated / dynamic aria-label is fragile -> needs_review
+    var explicit = (attr(el, 'role').split(/\s+/)[0] === 'button');
+    if (el.tagName !== 'BUTTON' && !explicit) return false;
+    if (attr(el, 'aria-labelledby')) return false;
+    return normalize(attr(el, 'aria-label')) === c.name;
+  }
+
   // --- build + push a locator-bearing record ---
   function emit(action_type, el, extra) {
     try {
@@ -243,13 +271,26 @@
       for (var i = 0; i < cands.length; i++) { var r = countCandidate(cands[i], el); cands[i].count = r.count; cands[i]._count = r.count; cands[i]._hit = r.matchesTarget; }
       cands.sort(function (a, b) { return score(b) - score(a); });
       var primary = null;
-      // C1: skip overLong candidates — a unique long-text match is real but too fragile to auto-accept;
-      // leaving primary null keeps the step needs_review while the long value stays in the ladder.
-      for (var j = 0; j < cands.length; j++) { if (cands[j]._count === 1 && cands[j]._hit && !overLong(cands[j])) { primary = { by: cands[j].by, value: cands[j].value }; if (cands[j].name) primary.name = cands[j].name; break; } }
+      // Primary = the first capture-time-UNIQUE (count==1), on-target, non-overLong candidate whose
+      // locator the engine RESOLVES at replay. C1: overLong (>80c) text/name is too fragile to auto-
+      // accept (stays a needs_review candidate). A `role` candidate is engine-reliable ONLY as an
+      // aria-label button (roleAriaLabelButton); any other role+name is skipped here so it never
+      // becomes a primary that would silently fail replay.
+      for (var j = 0; j < cands.length; j++) {
+        var c = cands[j];
+        if (c._count === 1 && c._hit && !overLong(c)) {
+          if (c.by === 'role' && !roleAriaLabelButton(el, c)) continue;
+          primary = { by: c.by, value: c.value }; if (c.name) primary.name = c.name; break;
+        }
+      }
       var top = cands.slice(0, Math.max(2, 0)).map(function (c) { var o = { by: c.by, value: c.value, count: c.count }; if (c.name) o.name = c.name; return o; });
-      var insufficient = top.length < 2;
       var rec = { action_type: action_type, primary: primary, candidates: top, is_navigation_boundary: false };
-      if (insufficient) rec.insufficient = true;
+      // needs_review (insufficient) keeps the conservative "<2 candidates" backstop, with ONE exception:
+      // a lone aria-label-BUTTON role+name primary is engine-resolvable (compiled with --exact), unique,
+      // and non-auto (roleAriaLabelButton gate), so it is sufficient by itself. Every OTHER single-
+      // candidate step still goes needs_review so a fragile lone guess is never auto-promoted. A
+      // primary-less step is needs_review via build-flow's `!p`; the ladder (top) stays non-empty (C1).
+      if (!primary || ((top.length < 2) && primary.by !== 'role')) rec.insufficient = true;
       if (extra) for (var k in extra) rec[k] = extra[k];
       record(rec);
     } catch (e) {}
