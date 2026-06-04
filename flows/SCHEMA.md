@@ -47,6 +47,19 @@ construction. Every step targets an element by a *semantic locator* only.
   `until:text`/`until:load` waits DO work and stay inline in the batch. Capture also emits an
   inline settle wait (`until:text` on the next step's target, else `until:load networkidle`) when
   a click swaps a large DOM subtree but changes **no** URL (a pure client-side SPA route).
+- `scroll` — `dir` ∈ {up,down,left,right}, `px` (positive int). An explicit **PAGE** scroll, captured
+  as a coalesced gesture (capture.js debounces `window` scroll; a scrollable container's scroll never
+  changes `window.scrollY`, so containers are ignored — they'd need a selector, out of scope). Compiles
+  to a standalone `AB scroll <dir> <px>` line (NOT a `batch` command — `batch` rejects `scroll`), so
+  like a url-wait it splits the surrounding batch. The scroll runs via the bare `AB` passthrough (no
+  `.success` gate) — intentionally, like the bare-`AB` `open` / `record start`: scroll is **best-effort
+  setup**, not an assertion. A scroll that no-ops cannot false-green — if the scroll was essential
+  (lazy-load) the next step's locator fails (gated), and if it was incidental the run passes correctly. Replay scrolls BY `px` in `dir` from the current
+  position, so successive captured deltas compose. Mostly redundant (replay auto-scrolls to each
+  element); the real value is **lazy-load / infinite-scroll** journeys where a scroll reveals content
+  the next step needs. (`drag` and file `upload` are NOT captured: agent-browser's `drag`/`upload` take
+  a CSS selector or stale `@ref` — both forbidden here — and drag targets are usually non-semantic
+  `<div>`s with no stable locator. See README "Capture scope & limitations".)
 
 ### needs_review (additive field on a `find` step)
 
