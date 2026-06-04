@@ -94,7 +94,7 @@ else
 	echo "[verify] no candidates sidecar -> verify-only (no ladder repair)." >&2
 fi
 declare -A REPAIR
-verified=0; repaired=0; promoted=0; stopped=0
+verified=0; repaired=0; promoted=0; stopped=0; tidok=0
 
 for i in $(seq 0 $((nsteps - 1)) 2>/dev/null); do
 	step="$(jq -c ".steps[$i]" "$flow")"
@@ -138,9 +138,31 @@ for i in $(seq 0 $((nsteps - 1)) 2>/dev/null); do
 				echo "[verify] step #$i: locator did not resolve and no unique candidate worked -> needs_review." >&2
 				break
 			fi
+			# testid uniqueness cross-check (false-green guard): capture-time uniqueness is only an
+			# ESTIMATE of how replay resolves. testid is the one by-locator with a CSS equivalent, so
+			# re-verify it here with `get count` BEFORE acting. >= 2 matches => `find` would silently act
+			# on the FIRST of several (duplicate-drift) -> promote to needs_review (never act on an
+			# ambiguous locator). 0 or 1 is fine (0 = inconclusive: shadow DOM or a different data-* attr,
+			# so it is NOT failed -> avoids a false RED). Non-testid by-locators have no replay-count
+			# primitive on 0.27.0 (documented ceiling), so only testid is cross-checked here.
+			if [ "$use_by" = "testid" ]; then
+				case "$use_val" in
+					*'"'*|*'\'*) echo "[verify]   #$i testid value has a quote/backslash -- skipping uniqueness cross-check (cannot build a safe CSS selector)." >&2 ;;
+					*)
+						tsel="[data-testid=\"$use_val\"],[data-test-id=\"$use_val\"],[data-test=\"$use_val\"],[data-cy=\"$use_val\"]"
+						tcnt="$(AB_JSON get count "$tsel" 2>/dev/null </dev/null | jq -r '.data.count // empty' 2>/dev/null || true)"
+						if [ -n "$tcnt" ] && [ "$tcnt" -ge 2 ] 2>/dev/null; then
+							REPAIR[$i]="NEEDSREVIEW"; promoted=$((promoted + 1)); stopped=1
+							echo "[verify] step #$i: testid '$use_val' now matches $tcnt elements at replay (capture-time uniqueness drifted) -> needs_review; find would silently act on the first." >&2
+							break
+						fi
+						[ "$tcnt" = "1" ] && tidok=$((tidok + 1))
+						;;
+				esac
+			fi
 			# Execute the action. A locator that RESOLVES but whose ACTION fails (disabled /
 			# intercepted / wrong element / bad value) is NOT trustworthy — never persist it as a
-			# repair; promote to needs_review and fail loud (no false "Safe to compile").
+			# repair; promote to needs_review and fail loud (no false green).
 			if _exec "$use_by" "$use_val" "$use_name" "$action" "$varg"; then
 				if [ "$is_repair" = 1 ]; then
 					repaired=$((repaired + 1))
@@ -197,9 +219,10 @@ if [ $((repaired + promoted)) -gt 0 ]; then
 	echo "[verify] rewrote $flow with repairs/promotions."
 fi
 
-echo "[verify] verified=$verified repaired=$repaired promoted=$promoted$([ "$stopped" = 1 ] && echo ' (stopped early; later steps unverified)')"
+echo "[verify] verified=$verified repaired=$repaired promoted=$promoted testid-unique=$tidok$([ "$stopped" = 1 ] && echo ' (stopped early; later steps unverified)')"
 if [ "$promoted" -gt 0 ] || [ "$stopped" = 1 ]; then
 	echo "[verify] FATAL: flow NOT fully verified (promoted=$promoted, stopped=$stopped) — a locator failed to resolve/act, a nav gate was missed, or an unresolved needs_review remains. Fix and re-run verify; compile will refuse needs_review." >&2
 	exit 1
 fi
-echo "[verify] OK — every step's locator resolved AND its action succeeded (repaired=$repaired). Safe to compile."
+echo "[verify] OK: every step's locator resolved, its action succeeded, and every testid was re-checked unique (repaired=$repaired, testid-unique=$tidok)."
+echo "[verify] Scope: verifies each locator RESOLVES + its ACTION succeeds + (for testid) replay UNIQUENESS via get count. Non-testid by-locators (text/label/role/...) have no replay-count primitive on 0.27.0, so their uniqueness is a capture-time estimate only - review ambiguous semantic steps. Ready to compile."
