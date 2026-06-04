@@ -46,5 +46,19 @@ raw secret appears anywhere in the buffer.
 ## Progress log
 
 - 2026-06-04: branch + plan. #2 committed (3bc1d09). #1 implemented (capture.js check/uncheck +
-  input-skip; build-flow check; docs) + capture-checkable GREEN. #3 capture-masking written + RUNNING.
-  NEXT: full gate → review → merge.
+  input-skip; build-flow check; docs) + capture-checkable GREEN. #3 capture-masking written + GREEN.
+  Committed: #1 (8f78a06), #3 (b0b803b), plan (ee8fdf0). The eol=lf pin confirmed working (staged
+  build-flow.js blob = LF despite CRLF working tree).
+- 2026-06-04→05: **Full `bash run.sh` = 16/16 GREEN** (no regression from check/uncheck + input-skip + eol).
+- Adversarial review (3 dims → refute): **8 raised, 3 confirmed (all test-only), 5 refuted.** Confirmed + fixed:
+  - **HIGH + MED (same flaw)**: capture-checkable's absolute-set "proof" was itself a false-green — it
+    pre-set cb1 to the desired end state (already checked), ran the IDEMPOTENT `check` (no-op on a checked
+    box), and swallowed the exit code (`|| true`), so it passed whether `check` worked, no-op'd, or failed.
+    **Fixed**: drive from UNCHECKED → `check` → assert CHECKED (observable work), then check-again-stays-checked
+    (absolute vs a toggle that would flip OFF), reading `.success` (never the exit code).
+  - **LOW**: masking over-mask coverage used only a benign email. **Fixed**: added a benign numeric field
+    (inputmode=numeric, no sensitive hint) asserted NOT masked — proves the inputmode branch needs a hint.
+  - Refuted (correctly): preventDefault'd-click checkbox, indeterminate tri-state loss, input-skip dropping a
+    real input, build-flow no-else for unknown action_type, eol working-tree-vs-blob mismatch.
+  - Re-run capture-checkable + capture-masking = 2/2 GREEN; framework code unchanged ⇒ suite holds 16/16.
+- **DONE — merged to master via `--no-ff`.** Track complete.

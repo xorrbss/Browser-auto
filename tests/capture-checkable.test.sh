@@ -45,11 +45,17 @@ eq "$(jq -rc '[.steps[]|[.by,.value,.action]]' "$FLOW")" \
 	'[["label","Subscribe","check"],["label","Terms","check"],["label","Red","check"],["label","News","click"]]' \
 	"build-flow -> three check steps + one click"
 
-# THE FALSE-GREEN FIX: `check` is ABSOLUTE. Pre-CHECK cb1 (the differing-initial-state scenario capture
-# saw unchecked); `find label Subscribe check` must leave it CHECKED — a bare click would toggle it OFF.
-AB_JSON eval "document.getElementById('cb1').checked=true;1" >/dev/null
-AB find label Subscribe check --exact >/dev/null 2>&1 </dev/null || true
-eq "$(AB_JSON eval "document.getElementById('cb1').checked" 2>/dev/null </dev/null | jq -r '.data.result')" 'true' \
-	"check is ABSOLUTE: stays checked when initial state differs (a click would have toggled it OFF = false-green)"
+# THE FALSE-GREEN FIX, proven by OBSERVABLE WORK (a proof that seeds the desired end state would pass
+# even if `check` were a no-op). chk() reads .success — never the exit code (env.sh/assert.sh: 0.27.0
+# exits 0 even on failure). (1) From UNCHECKED, `find label Subscribe check` MUST drive it to CHECKED
+# (a no-op / failed locator leaves it false -> fail loud). (2) From CHECKED, `check` AGAIN must STAY
+# checked — a toggling click would flip it OFF here (the absolute-vs-toggle distinction this fix exists for).
+chk(){ [ "$(AB_JSON find label Subscribe check --exact 2>/dev/null </dev/null | jq -r '.success // false')" = "true" ] || fail "find label Subscribe check did not succeed ($1)"; }
+cbv(){ AB_JSON eval "document.getElementById('cb1').checked" 2>/dev/null </dev/null | jq -r '.data.result'; }
+AB_JSON eval "document.getElementById('cb1').checked=false;1" >/dev/null   # opposite the desired end state
+chk "from unchecked"
+eq "$(cbv)" 'true' "check drives an UNCHECKED box to CHECKED (absolute set does observable work)"
+chk "again, already checked"
+eq "$(cbv)" 'true' "check on an already-checked box STAYS checked (absolute — a toggling click would flip it OFF = false-green)"
 
 echo "  ✓ capture-checkable.test.sh passed"

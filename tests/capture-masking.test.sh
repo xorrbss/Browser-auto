@@ -26,11 +26,11 @@ AB open --init-script "$CAPJS" "https://example.com" >/dev/null
 # Build 4 sensitive fields (one per sensitive() branch) + 1 benign email. Distinctive UPPERCASE values
 # so the leak check can't coincidentally match JSON noise. Type each (real input event), then a focusout
 # on the last to commit it (the input coalescer commits the prior field when the next one gets input).
-AB_JSON eval "document.body.innerHTML='<input type=password id=pw placeholder=Password><input autocomplete=one-time-code inputmode=numeric id=otp placeholder=Code><input autocomplete=cc-number id=cc placeholder=Card><input inputmode=numeric name=cvv id=cvv placeholder=CVV><input type=email id=em placeholder=Email>';function tp(i,v){var f=document.getElementById(i);f.value=v;f.dispatchEvent(new Event('input',{bubbles:true}));}tp('pw','SECRETPWZ');tp('otp','OTPCODEZ');tp('cc','CARDNUMZ');tp('cvv','CVVCODEZ');tp('em','benign@x.com');document.getElementById('em').dispatchEvent(new Event('focusout',{bubbles:true}));1" >/dev/null
+AB_JSON eval "document.body.innerHTML='<input type=password id=pw placeholder=Password><input autocomplete=one-time-code inputmode=numeric id=otp placeholder=Code><input autocomplete=cc-number id=cc placeholder=Card><input inputmode=numeric name=cvv id=cvv placeholder=CVV><input type=email id=em placeholder=Email><input inputmode=numeric name=quantity id=qty placeholder=Quantity>';function tp(i,v){var f=document.getElementById(i);f.value=v;f.dispatchEvent(new Event('input',{bubbles:true}));}tp('pw','SECRETPWZ');tp('otp','OTPCODEZ');tp('cc','CARDNUMZ');tp('cvv','CVVCODEZ');tp('em','benign@x.com');tp('qty','QtyValZ');document.getElementById('qty').dispatchEvent(new Event('focusout',{bubbles:true}));1" >/dev/null
 
 BUF="$(AB_JSON eval "JSON.parse(sessionStorage.getItem('__aqa_buf')||'[]')")"
 INPUTS="$(printf '%s' "$BUF" | jq -c '[.data.result[] | select(.action_type=="input")]')"
-eq "$(printf '%s' "$INPUTS" | jq 'length')" '5' "all 5 input fields recorded"
+eq "$(printf '%s' "$INPUTS" | jq 'length')" '6' "all 6 input fields recorded"
 rec(){ printf '%s' "$INPUTS" | jq -c --arg v "$1" 'map(select(.primary.value==$v)) | .[0]'; }
 # each sensitive field: masked:true AND input_value:null (the secret never stored).
 for ph in Password Code Card CVV; do
@@ -43,6 +43,11 @@ done
 em="$(rec Email)"
 eq "$(printf '%s' "$em" | jq -r '.masked // false')" 'false'        "Email field must NOT be masked"
 eq "$(printf '%s' "$em" | jq -r '.input_value')"     'benign@x.com' "Email field value must be captured"
+# a benign NUMERIC field (inputmode=numeric, NO sensitive name hint) must NOT be masked — proves the
+# inputmode/tel/number branch masks only WITH a hint, not every numeric field (no over-masking).
+qt="$(rec Quantity)"
+eq "$(printf '%s' "$qt" | jq -r '.masked // false')" 'false'   "benign numeric (Quantity) must NOT be masked"
+eq "$(printf '%s' "$qt" | jq -r '.input_value')"     'QtyValZ' "benign numeric value must be captured"
 
 # Hard PII guarantee: no raw secret value appears ANYWHERE in the captured buffer.
 for secret in SECRETPWZ OTPCODEZ CARDNUMZ CVVCODEZ; do
