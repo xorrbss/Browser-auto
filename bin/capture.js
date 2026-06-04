@@ -339,7 +339,17 @@
   }, true);
   document.addEventListener('change', function (e) {
     var el = realTarget(e), tag = (el.tagName || '').toUpperCase();
-    if (tag === 'SELECT') { commitPend(); var m = sensitive(el); emit('select', el, { input_value: m ? null : valueOf(el), select_text: m ? null : normalize(el.options && el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : ''), masked: m || undefined }); }
+    if (tag === 'SELECT') {
+      commitPend();
+      var m = sensitive(el);
+      var x = { input_value: m ? null : valueOf(el), select_text: m ? null : normalize(el.options && el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : ''), masked: m || undefined };
+      // <select multiple>: el.value / el.selectedIndex expose only the FIRST selected option, so a
+      // single-value `select` step would silently drop the rest at replay (a false-green — only
+      // option#1 is reached). Flag needs_review so a human resolves the multi-selection explicitly;
+      // the single-value capture path cannot faithfully represent it.
+      if (el.multiple) x.insufficient = true;
+      emit('select', el, x);
+    }
     else if (el === pendEl) commitPend();
   }, true);
   document.addEventListener('focusout', function () { commitPend(); }, true);
