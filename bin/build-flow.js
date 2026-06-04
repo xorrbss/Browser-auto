@@ -136,11 +136,19 @@ for (let i = 0; i < records.length; i++) {
       actionFind(rec, 'fill', { text: tok });
     }
   } else if (t === 'select') {
-    const real = rec.input_value;
-    const { tok } = token(real);
-    actionFind(rec, 'select', { val: tok });
-    if (rec.select_text != null && rec.select_text !== real) {
-      warns.push(`select step (#${steps.length - 1}) option text "${rec.select_text}" != value "${real}"; verify 0.27.0 find select matching`);
+    // A needs_review select (no primary, or insufficient — e.g. <select multiple>) must NOT tokenize a
+    // value: a multi-select only captured option#1, so writing that partial value to the sidecar would
+    // be misleading. actionFind emits the needs_review step (action:select) and the human supplies the
+    // value(s) when resolving it (agent-browser `select <sel> <val…>` does accept multiple values).
+    if (!rec.primary || rec.insufficient) {
+      actionFind(rec, 'select');
+    } else {
+      const real = rec.input_value;
+      const { tok } = token(real);
+      actionFind(rec, 'select', { val: tok });
+      if (rec.select_text != null && rec.select_text !== real) {
+        warns.push(`select step (#${steps.length - 1}) option text "${rec.select_text}" != value "${real}"; verify 0.27.0 find select matching`);
+      }
     }
   } else if (t === 'scroll') {
     // #2: explicit page scroll -> a `scroll <dir> <px>` step (no locator). Defensive validation: a

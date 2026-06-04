@@ -75,7 +75,9 @@ When recording finds **no unique stable locator** for an element, the step is em
   The array can hold a **single** candidate when only one alternative exists yet is not auto-acceptable
   as a primary — e.g. an icon-only **link** / native checkbox / `aria-labelledby` control whose lone
   `role+name` the engine won't resolve, or a long (>80-char) exact-text / role-name value (too fragile).
-  Non-empty is the only hard invariant.
+  Non-empty is the only hard invariant. A **`<select multiple>`** is also emitted `needs_review` (even
+  with a good locator): `el.value` exposes only the first selected option, so the single-value `select`
+  action can't faithfully represent a multi-selection — a human resolves it.
 
 Absent field == false; hand-written flows are unaffected. `compile` **refuses** (exits
 non-zero, lists the offending steps) on any `needs_review:true` — never a silent drop, never
@@ -87,7 +89,12 @@ replay. `verify` re-drives the flow and, for each `find` step, non-destructively
 locator (`find … hover`); if it no longer resolves it **repairs** the step from the captured
 candidate ladder or **promotes** it to `needs_review`, then rewrites the flow. The ladder lives in
 a **gitignored** `flows/<name>.candidates.json` sidecar (per-step `{by, value, name?}` alternates,
-written by capture); it is page structure, not PII, and is regenerated on each capture.
+written by capture); it is page structure, not PII, and is regenerated on each capture. `verify` also
+re-checks each resolved **`testid`** step's uniqueness with `get count` on the CSS-equivalent 4-attr
+selector: a testid that now matches **≥2** elements is promoted to `needs_review` (replay's `find` would
+silently act on the first), while `0`/`1` is accepted (`0` = inconclusive, e.g. shadow DOM — never a
+false RED). Non-`testid` locators have no replay-count primitive on 0.27.0, so verify's verdict states
+that their uniqueness remains a capture-time estimate.
 
 ### Replay fallback (opt-in, `replayFallback: true`)
 
@@ -120,7 +127,8 @@ fallback; `compile` still refuses such a step).
 ### Parameterized input values (flows/*.flow.json is git-committed)
 
 `fill`/`type`/`select` steps store **`{{input_N}}` tokens**, never the literal value, in the
-committed flow.json. Real values live in a **gitignored** `flows/<name>.values.json` sidecar
+committed flow.json. A **`contenteditable`** element is captured as a `fill` step too — its text is
+read from `textContent` (it has no `.value`) and replays via `find … fill`. Real values live in a **gitignored** `flows/<name>.values.json` sidecar
 (`{"input_1":"user@example.com", ...}`), mirroring auth-state handling. `compile`/run
 substitute tokens from the sidecar at runtime (fail-loud if a referenced key is missing).
 Sensitive fields (password / OTP / card / SSN — by type/autocomplete/inputmode heuristics)
