@@ -82,4 +82,33 @@ needs_review (exit != 0); a unique testid passes (control: no false-RED).
   verdict; verify-flow GREEN (198.5s, +2 file:// cases). get count returns `.data.count` (not .result).
 - Docs: SCHEMA.md (verify cross-check, select-multiple needs_review, contenteditable fill) + README
   (actions-covered, contenteditable, select-multiple bullets).
-- NEXT: full `bash run.sh` gate (18/18) -> adversarial review -> fix -> --no-ff merge.
+- Full `bash run.sh` = **18/18 GREEN** (report.json: 18 pass / 0 non-pass).
+- Adversarial review (4 read-only dims -> refute): **13 raised, 9 confirmed, 4 refuted.** Disposition:
+  - FIXED — **verify-flow `get count` fail-loud (MED, false-green)**: the cross-check read `.data.count`
+    with NO `.success` gate, so a failed/empty count silently fell through to PASS (and count==0 was
+    silently OK). Now a result is trusted only when `get count` returns success + a numeric count; on
+    skip (unsafe value) / failure / count-0-while-resolved it tallies `tidskip`, warns loud, and the
+    verdict reports `testid-unchecked=N` + a NOTE — never claims a step was checked when it was not
+    (this also fixes the overstated-verdict finding).
+  - FIXED — **contenteditable un-normalized (LOW)**: valueOf now `normalize()`s the textContent (NFC +
+    collapse-ws + trim), matching the select_text/label contract; capture-contenteditable now types
+    whitespace-heavy text and pins the collapsed value end-to-end (capture -> sidecar -> replay).
+  - FIXED — **comment honesty (LOW, false-red)**: the cross-check comment now states `get count` is
+    visibility-blind, so a HIDDEN duplicate testid can over-count -> a conservative needs_review
+    (false-RED), acceptable under the prime directive (fail-loud beats a guess).
+  - FIXED — **non-testid ceiling untested (LOW, test-gap)**: verify-flow case 7 pins that a duplicate
+    `text` locator is NOT cross-checked and still passes (testid-only scope; tidok stays 0).
+  - ACCEPTED (documented, not a hidden false-green):
+    - empty/whitespace contenteditable -> empty `fill`: intent-preserving (the field IS empty) and
+      identical to an empty normal input (pre-existing); normalize makes whitespace-only -> "".
+    - capture-contenteditable does not exercise the old null->masked path (line-39 input_value assert
+      already guards the practical regression).
+    - hidden-duplicate false-RED has no pinning fixture (acceptable direction; the comment documents it).
+  - REFUTED (correctly): get-count selector parse-error false-green (normalize strips newlines + the
+    quote/backslash guard + `_exec` fail-loud net close it); 4-attr over-count (superset -> only
+    false-RED, never a missed dup; capture uses the same 4 attrs); single-select insufficient regression
+    (a select always has a role candidate -> >=2 candidates -> the <2 backstop is unreachable, so it is
+    never both primary-bearing and insufficient); build-flow-unit select-fixture gap (capture-select-
+    multiple already feeds an insufficient select through the changed branch).
+  - Review-fix re-run: capture-contenteditable + verify-flow = 2/2 GREEN (framework changes verified).
+- NEXT: re-gate full `bash run.sh` (18/18) -> --no-ff merge.

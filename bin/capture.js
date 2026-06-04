@@ -314,7 +314,11 @@
     // captured as null -> build-flow treats null like a masked field and emits a {{input_N}} fill that
     // silently no-ops at replay (false-green). `find <loc> fill <text>` is probe-verified to work on a
     // contenteditable, so capture it faithfully (the value still goes to the gitignored values sidecar).
-    try { if (el.isContentEditable) return String(el.textContent == null ? '' : el.textContent).slice(0, 200); } catch (e) {}
+    // normalize() (NFC + collapse whitespace + trim) — same contract as select_text/labels: textContent
+    // concatenates block markup with NO separators (<p>A</p><p>B</p> -> "AB") and carries structural
+    // indentation, so raw capture would replay a string the user never typed. Normalized capture is
+    // therefore single-line plain text (a documented limitation for rich/multi-line contenteditable).
+    try { if (el.isContentEditable) return normalize(String(el.textContent == null ? '' : el.textContent)).slice(0, 200); } catch (e) {}
     return null;
   }
 

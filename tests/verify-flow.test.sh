@@ -9,8 +9,8 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FL="$DIR/flows"; VF="$DIR/bin/verify-flow.sh"
 fail(){ echo "  ✗ verify-flow: $1" >&2; exit 1; }
-NAMES="_vrt_repair _vrt_nonuniq _vrt_actfail _vrt_preexist _vrt_testiddup _vrt_testiduniq"
-cleanup(){ for n in $NAMES; do rm -f "$FL/$n.flow.json" "$FL/$n.candidates.json"; done; rm -f "$DIR/artifacts/_vrt_dupfx.html" "$DIR/artifacts/_vrt_uniqfx.html"; }
+NAMES="_vrt_repair _vrt_nonuniq _vrt_actfail _vrt_preexist _vrt_testiddup _vrt_testiduniq _vrt_textdup"
+cleanup(){ for n in $NAMES; do rm -f "$FL/$n.flow.json" "$FL/$n.candidates.json"; done; rm -f "$DIR/artifacts/_vrt_dupfx.html" "$DIR/artifacts/_vrt_uniqfx.html" "$DIR/artifacts/_vrt_textdupfx.html"; }
 trap cleanup EXIT
 flow(){ printf '%s\n' "$2" > "$FL/$1.flow.json"; }
 cand(){ printf '%s\n' "{\"_steps\":1,\"byStep\":{\"0\":[$2]}}" > "$FL/$1.candidates.json"; }
@@ -59,5 +59,16 @@ flow _vrt_testiduniq "{\"name\":\"_vrt_testiduniq\",\"startUrl\":\"$UNIQURL\",\"
 bash "$VF" "$FL/_vrt_testiduniq.flow.json" >/tmp/_vrt6.log 2>&1 || { sed 's/^/    /' /tmp/_vrt6.log >&2; fail "unique testid rejected (expected exit 0)"; }
 jq -e '.steps[0].needs_review!=true' "$FL/_vrt_testiduniq.flow.json" >/dev/null || fail "unique testid wrongly promoted"
 grep -q 'testid-unique=1' /tmp/_vrt6.log || fail "unique testid not tallied in the verify summary"
+
+# 7. NON-TESTID CEILING — a duplicate NON-testid locator (text) is NOT cross-checked (no replay-count
+#    primitive on 0.27.0 for semantic locators) and still PASSES (exit 0). Pins that the get-count guard
+#    is testid-scoped: a regression that broadened it to text/label (false-RED) or that mis-detected
+#    use_by in the testid branch would be caught here. tidok must stay 0 (a text step is not a testid check).
+printf '%s' '<!doctype html><meta charset=utf-8><title>tdup</title><button>Dup</button><button>Dup</button>' > "$DIR/artifacts/_vrt_textdupfx.html"
+TEXTURL="file:///$WROOT/artifacts/_vrt_textdupfx.html"
+flow _vrt_textdup "{\"name\":\"_vrt_textdup\",\"startUrl\":\"$TEXTURL\",\"steps\":[{\"kind\":\"find\",\"by\":\"text\",\"value\":\"Dup\",\"action\":\"click\"}],\"asserts\":[]}"
+bash "$VF" "$FL/_vrt_textdup.flow.json" >/tmp/_vrt7.log 2>&1 || { sed 's/^/    /' /tmp/_vrt7.log >&2; fail "duplicate non-testid (text) wrongly rejected — the cross-check must be testid-only"; }
+jq -e '.steps[0].needs_review!=true' "$FL/_vrt_textdup.flow.json" >/dev/null || fail "duplicate text locator wrongly promoted (cross-check leaked to non-testid)"
+grep -q 'testid-unique=0' /tmp/_vrt7.log || fail "a non-testid step must not be tallied as a testid uniqueness check (expected testid-unique=0)"
 
 echo "  ✓ verify-flow.test.sh passed"

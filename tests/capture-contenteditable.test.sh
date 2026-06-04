@@ -28,15 +28,19 @@ AB open --init-script "$CAPJS" "https://example.com" >/dev/null
 # candidate alongside the testid -> >=2 candidates -> a clean step, not the lone-candidate backstop).
 # Type text (real input event), commit via focusout. Distinctive UPPERCASE value so assertions/leak
 # checks can't coincidentally match JSON noise.
-AB_JSON eval "document.body.innerHTML='<div contenteditable role=textbox aria-label=Comment data-testid=note></div>';var d=document.querySelector('[data-testid=note]');d.focus();d.textContent='MeetingNotesZ';d.dispatchEvent(new Event('input',{bubbles:true}));d.dispatchEvent(new Event('focusout',{bubbles:true}));1" >/dev/null
+# Typed text carries extra leading/trailing/internal whitespace — capture must NORMALIZE it (NFC +
+# collapse whitespace + trim), the same contract as select_text/labels, so the replayed fill matches a
+# stable single-line string (textContent of rich/block markup would otherwise concatenate with no
+# separators and keep structural indentation).
+AB_JSON eval "document.body.innerHTML='<div contenteditable role=textbox aria-label=Comment data-testid=note></div>';var d=document.querySelector('[data-testid=note]');d.focus();d.textContent='  Meeting   NotesZ  ';d.dispatchEvent(new Event('input',{bubbles:true}));d.dispatchEvent(new Event('focusout',{bubbles:true}));1" >/dev/null
 
 BUF="$(AB_JSON eval "JSON.parse(sessionStorage.getItem('__aqa_buf')||'[]')")"
 INP="$(printf '%s' "$BUF" | jq -c '[.data.result[] | select(.action_type=="input")]')"
 eq "$(printf '%s' "$INP" | jq 'length')" '1' "exactly one input record (the contenteditable)"
 R="$(printf '%s' "$INP" | jq -c '.[0]')"
-# THE FIX: the typed text is captured from textContent (was null), and the field is NOT masked (a benign
-# contenteditable was previously reported masked:sensitive — the mislabel this fix removes).
-eq "$(printf '%s' "$R" | jq -r '.input_value')"    'MeetingNotesZ' "contenteditable value captured from textContent (was null = text lost)"
+# THE FIX: the typed text is captured from textContent (was null) AND normalized, and the field is NOT
+# masked (a benign contenteditable was previously reported masked:sensitive — the mislabel this removes).
+eq "$(printf '%s' "$R" | jq -r '.input_value')"    'Meeting NotesZ' "contenteditable value captured from textContent, normalized (was null = text lost)"
 eq "$(printf '%s' "$R" | jq -r '.masked // false')" 'false'        "benign contenteditable is NOT masked (no longer mislabelled sensitive)"
 eq "$(printf '%s' "$R" | jq -r '.primary.by')"      'testid'       "resolves to the testid primary"
 eq "$(printf '%s' "$R" | jq -r '.insufficient // false')" 'false'  "with >=2 candidates it is a clean step, not needs_review"
@@ -50,7 +54,7 @@ node "$DIR/bin/build-flow.js" ceflow "https://example.com" "" "$WORK/records.jso
 FLOW="$WORK/ceflow.flow.json"
 eq "$(jq -rc '[.steps[]|[.by,.value,.action,.text]]' "$FLOW")" \
 	'[["testid","note","fill","{{input_1}}"]]' "build-flow -> a fill step with a token (value carried, not lost)"
-eq "$(jq -r '.input_1' "$WORK/ceflow.values.json")" 'MeetingNotesZ' "the real value is written to the gitignored values sidecar"
+eq "$(jq -r '.input_1' "$WORK/ceflow.values.json")" 'Meeting NotesZ' "the real (normalized) value is written to the gitignored values sidecar"
 
 # Proven by OBSERVABLE WORK: the captured value actually replays INTO a contenteditable. Clear the field,
 # fill it via the captured locator+value, assert the text landed. Reads .success (never the exit code:
@@ -60,6 +64,6 @@ AB_JSON eval "document.querySelector('[data-testid=note]').textContent='';1" >/d
 [ "$(AB_JSON find testid note fill "$VAL" 2>/dev/null </dev/null | jq -r '.success // false')" = "true" ] \
 	|| fail "find testid note fill did not succeed (contenteditable not fillable?)"
 ceText(){ AB_JSON eval "document.querySelector('[data-testid=note]').textContent" 2>/dev/null </dev/null | jq -r '.data.result'; }
-eq "$(ceText)" 'MeetingNotesZ' "the captured value replays into the contenteditable (fill does observable work — not a no-op)"
+eq "$(ceText)" 'Meeting NotesZ' "the captured value replays into the contenteditable (fill does observable work — not a no-op)"
 
 echo "  ✓ capture-contenteditable.test.sh passed"
