@@ -177,7 +177,7 @@ rather than guessing):
 - **Same-origin journeys persist losslessly** (the buffer lives in per-origin
   sessionStorage). Crossing a top-level origin boundary drops the prior origin's buffered
   actions; cross-origin iframes are unreachable. Stay on one origin for a clean recording.
-- **Actions covered:** click, text input (fill), select, Enter, navigation, explicit **page scroll**
+- **Actions covered:** click, text input incl. `contenteditable` (fill), select, Enter, navigation, explicit **page scroll**
   (coalesced per gesture → `scroll <dir> <px>`; mostly redundant since replay auto-scrolls to each
   element, but it captures lazy-load / infinite-scroll reveals), and **checkbox/radio**. `hover` is
   implicit (replay hovers/scrolls to each target).
@@ -194,6 +194,12 @@ rather than guessing):
   this framework exists to prevent. Container (non-page) scroll is likewise excluded (needs a selector).
 - **Sensitive fields** (password / OTP / card / SSN — by type/autocomplete/inputmode) are
   masked at capture and never written; their `{{input_N}}` token must be filled by hand.
+- **`contenteditable`** is captured as a `fill` step — its text is read from `textContent` (it has no
+  `.value`) and replays via `find … fill` (probe-verified). Before this, the typed text was lost (captured
+  as null) and the benign field was mislabelled "sensitive".
+- **`<select multiple>`** is marked `needs_review`: `el.value` exposes only the first selected option, so
+  a single-value `select` step can't faithfully represent it (selecting one of N would be a false-green).
+  A human resolves the multi-selection (agent-browser `select` accepts multiple values).
 - **Icon-only buttons** whose only accessible name is `aria-label` ARE captured cleanly: an
   aria-label `<button>` (or explicit `role="button"`) compiles to a `find role button --name "<label>"
   --exact` primary, which agent-browser 0.27.0 resolves reliably (probe-verified). The `--exact` is
