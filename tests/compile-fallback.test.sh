@@ -21,8 +21,8 @@ fail(){ echo "  ✗ compile-fallback: $1" >&2; exit 1; }
 eq(){ [ "$1" = "$2" ] || fail "$3: expected '$2', got '$1'"; }
 
 PR="bin/probe-record.sh"; BF="bin/build-flow.js"
-B="_cfb_basic_$$"; N="_cfb_none_$$"     # PID-namespaced so concurrent/overlapping runs never collide
-NAMES="$B $N"
+B="_cfb_basic_$$"; N="_cfb_none_$$"; R="_cfb_role_$$"   # PID-namespaced so concurrent runs never collide
+NAMES="$B $N $R"
 cleanup(){ for n in $NAMES; do rm -f "$DIR/flows/$n.flow.json" "$DIR/flows/$n.candidates.json" "$DIR/flows/$n.values.json" "$DIR/tests/$n.test.sh"; done; }
 trap cleanup EXIT
 cleanup   # start clean
@@ -109,5 +109,16 @@ note="$(bash "$DIR/$PR" compile "$FLOW2" 2>&1)" || fail "no-eligible-fallback co
 if grep -qE '^_find_fb ' "$T2"; then fail "no-eligible case must not emit a _find_fb call"; fi
 grep -q '_run_batch' "$T2" || fail "no-eligible case should fall back to a normal _run_batch"
 case "$note" in *"no step had a usable"*) : ;; *) fail "expected a NOTE that no usable fallback candidate was found" ;; esac
+
+# --- 6. compile MUST bake --exact for a `role` primary (the icon-only fix). agent-browser 0.27.0
+#     `find role --name` is a SUBSTRING match without --exact, so the flag is what makes the
+#     capture-time exact count==1 agree with the engine. This guards probe-record.sh's role->--exact
+#     regex specifically (compile-fallback's other cases only cover text/label/placeholder). ---
+RFLOW="$DIR/flows/$R.flow.json"
+printf '%s\n' "{\"name\":\"$R\",\"startUrl\":\"https://app.example.com/z\",\"steps\":[{\"kind\":\"find\",\"by\":\"role\",\"value\":\"button\",\"name\":\"Close panel\",\"action\":\"click\"}],\"asserts\":[]}" > "$RFLOW"
+bash "$DIR/$PR" compile "$RFLOW" >/dev/null 2>&1 || fail "role-primary flow compile failed"
+RT="$DIR/tests/$R.test.sh"
+RCMD="$(grep -E "^_run_batch '" "$RT" | sed "s/^_run_batch '//; s/'$//" | base64 -d | jq -c '.[0]')"
+eq "$RCMD" '["find","role","button","click","--name","Close panel","--exact"]' "compile bakes --exact for a role primary"
 
 echo "  ✓ compile-fallback.test.sh passed"
