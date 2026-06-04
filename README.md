@@ -181,17 +181,23 @@ rather than guessing):
   drag, and file-upload are excluded (replay auto-scrolls to each element).
 - **Sensitive fields** (password / OTP / card / SSN — by type/autocomplete/inputmode) are
   masked at capture and never written; their `{{input_N}}` token must be filled by hand.
-- **No unique stable locator → `needs_review`** (with a non-empty candidate ladder, usually ≥2),
-  never a fragile guess.
-  This is expected for icon-only buttons whose only accessible name is `aria-label` (the
-  engine's `find role --name` is unreliable on 0.27.0, so role is only a low-priority
-  candidate), duplicate-text grids (N identical "Edit" rows), closed shadow roots, and links
-  or buttons whose visible text is **very long** (>80 chars). Long exact text IS kept as a
-  reviewable candidate (the ladder is never empty), but is **not auto-accepted** as the step's
-  primary locator because long exact text is fragile — the step stays `needs_review`. Tip: when
-  recording, click the **short labelled** control, not a long descriptive block. Resolve a
-  `needs_review` step by picking a candidate, or run `verify` (re-drives and repairs from the
-  captured ladder where it can).
+- **Icon-only buttons** whose only accessible name is `aria-label` ARE captured cleanly: an
+  aria-label `<button>` (or explicit `role="button"`) compiles to a `find role button --name "<label>"
+  --exact` primary, which agent-browser 0.27.0 resolves reliably (probe-verified). The `--exact` is
+  load-bearing: `find role --name` is a **substring** match without it, so it is required for the
+  capture-time exact `count==1` to agree with the engine. The engine does **not** resolve
+  `find role --name` for a native `<a>`/`<input>`/`<heading>` or for a name from `aria-labelledby`, and
+  an **auto-generated** aria-label (looks like a dynamic id) is too fragile — so an icon-only **link**,
+  native checkbox/radio, `<input type=button>`, aria-labelledby control, or auto-labelled button stays
+  `needs_review` rather than getting a primary that would silently fail (or mis-resolve at) replay.
+- **No unique stable locator → `needs_review`** (with a non-empty candidate ladder), never a fragile
+  guess. This is expected for duplicate-text grids (N identical "Edit" rows), closed shadow roots,
+  the icon-only cases above, and links or buttons whose visible text is **very long** (>80 chars).
+  Long exact text IS kept as a reviewable candidate (the ladder is never empty), but is **not
+  auto-accepted** as the step's primary locator because long exact text is fragile — the step stays
+  `needs_review`. Tip: when recording, click the **short labelled** control, not a long descriptive
+  block. Resolve a `needs_review` step by picking a candidate, or run `verify` (re-drives and repairs
+  from the captured ladder where it can).
 - **SPA navigation:** `history.pushState`/`replaceState`/hash changes are captured as url
   wait-gates. A pure DOM-swap router that changes **no** URL is detected heuristically (a click
   that triggers a large DOM mutation with no URL change) and emits a settle wait — `until:text`

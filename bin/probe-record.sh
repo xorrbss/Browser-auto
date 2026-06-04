@@ -107,7 +107,7 @@ compile() {
 			     then (if $s.val then [$s.val] elif $s.text then [$s.text] else [] end)
 			     else (if $s.text then [$s.text] elif $s.val then [$s.val] else [] end) end)
 			+ (if $s.name then ["--name", $s.name] else [] end)
-			+ (if ($s.by | test("^(text|label|placeholder|alt|title)$")) then ["--exact"] else [] end);
+			+ (if ($s.by | test("^(text|label|placeholder|alt|title|role)$")) then ["--exact"] else [] end);
 		.steps
 		| to_entries
 		| map(.key as $i | .value as $s |

@@ -53,11 +53,12 @@ construction. Every step targets an element by a *semantic locator* only.
 When recording finds **no unique stable locator** for an element, the step is emitted with:
 
 - `needs_review` (boolean true) — the step is **non-compilable** until a human/agent resolves it.
-- `candidates` (a **non-empty** array of `{by, value, name?, count}`, usually ≥2) — the
-  alternatives observed, with their in-page match counts. A needs_review step carries **no
-  accepted top-level by/value**. Long (>80-char) exact-text / role-name values are included here
-  for review but are **never auto-accepted** as a step's primary locator (too fragile), so such a
-  step stays `needs_review` — the ladder is never left empty.
+- `candidates` (a **non-empty** array of `{by, value, name?, count}`) — the alternatives observed,
+  with their in-page match counts. A needs_review step carries **no accepted top-level by/value**.
+  The array can hold a **single** candidate when only one alternative exists yet is not auto-acceptable
+  as a primary — e.g. an icon-only **link** / native checkbox / `aria-labelledby` control whose lone
+  `role+name` the engine won't resolve, or a long (>80-char) exact-text / role-name value (too fragile).
+  Non-empty is the only hard invariant.
 
 Absent field == false; hand-written flows are unaffected. `compile` **refuses** (exits
 non-zero, lists the offending steps) on any `needs_review:true` — never a silent drop, never
@@ -78,8 +79,10 @@ not having the feature** — existing flows are unaffected by construction. When
 bakes a per-step *fallback ladder* into each RESOLVED `find` step of the generated test: at replay,
 if the step's primary locator fails, it retries down capture-time-UNIQUE sibling candidates (from the
 gitignored `<name>.candidates.json` sidecar) instead of immediately going red. This reduces FLAKE on
-healthy journeys; it is **not** a `needs_review` reducer (a `needs_review` step has no count==1
-candidate by definition, so it has nothing safe to fall back to — `compile` still refuses it).
+healthy journeys; it is **not** a `needs_review` reducer (a `needs_review` step has no auto-acceptable
+primary, and the fallback filter below excludes `role` and any non-unique candidate, so a needs_review
+step's leftover candidates — e.g. an icon-only link's lone `role+name` — are never usable as a
+fallback; `compile` still refuses such a step).
 
 - **Eligibility** (a fallback may only ever be as strong as the primary it replaces): a sibling
   candidate is used only if `count == 1` at capture, value ≤ 80 chars and name ≤ 80 chars (not
