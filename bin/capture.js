@@ -324,6 +324,8 @@
   document.addEventListener('input', function (e) {
     if (e.isComposing) return;                 // ignore mid-IME composition
     var el = realTarget(e);
+    if (checkableType(el)) return;             // checkbox/radio fire input+change on toggle, but they are
+                                               // captured as `check` by the click handler — never as a fill
     if (el !== pendEl) commitPend();            // focus moved -> commit previous
     pendEl = el; pendVal = valueOf(el);
   }, true);
@@ -414,6 +416,15 @@
   // first post-nav scroll record a wrong direction/magnitude (a route change often resets scroll).
   function resetScrollBase() { scrollBaseY = _scrollY(); scrollBaseX = _scrollX(); scrollPending = false; if (scrollTimer) { clearTimeout(scrollTimer); scrollTimer = null; } }
 
+  // checkableType: native <input type=checkbox|radio> only (el.checked is reliable; a custom
+  // role=checkbox/switch div uses aria-checked and the engine's check/uncheck don't apply to it, so it
+  // stays a plain click). Used to record an ABSOLUTE check instead of a toggling click.
+  function checkableType(el) {
+    if (!el || el.tagName !== 'INPUT') return '';
+    var t = (attr(el, 'type') || '').toLowerCase();
+    return (t === 'checkbox' || t === 'radio') ? t : '';
+  }
+
   // --- clicks (commit pending input first; label dedup; interactive ancestor) ---
   var lastLabelControl = null, lastLabelAt = 0;
   document.addEventListener('click', function (e) {
@@ -424,7 +435,16 @@
     if (lastLabelControl === el && (now - lastLabelAt) < 700) { lastLabelAt = now; return; } // suppress label->control dup
     if (raw.tagName === 'LABEL' || (raw.closest && raw.closest('label'))) { lastLabelControl = el; lastLabelAt = now; }
     commitScroll();   // flush a pending scroll BEFORE this click so the buffer order matches the journey
-    emit('click', el);
+    // checkbox/radio: a bare click TOGGLES, so a differing initial state at replay silently lands the
+    // WRONG final state (false-green). Record the absolute desired post-state and emit `check`, which
+    // replay sets absolutely. el is read at the RECORDED click — for a label/ancestor click (raw!==el)
+    // the control toggles AFTER this handler, so el.checked is still PRE-toggle and must be flipped
+    // (probe-verified); a radio always ends checked. UNCHECK stays a `click`: agent-browser 0.27.0
+    // `uncheck` is broken (probe: success=false), so an absolute uncheck is unavailable — a click is the
+    // documented best-effort residual (works when the page's initial state matches capture).
+    var cbType = checkableType(el);
+    var cbChecked = cbType && ((cbType === 'radio') || ((raw === el) ? el.checked : !el.checked));
+    emit(cbChecked ? 'check' : 'click', el);
     armDomSwap();   // C2: watch for a no-URL-change DOM swap caused by this click
   }, true);
 

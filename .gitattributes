@@ -1,3 +1,9 @@
-# Shell scripts must stay LF even on Windows — they run under Git Bash and CRLF
-# breaks shebangs/here-docs. JSON/MD can follow platform defaults.
-*.sh text eol=lf
+# Text source must stay LF even on Windows. Shell scripts run under Git Bash and CRLF breaks
+# shebangs/here-docs; bin/capture.js is INJECTED into the browser via --init-script and must have a
+# frozen, consistent encoding; and pinning these kills phantom CRLF-vs-LF diffs that an editor/tool can
+# silently introduce (a build-flow.js edit flipped LF->CRLF before this was pinned), which would hide
+# real gate-logic changes in review.
+*.sh   text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf

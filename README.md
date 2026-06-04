@@ -177,10 +177,17 @@ rather than guessing):
 - **Same-origin journeys persist losslessly** (the buffer lives in per-origin
   sessionStorage). Crossing a top-level origin boundary drops the prior origin's buffered
   actions; cross-origin iframes are unreachable. Stay on one origin for a clean recording.
-- **Actions covered:** click, text input (fill), select, Enter, navigation, and explicit **page
-  scroll** (coalesced per gesture → `scroll <dir> <px>`; mostly redundant since replay auto-scrolls to
-  each element, but it captures lazy-load / infinite-scroll reveals). `hover` is implicit (replay
-  hovers/scrolls to each target). **`drag` and file `upload` are excluded** — agent-browser's `drag`/
+- **Actions covered:** click, text input (fill), select, Enter, navigation, explicit **page scroll**
+  (coalesced per gesture → `scroll <dir> <px>`; mostly redundant since replay auto-scrolls to each
+  element, but it captures lazy-load / infinite-scroll reveals), and **checkbox/radio**. `hover` is
+  implicit (replay hovers/scrolls to each target).
+- **Checkbox / radio:** a bare `click` TOGGLES, so if the page's initial state differs at replay the
+  final state would be wrong yet the run would pass green. So a native `<input type=checkbox|radio>`
+  that ends **checked** compiles to `find … check` — an ABSOLUTE set that reaches the captured state
+  regardless of the initial state. **Unchecking stays a `click`**: agent-browser 0.27.0 `uncheck` is
+  broken (probe-verified: returns success=false and leaves the box checked), so an absolute uncheck is
+  not available — the click works only when the replay's initial state matches capture (a documented
+  residual). Custom `role="checkbox"` divs (aria-checked) also stay a click. **`drag` and file `upload` are excluded** — agent-browser's `drag`/
   `upload` commands take a CSS selector or a stale `@ref` (both forbidden by this framework), the `find`
   marker is transient, and drag targets are usually non-semantic `<div>`s with no stable locator, so
   there is no reliable semantic replay path; forcing one would risk the silent-wrong-element matches
