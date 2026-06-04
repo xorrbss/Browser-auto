@@ -32,7 +32,11 @@ construction. Every step targets an element by a *semantic locator* only.
 
 - `find`  — `by` ∈ {testid,role,label,text,placeholder,alt,title}, `value`, `action`
   (click|fill|type|select|check|uncheck|hover), optional `name` (for role), `text`/`val`
-  (for fill/type/select). Locator priority when AI-authored:
+  (for fill/type/select). `check` is the ABSOLUTE set capture emits for a native checkbox/radio that
+  ends checked (vs a toggling `click`, which would false-green when the page's initial state differs).
+  `uncheck` is in the schema but capture does NOT emit it — agent-browser 0.27.0 `uncheck` is broken
+  (returns success=false), so a checkbox-uncheck stays a `click` (a hand-written `uncheck` step would
+  fail at replay). Locator priority when AI-authored:
   **testid > role+name > label > exact-text > placeholder > title** (most stable first).
   Uniqueness is verified **in-page** at capture time (mirroring how replay `find` matches);
   host-side `get count` is CSS-only and CANNOT count semantic locators, so it serves only

@@ -123,6 +123,7 @@ for (let i = 0; i < records.length; i++) {
     continue;
   }
   if (t === 'click') { actionFind(rec, 'click'); }
+  else if (t === 'check') { actionFind(rec, 'check'); }   // checkbox/radio absolute set (not a toggle click)
   else if (t === 'key') { steps.push({ kind: 'press', value: rec.input_value || 'Enter' }); }
   else if (t === 'input') {
     if (rec.masked || rec.input_value == null) {
