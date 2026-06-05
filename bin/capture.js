@@ -475,17 +475,26 @@
   // WARNS: its effect is app-specific and may not replay deterministically. Shift is NOT a "shortcut"
   // modifier (Shift+Tab / Shift+Arrow are normal navigation), so a Shift-only combo is not flagged.
   // agent-browser `press` is best-effort (returns success for ANY key name — probe-verified), like
-  // scroll: a no-op press cannot false-green; the next locator gates correctness. flushAll() commits any
-  // pending input/scroll BEFORE the key so the buffer order matches the journey (fill, then press).
+  // scroll: a no-op press can't false-green a FOLLOWING locator (which gates correctness). CAVEAT: a RUN
+  // of consecutive focus/index-relative presses (esp. Arrows driving a custom listbox/menu) has no
+  // intervening locator, so if the page's initial selection/option order drifts at replay a different
+  // item can be chosen — build-flow WARNS on arrow presses to surface this drift sensitivity. flushAll()
+  // commits any pending input/scroll BEFORE the key so the buffer order matches the journey (fill, then press).
   var NAVKEYS = { Enter: 1, Escape: 1, Tab: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1 };
   document.addEventListener('keydown', function (e) {
-    var key = e.key, mod = e.ctrlKey || e.metaKey || e.altKey;
+    if (e.isComposing) return;                  // mid-IME composition -> the input listener owns the text
+    var key = e.key;
+    // AltGr (synthesized as Ctrl+Alt on intl/Latin layouts) composes a printable CHARACTER, not a
+    // shortcut — let the input listener capture it as text; never treat it as a modifier combo, so an
+    // ordinary AltGr char (€ @ { } ~ | \) is not mis-recorded as a 'Control+Alt+x' press + false warning.
+    var altgr = !!(e.getModifierState && e.getModifierState('AltGraph'));
+    var mod = !altgr && (e.ctrlKey || e.metaKey || e.altKey);
     if (!(NAVKEYS[key] || (mod && key && key.length === 1))) return;
     var combo = '';
-    if (e.ctrlKey) combo += 'Control+';
-    if (e.metaKey) combo += 'Meta+';
-    if (e.altKey) combo += 'Alt+';
-    if (e.shiftKey) combo += 'Shift+';
+    if (mod && e.ctrlKey) combo += 'Control+';
+    if (mod && e.metaKey) combo += 'Meta+';
+    if (mod && e.altKey) combo += 'Alt+';
+    if (e.shiftKey && !altgr) combo += 'Shift+';
     var el = realTarget(e);
     flushAll();
     emit('key', el, { input_value: combo + key, modifier: mod || undefined });

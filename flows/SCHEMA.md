@@ -68,12 +68,16 @@ construction. Every step targets an element by a *semantic locator* only.
 - `press` — `value` (a key name). Captured non-text keyboard actions: **Enter** + a navigation allowlist
   **Esc / Tab / Arrow{Up,Down,Left,Right}** (and `Shift+` / modifier combos). Compiles to agent-browser
   `press <value>`. **Space and bare printable keys are NOT captured** (they are text → a `fill`, or a
-  button's synthetic click — both already captured). `press` is **best-effort** (agent-browser returns
-  success for ANY key name, like `scroll`): a no-op press cannot false-green — the next locator gates
-  correctness, so capture must emit correct names (it does, from `e.key`). A **modifier shortcut**
-  (ctrl/meta/alt, e.g. `Control+s`) is captured but build-flow emits a **warning** (its effect is
-  app-specific; review that replaying it is safe). `Shift+` alone (e.g. `Shift+Tab`) is normal navigation,
-  not warned.
+  button's synthetic click — both already captured); **AltGr-composed characters** (intl layouts, where
+  AltGr is synthesized as Ctrl+Alt — detected via `getModifierState('AltGraph')`) are likewise treated as
+  text, not a shortcut. `press` is **best-effort** (agent-browser returns success for ANY key name, like
+  `scroll`): a no-op press can't false-green a **following** locator (which gates correctness), so capture
+  must emit correct names (it does, from `e.key`). **Caveat:** a *run* of consecutive focus/index-relative
+  presses (especially **arrows** on a custom listbox/menu) has no intervening locator — if the page's
+  selection or option order drifts at replay a *different* item can be chosen, so build-flow **warns on
+  arrow presses**. A **modifier shortcut** (ctrl/meta/alt, e.g. `Control+s`) is captured but build-flow
+  warns (its effect is app-specific; review that replaying it is safe). `Shift+` alone (e.g. `Shift+Tab`)
+  is normal navigation, not warned.
 
 ### needs_review (additive field on a `find` step)
 

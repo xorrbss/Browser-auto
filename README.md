@@ -195,10 +195,13 @@ rather than guessing):
 - **Sensitive fields** (password / OTP / card / SSN — by type/autocomplete/inputmode) are
   masked at capture and never written; their `{{input_N}}` token must be filled by hand.
 - **Keyboard:** Enter plus a navigation allowlist (**Esc / Tab / Arrows**) are captured as `press` steps.
-  **Space and bare printable keys are not** (they are text, or a button's synthetic click — already
-  captured). A **modifier shortcut** (Ctrl/Cmd/Alt, e.g. `Control+s`) is captured but **build-flow warns**
-  (its replay effect is app-specific); `Shift+Tab` and friends are normal navigation. Like scroll, a
-  `press` is best-effort — a no-op press can't false-green (the next locator gates correctness).
+  **Space, bare printable keys, and AltGr-composed characters are not** (they are text, or a button's
+  synthetic click — already captured). A **modifier shortcut** (Ctrl/Cmd/Alt, e.g. `Control+s`) is captured
+  but **build-flow warns** (its replay effect is app-specific); `Shift+Tab` and friends are normal
+  navigation. Like scroll, a `press` is best-effort — a no-op press can't false-green a **following**
+  locator (which gates correctness). **Caveat:** a *run* of consecutive arrow presses on a custom
+  listbox/menu is index-relative with no intervening locator, so if the page's selection drifts a different
+  item can be chosen — **build-flow warns on arrow presses** to surface this.
 - **`contenteditable`** is captured as a `fill` step — its text is read from `textContent` (it has no
   `.value`) and replays via `find … fill` (probe-verified). Before this, the typed text was lost (captured
   as null) and the benign field was mislabelled "sensitive".

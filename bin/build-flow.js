@@ -127,7 +127,14 @@ for (let i = 0; i < records.length; i++) {
   else if (t === 'key') {
     const keyval = rec.input_value || 'Enter';
     steps.push({ kind: 'press', value: keyval });
-    if (rec.modifier) warns.push(`modifier shortcut '${keyval}' captured as a press step (#${steps.length - 1}) — its effect is app-specific; review that replaying it is safe/deterministic before relying on it.`);
+    if (rec.modifier) {
+      warns.push(`modifier shortcut '${keyval}' captured as a press step (#${steps.length - 1}) — its effect is app-specific; review that replaying it is safe/deterministic before relying on it.`);
+    } else if (/Arrow/.test(keyval)) {
+      // KEY-1: a run of consecutive arrow presses is index-relative and has no intervening semantic
+      // locator, so if the page's initial selection/option order drifts at replay a different item can be
+      // chosen yet a generic trailing assert still passes. Surface it (cannot be locator-gated).
+      warns.push(`arrow-key press '${keyval}' (step #${steps.length - 1}) is focus/index-relative and NOT gated by a semantic locator — if the page's initial selection or option order drifts at replay, a different item can be chosen. Review drift sensitivity.`);
+    }
   }
   else if (t === 'input') {
     if (rec.masked || rec.input_value == null) {
