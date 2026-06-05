@@ -124,7 +124,11 @@ for (let i = 0; i < records.length; i++) {
   }
   if (t === 'click') { actionFind(rec, 'click'); }
   else if (t === 'check') { actionFind(rec, 'check'); }   // checkbox/radio absolute set (not a toggle click)
-  else if (t === 'key') { steps.push({ kind: 'press', value: rec.input_value || 'Enter' }); }
+  else if (t === 'key') {
+    const keyval = rec.input_value || 'Enter';
+    steps.push({ kind: 'press', value: keyval });
+    if (rec.modifier) warns.push(`modifier shortcut '${keyval}' captured as a press step (#${steps.length - 1}) — its effect is app-specific; review that replaying it is safe/deterministic before relying on it.`);
+  }
   else if (t === 'input') {
     if (rec.masked || rec.input_value == null) {
       maskedCount++;
