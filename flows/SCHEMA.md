@@ -65,6 +65,20 @@ construction. Every step targets an element by a *semantic locator* only.
   a CSS selector or stale `@ref` — both forbidden here — and drag targets are usually non-semantic
   `<div>`s with no stable locator. See README "Capture scope & limitations".)
 
+- `press` — `value` (a key name). Captured non-text keyboard actions: **Enter** + a navigation allowlist
+  **Esc / Tab / Arrow{Up,Down,Left,Right}** (and `Shift+` / modifier combos). Compiles to agent-browser
+  `press <value>`. **Space and bare printable keys are NOT captured** (they are text → a `fill`, or a
+  button's synthetic click — both already captured); **AltGr-composed characters** (intl layouts, where
+  AltGr is synthesized as Ctrl+Alt — detected via `getModifierState('AltGraph')`) are likewise treated as
+  text, not a shortcut. `press` is **best-effort** (agent-browser returns success for ANY key name, like
+  `scroll`): a no-op press can't false-green a **following** locator (which gates correctness), so capture
+  must emit correct names (it does, from `e.key`). **Caveat:** a *run* of consecutive focus/index-relative
+  presses (especially **arrows** on a custom listbox/menu) has no intervening locator — if the page's
+  selection or option order drifts at replay a *different* item can be chosen, so build-flow **warns on
+  arrow presses**. A **modifier shortcut** (ctrl/meta/alt, e.g. `Control+s`) is captured but build-flow
+  warns (its effect is app-specific; review that replaying it is safe). `Shift+` alone (e.g. `Shift+Tab`)
+  is normal navigation, not warned.
+
 ### needs_review (additive field on a `find` step)
 
 When recording finds **no unique stable locator** for an element, the step is emitted with:

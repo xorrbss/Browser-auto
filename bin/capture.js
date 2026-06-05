@@ -467,9 +467,37 @@
     armDomSwap();   // C2: watch for a no-URL-change DOM swap caused by this click
   }, true);
 
-  // --- Enter key ---
+  // --- keyboard: Enter + a non-Enter navigation allowlist (Esc/Tab/Arrows) captured as `press` ---
+  // Printable keys are NOT captured here — they are text (the input listener). SPACE is excluded: in a
+  // text field it is text (input), and on a button/checkbox it fires a synthetic click (the click
+  // handler) — capturing it here would duplicate. A ctrl/meta/alt shortcut (on an allowlist key OR a
+  // single printable key, e.g. Ctrl+S) IS captured as a combo press but FLAGGED `modifier` so build-flow
+  // WARNS: its effect is app-specific and may not replay deterministically. Shift is NOT a "shortcut"
+  // modifier (Shift+Tab / Shift+Arrow are normal navigation), so a Shift-only combo is not flagged.
+  // agent-browser `press` is best-effort (returns success for ANY key name — probe-verified), like
+  // scroll: a no-op press can't false-green a FOLLOWING locator (which gates correctness). CAVEAT: a RUN
+  // of consecutive focus/index-relative presses (esp. Arrows driving a custom listbox/menu) has no
+  // intervening locator, so if the page's initial selection/option order drifts at replay a different
+  // item can be chosen — build-flow WARNS on arrow presses to surface this drift sensitivity. flushAll()
+  // commits any pending input/scroll BEFORE the key so the buffer order matches the journey (fill, then press).
+  var NAVKEYS = { Enter: 1, Escape: 1, Tab: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1 };
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { var el = realTarget(e); flushAll(); emit('key', el, { input_value: 'Enter' }); }
+    if (e.isComposing) return;                  // mid-IME composition -> the input listener owns the text
+    var key = e.key;
+    // AltGr (synthesized as Ctrl+Alt on intl/Latin layouts) composes a printable CHARACTER, not a
+    // shortcut — let the input listener capture it as text; never treat it as a modifier combo, so an
+    // ordinary AltGr char (€ @ { } ~ | \) is not mis-recorded as a 'Control+Alt+x' press + false warning.
+    var altgr = !!(e.getModifierState && e.getModifierState('AltGraph'));
+    var mod = !altgr && (e.ctrlKey || e.metaKey || e.altKey);
+    if (!(NAVKEYS[key] || (mod && key && key.length === 1))) return;
+    var combo = '';
+    if (mod && e.ctrlKey) combo += 'Control+';
+    if (mod && e.metaKey) combo += 'Meta+';
+    if (mod && e.altKey) combo += 'Alt+';
+    if (e.shiftKey && !altgr) combo += 'Shift+';
+    var el = realTarget(e);
+    flushAll();
+    emit('key', el, { input_value: combo + key, modifier: mod || undefined });
   }, true);
 
   // --- navigation: A(durable, via record) + B(history) + C(prevUrl sentinel) + D(teardown) ---
