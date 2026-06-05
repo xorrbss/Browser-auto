@@ -177,7 +177,7 @@ rather than guessing):
 - **Same-origin journeys persist losslessly** (the buffer lives in per-origin
   sessionStorage). Crossing a top-level origin boundary drops the prior origin's buffered
   actions; cross-origin iframes are unreachable. Stay on one origin for a clean recording.
-- **Actions covered:** click, text input incl. `contenteditable` (fill), select, Enter, navigation, explicit **page scroll**
+- **Actions covered:** click, text input incl. `contenteditable` (fill), select, keyboard (Enter + Esc/Tab/Arrows as `press`), navigation, explicit **page scroll**
   (coalesced per gesture → `scroll <dir> <px>`; mostly redundant since replay auto-scrolls to each
   element, but it captures lazy-load / infinite-scroll reveals), and **checkbox/radio**. `hover` is
   implicit (replay hovers/scrolls to each target).
@@ -194,6 +194,11 @@ rather than guessing):
   this framework exists to prevent. Container (non-page) scroll is likewise excluded (needs a selector).
 - **Sensitive fields** (password / OTP / card / SSN — by type/autocomplete/inputmode) are
   masked at capture and never written; their `{{input_N}}` token must be filled by hand.
+- **Keyboard:** Enter plus a navigation allowlist (**Esc / Tab / Arrows**) are captured as `press` steps.
+  **Space and bare printable keys are not** (they are text, or a button's synthetic click — already
+  captured). A **modifier shortcut** (Ctrl/Cmd/Alt, e.g. `Control+s`) is captured but **build-flow warns**
+  (its replay effect is app-specific); `Shift+Tab` and friends are normal navigation. Like scroll, a
+  `press` is best-effort — a no-op press can't false-green (the next locator gates correctness).
 - **`contenteditable`** is captured as a `fill` step — its text is read from `textContent` (it has no
   `.value`) and replays via `find … fill` (probe-verified). Before this, the typed text was lost (captured
   as null) and the benign field was mislabelled "sensitive".
