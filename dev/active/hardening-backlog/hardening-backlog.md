@@ -34,7 +34,7 @@ Items #1–#3 below shipped as one batch (`feat/hardening-top3`): 16/16 suite GR
 | 5 | ✓ DONE — contenteditable mis-captured as masked sensitive → fix or needs_review | med / low / low | coverage |
 | 6 | ✓ DONE — `<select multiple>` → needs_review (only option#1 captured today) | med / low / low | coverage |
 | 7 | ✓ DONE — verify-flow "Safe to compile" wording + testid `get count` cross-check | med / low / med | false-green |
-| 8 | non-Enter key allowlist (Esc/Tab/Arrows/Space) as `press`; warn modifier combos | med / low / med | coverage |
+| 8 | ✓ DONE — non-Enter key allowlist (Esc/Tab/Arrows; Space excluded — redundant) as `press`; warn modifier combos | med / low / med | coverage |
 | 9 | assert_text require VISIBLE text (or assert_text_visible for confirmation gates) | med / low / med | false-green |
 | 10 | opt-in `assert_count==1` companion for testid steps (duplicate-drift) | med / low / med | open-risk |
 | 11 | bounded settle poll on positive-presence asserts (text/visible/value) | med / med / med | flake |
