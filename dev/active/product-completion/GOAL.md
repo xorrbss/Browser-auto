@@ -25,8 +25,13 @@ Verified working:
 - **webui:** 결재 dashboard, NL command box (on-prem model classifies → sync/summarize/query; spans
   approvals **and** registered-system records), 시스템 registry view (register/auth/analyze/sync/query).
 - **Design review (scorecard 77→ fixes applied)** and **Phase-2 red-team** done; all fix-rounds committed.
-- **Phase 2 approve:** `dev/active/phase2-guarded-approve/DESIGN.md` (v2) + `REDTEAM.md` — **DESIGN ONLY,
-  not implemented, safety-gated.**
+- **M1 generic UI verification:** DONE in this session on a brand-new non-Hiworks local system
+  `m1demo`: webui register → auth state → live analyze/propose (`proposedBy:model`) → recipe save →
+  sync → UI query. `bash run.sh` passed **24/24** on run `20260607-071848-18029`.
+- **Phase 2 approve:** `dev/active/phase2-guarded-approve/DESIGN.md` is now **design v3** (mandatory
+  per-item OOB trusted content approval; `echoedDocNo` is typo-guard only). `REDTEAM-v3.md` returns
+  **Gate A PASS / safe-to-implement design** with 0 critical/high. **Gate B staged capture still NOT
+  done; approval implementation remains forbidden/fail-closed.**
 
 Recovery note (env): agent-browser daemon wedge (os 10060) = stale `~/.agent-browser` session files;
 fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,pid,port,stream,version}`
@@ -36,14 +41,14 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
 
 ## Milestones to completion
 
-### M1 — Close the read/RPA verification gaps  [P1]
-- Live-verify the **full registration flow for a NON-hiworks system** through the UI: register → 인증
-  → **구조분석(analyze + propose-recipe LIVE)** → review/edit recipe → 저장 → 동기화 → 조회. (Today
-  only hiworks is live-verified; the analyze/propose **live** path has never run — daemon was wedged.)
-- Improve `propose-recipe.js`: the model proposal currently fails validation and falls back to the
-  deterministic recipe — tune the prompt/validation so the model maps headers→field names when reachable.
-- Run **`bash run.sh` fully green** on a healthy daemon (incl. the browser tests, not just the goldens).
-- **Done when:** a brand-new system is registered + synced + queried entirely from the UI, no code edits.
+### M1 — Close the read/RPA verification gaps  [P1]  **DONE**
+- Verified the **full registration flow for a NON-hiworks system** through the UI: register → 인증
+  → **구조분석(analyze + propose-recipe LIVE)** → review/edit recipe → 저장 → 동기화 → 조회.
+- `propose-recipe.js` live path produced `proposedBy:model` for a reachable ARIA table and mapped
+  headers→field names without falling back.
+- `bash run.sh` fully green on a healthy daemon: **24/24 passed**, run `20260607-071848-18029`.
+- **Done evidence:** brand-new `m1demo` system registered + synced + queried entirely from the UI, no
+  product-code edits.
 
 ### M2 — Generic detail + summary (finish "fetch → 요약" for any system)  [P2]
 - Generalize the 결재 detail-enrichment (`extract-detail` + `summarize`) onto the `records` path so any
@@ -53,21 +58,21 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
 - **Done when:** a registered system's records carry dept/body/summary; a digest works from the UI.
 
 ### M3 — Phase 2 guarded approve (the effectful feature)  [P1, SAFETY-GATED]
-- **Gate A:** re-red-team `DESIGN.md` v2 (same 6 lenses) → must reach **safe-to-implement**. **DONE →
-  verdict REVISE-FIRST** (`dev/active/phase2-guarded-approve/REDTEAM-v2.md`): 0 critical, **1 HIGH
-  (PRESENCE-1)**, 4 medium, 8 low; 15 refuted. v2 held well, but PRESENCE-1 is gate-blocking (the
-  `echoedDocNo` presence factor is vacuous — 문서번호==doc_id is returned to every same-origin caller).
-  **Next:** author **DESIGN v3** to close PRESENCE-1 (real OOB human-only factor, or honest "serialized,
-  not software-gated, rests on operator click + I7") + fold the 4 mediums/8 lows → then a **third
-  re-red-team** must return safe-to-implement. The PRESENCE-1 fix DIRECTION is a product/security
-  decision for the operator (awaiting input). Until safe-to-implement: **Gate A NOT passed.**
+- **Gate A:** **PASSED** (`dev/active/phase2-guarded-approve/REDTEAM-v3.md`). `REDTEAM-v2.md` returned
+  REVISE-FIRST on v2 (0 critical, **1 HIGH PRESENCE-1**, 4 medium, 8 low). DESIGN v3 closes
+  PRESENCE-1 with mandatory per-item OOB trusted content approval (Windows native helper displays doc
+  binding + OS credential/Windows Hello; bound to session+actor+doc_id+fingerprint+nonce_hash; plain
+  WebAuthn UV alone is insufficient). v3 red-team found **0 critical / 0 high**. Gate A passing does
+  **not** authorize implementation before Gate B.
 - **Gate B:** §12 of DESIGN — capture the **real approve UI on a disposable staged doc** and pin
   `recipe.approve` (문서번호 uniqueness, native confirm dialog?, required comment?, positive completion
   marker, does the 승인 affordance disappear?). **Until A+B: fail-closed, do not implement.**
-- Then implement per DESIGN v2: `bin/approve-doc.sh`, `webui/routes-approve.js` (session cookie, Origin
-  gate, human-presence echo, content-fingerprint re-verify, server-signed consent token), append-only
-  `approval_audit` (`synchronous=FULL`), `fetched→approving` claim + reconciliation pass, kill-path
-  `record stop` + 'interrupted' audit, confirm-modal (textContent-only) + CSP, queue approve-gating.
+- After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
+  (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
+  re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),
+  `fetched→approving` claim + reconciliation pass, terminal failed/interrupted→`approve_failed`,
+  kill-path durable audit with best-effort video on wedged daemon, confirm-modal (textContent-only) +
+  strict CSP, queue approve-gating.
 - Tests: browser-free units (DESIGN §9) + staged integration on a disposable doc — **never** a real
   financial approval in a test.
 - **Done when:** a staged doc is approved with every guard firing, and invariants I1–I7 hold under a
@@ -110,4 +115,4 @@ M1 + M3-Gate A (re-red-team) first → M2 / M4 → M3 implementation (after both
 - webui: `server.js`, `routes-rpa.js`, `agent.js` (NL), `systems.js`, `jobs.js`, `spawn.js`,
   `public/{app,flows,systems-view,util}.js`.
 - Tests (gate): `tests/extract-approvals.test.sh`, `extract-list-unit.test.sh`, `db-unit.test.sh`.
-- Phase 2: `dev/active/phase2-guarded-approve/{DESIGN.md,REDTEAM.md}`.
+- Phase 2: `dev/active/phase2-guarded-approve/{DESIGN.md,REDTEAM.md,REDTEAM-v2.md,REDTEAM-v3.md}`.
