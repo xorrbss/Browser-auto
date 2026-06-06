@@ -84,9 +84,11 @@ for doc in "${DOCS[@]}"; do
 	echo "[enrich] ($((i+1))/${#DOCS[@]}) $doc"
 	# Back to the list, then open this doc by its visible doc-number text (same-tab navigation).
 	AB_JSON navigate "$INBOX_URL" </dev/null >/dev/null 2>&1 || true
-	cj="$(AB_JSON find text "$doc" click </dev/null)"
-	if [ "$(printf '%s' "$cj" | jq -r '.success')" != "true" ]; then
-		echo "  ⚠ click failed ($(printf '%s' "$cj" | jq -r '.error // "?"')) — skipping" >&2; continue
+	# `|| true`: a chained `find … click` exits NON-ZERO when the element isn't found (e.g. the doc is on
+	# another list page) — without it, set -e would ABORT the whole batch instead of skipping this doc.
+	cj="$(AB_JSON find text "$doc" click </dev/null || true)"
+	if [ "$(printf '%s' "$cj" | jq -r '.success' 2>/dev/null)" != "true" ]; then
+		echo "  ⚠ not on the current list page / click failed ($(printf '%s' "$cj" | jq -r '.error // "?"' 2>/dev/null)) — skipping" >&2; continue
 	fi
 	# Reliability gate: the click must actually NAVIGATE to a document detail URL. If it does not
 	# (e.g. the row wasn't clickable / the page stayed on the list), skip — never snapshot the list.
@@ -97,8 +99,8 @@ for doc in "${DOCS[@]}"; do
 	if [ -n "$READY_TEXT" ]; then
 		AB_JSON wait --text "$READY_TEXT" --timeout 12000 </dev/null >/dev/null 2>&1 || true
 	fi
-	sj="$(AB_JSON snapshot </dev/null)"
-	if [ "$(printf '%s' "$sj" | jq -r '.success')" != "true" ]; then
+	sj="$(AB_JSON snapshot </dev/null || true)"
+	if [ "$(printf '%s' "$sj" | jq -r '.success' 2>/dev/null)" != "true" ]; then
 		echo "  ⚠ detail snapshot failed — skipping" >&2; continue
 	fi
 	# Extract dept + raw_text (passing the expected doc_id so extract-detail's guard rejects a

@@ -19,11 +19,12 @@ set -euo pipefail
 PROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PROBE_ROOT
 
-SYSTEM=""; LIMIT=0
+SYSTEM=""; LIMIT=0; KEY=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--system) SYSTEM="${2:-}"; shift 2 ;;
 		--limit) LIMIT="${2:-0}"; shift 2 ;;
+		--key) KEY="${2:-}"; shift 2 ;;   # enrich ONE specific record (must be reachable on the list)
 		*) echo "[enrich-system] unknown arg: $1" >&2; exit 2 ;;
 	esac
 done
@@ -60,22 +61,27 @@ ID_LABEL="$(jq -r '.detail.idLabel // empty' "$RECIPE")"
 READY_TEXT="$(jq -r '.detail.ready.text // empty' "$RECIPE")"
 DETAIL_URLGLOB="$(jq -r '.detail.urlGlob // empty' "$RECIPE")"
 
-# Records to enrich: status='fetched' rows still missing a summary; their `key` is the click target's
-# visible text in the list. One key per line (special chars survive the read). Capture into a file (NOT
-# `mapfile < <(node)`, which discards the exit code and would mask a DB read failure as "nothing to do").
-DOCLIST="$(mktemp)"; DOCERR="$(mktemp)"
-if ! ( cd "$PROBE_ROOT" && node -e '
+# Records to enrich: a single --key, else status='fetched' rows still missing a summary; their `key` is
+# the click target's visible text in the list. One key per line (special chars survive the read).
+# Capture into a file (NOT `mapfile < <(node)`, which discards the exit code and would mask a DB read
+# failure as "nothing to do").
+if [ -n "$KEY" ]; then
+	DOCS=("$KEY")
+else
+	DOCLIST="$(mktemp)"; DOCERR="$(mktemp)"
+	if ! ( cd "$PROBE_ROOT" && node -e '
 const d=require("./lib/db.js");const h=d.openDb();
 let r=d.queryRecords(h,process.argv[1],{status:"fetched"}).filter(x=>!x.summary).map(x=>x.key);
 d.closeDb(h);
 const lim=parseInt(process.argv[2],10)||0; if(lim>0) r=r.slice(0,lim);
 for(const k of r) console.log(k);
 ' "$SYSTEM" "$LIMIT" ) > "$DOCLIST" 2> "$DOCERR"; then
-	echo "[enrich-system] ✗ could not read records from the DB:" >&2; cat "$DOCERR" >&2
-	rm -f "$DOCLIST" "$DOCERR"; rm -rf "$TMPD"; exit 1
+		echo "[enrich-system] ✗ could not read records from the DB:" >&2; cat "$DOCERR" >&2
+		rm -f "$DOCLIST" "$DOCERR"; rm -rf "$TMPD"; exit 1
+	fi
+	mapfile -t DOCS < "$DOCLIST"
+	rm -f "$DOCLIST" "$DOCERR"
 fi
-mapfile -t DOCS < "$DOCLIST"
-rm -f "$DOCLIST" "$DOCERR"
 
 if [ "${#DOCS[@]}" -eq 0 ]; then
 	echo "[enrich-system] nothing to enrich (all fetched records already summarized, or none synced)."
@@ -93,12 +99,17 @@ AB_AUTH "$SYSTEM" open </dev/null >/dev/null
 i=0
 for key in "${DOCS[@]}"; do
 	echo "[enrich-system] ($((i+1))/${#DOCS[@]}) $key"
-	# Back to the list, then open this record by its EXACT visible key text (same-tab navigation).
-	# --exact so a substring / cross-reference of the key cannot open a different record.
+	# Back to the list, then open this record by its visible key text (same-tab navigation). SUBSTRING
+	# match (NOT --exact): a doc id/key is rendered INSIDE a larger cell, so --exact finds nothing
+	# (verified live: "Element not found"). The wrong-record risk is covered by extract-detail's
+	# MANDATORY idLabel==key guard, which rejects+skips a detail page whose 문서번호 differs.
+	# `|| true`: a chained `find … click` returns a NON-ZERO exit when the element isn't found (e.g. the
+	# doc is on another list page) — without it, set -e would ABORT the whole batch instead of skipping
+	# this one doc. The .success check below turns a not-found / transient daemon error into a skip.
 	AB_JSON navigate "$TARGET" </dev/null >/dev/null 2>&1 || true
-	cj="$(AB_JSON find text "$key" --exact click </dev/null)"
-	if [ "$(printf '%s' "$cj" | jq -r '.success')" != "true" ]; then
-		echo "  ⚠ click failed ($(printf '%s' "$cj" | jq -r '.error // "?"')) — skipping" >&2; continue
+	cj="$(AB_JSON find text "$key" click </dev/null || true)"
+	if [ "$(printf '%s' "$cj" | jq -r '.success' 2>/dev/null)" != "true" ]; then
+		echo "  ⚠ not on the current list page / click failed ($(printf '%s' "$cj" | jq -r '.error // "?"' 2>/dev/null)) — skipping" >&2; continue
 	fi
 	# Reliability gate: the click must NAVIGATE to a detail URL — else skip (never snapshot the list).
 	if [ -n "$DETAIL_URLGLOB" ] && ! wait_url "$DETAIL_URLGLOB" 12; then
@@ -107,8 +118,8 @@ for key in "${DOCS[@]}"; do
 	if [ -n "$READY_TEXT" ]; then
 		AB_JSON wait --text "$READY_TEXT" --timeout 12000 </dev/null >/dev/null 2>&1 || true
 	fi
-	sj="$(AB_JSON snapshot </dev/null)"
-	if [ "$(printf '%s' "$sj" | jq -r '.success')" != "true" ]; then
+	sj="$(AB_JSON snapshot </dev/null || true)"
+	if [ "$(printf '%s' "$sj" | jq -r '.success' 2>/dev/null)" != "true" ]; then
 		echo "  ⚠ detail snapshot failed — skipping" >&2; continue
 	fi
 	# Extract arbitrary detail fields + raw_text. extract-detail --generic ENFORCES idLabel==key (the
