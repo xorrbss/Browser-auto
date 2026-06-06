@@ -49,8 +49,8 @@ echo "[sync-system] '$SYSTEM' → launching browser (cached auth)…"
 AB_AUTH "$SYSTEM" open </dev/null >/dev/null   # fails loud if fixtures/auth/<system>.state.json missing
 
 echo "[sync-system] navigating to target…"
-nav="$(AB_JSON navigate "$TARGET" </dev/null)"
-if [ "$(printf '%s' "$nav" | jq -r '.success')" != "true" ]; then
+nav="$(AB_JSON navigate "$TARGET" </dev/null || true)"   # || true: report loud below, not a silent set -e abort
+if [ "$(printf '%s' "$nav" | jq -r '.success // empty' 2>/dev/null)" != "true" ]; then
 	echo "[sync-system] ✗ navigate failed: $(printf '%s' "$nav" | jq -r '.error // "unknown"')" >&2; rm -rf "$TMPD"; exit 1
 fi
 echo "[sync-system] landed: $(printf '%s' "$nav" | jq -r '.data.url // "?"')"
