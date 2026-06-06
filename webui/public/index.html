@@ -12,6 +12,7 @@
 		<span class="sub">웹 UI</span>
 		<nav class="nav">
 			<button id="nav-runs" type="button" class="active">실행</button>
+			<button id="nav-approvals" type="button">결재</button>
 			<button id="nav-flows" type="button">플로우</button>
 			<button id="nav-trends" type="button">추세</button>
 			<button id="nav-auth" type="button">인증</button>
@@ -32,6 +33,22 @@
 		<div class="view view-runs">
 			<aside id="runs" class="runs"><div class="hint">실행 목록 로딩 중…</div></aside>
 			<section id="detail" class="detail"><div class="placeholder">왼쪽에서 실행을 선택하세요.</div></section>
+		</div>
+
+		<!-- Approvals view -->
+		<div class="view view-approvals">
+			<section class="pane">
+				<div class="approvals-head">
+					<h3>결재 미결함</h3>
+					<input id="sync-app" placeholder="앱 (선택, 캐시된 인증)" autocomplete="off" spellcheck="false" />
+					<button id="sync-btn" type="button">⟳ 동기화</button>
+					<button id="sync-cancel" type="button" class="cancel-btn" hidden>✕ 취소</button>
+				</div>
+				<p class="note">그룹웨어에 로그인해 미결 결재를 스크랩하고 DB에 저장·표시합니다(P0: 읽기 전용).
+					승인 실행은 P1이며 여기서 수행하지 않습니다. 브라우저 작업은 한 번에 하나씩.</p>
+				<div id="approvals-list"><div class="hint">결재 목록 로딩 중…</div></div>
+				<pre id="sync-log" class="joblog" hidden></pre>
+			</section>
 		</div>
 
 		<!-- Flows view -->

@@ -103,6 +103,57 @@ plain substring, matched across origins — then saves `fixtures/auth/myapp.stat
 0.27.0.) Tests then start with `AB_AUTH myapp open <url>` and replay unattended — the OTP
 cost is paid once.
 
+## 결재 (approval) sync — P0: read & display
+
+A built-on-top feature that scrapes a groupware **approval inbox** into a local DB and shows it on
+the webui dashboard. P0 is **read-only** (no approval execution — that is a later, human-gated phase).
+It reuses the existing pieces: cached auth (`setup/auth.sh`), the agent-browser `.success` contract
+(`lib/env.sh`), and the webui serial job queue (so the browser sync runs one-at-a-time like any run).
+
+New pieces (no new stack):
+
+- `lib/db.js` — the approvals store over **`node:sqlite`** (built-in, zero external deps; needs
+  Node ≥ 22.5). One table `approvals(doc_id PK, title, drafter, dept, submitted_at, amount,
+  raw_text, summary, status, fetched_at)`. The DB is the **single source of truth** for fetched
+  결재 (unlike runs, which are fs-authoritative). Lives at gitignored `data/approvals.db` (PII).
+- `bin/fetch-approvals.sh` — generic driver: launch (`AB_AUTH open`) → `navigate` inbox → snapshot →
+  pipe to the site extractor → `store-approvals.js`. fd-hang-guarded (`</dev/null`, no inline pipe),
+  with a generic redirect/stale-session warning. Reads gitignored `data/approvals.config`
+  (`GW_APP`/`GW_INBOX_URL`) so a bare run and the webui button need no args.
+- `bin/extract-approvals.js` — **the one site-coupled file**: parses the saved aria-snapshot tree →
+  `[{doc_id,title,drafter,submitted_at}]`. Authored for **Hiworks (하이웍스)**; anchors the row→cell
+  mapping to the column HEADERS (문서번호/제목/기안자/기안일) so a column change fails loud, not silently.
+- `bin/store-approvals.js` — stdin items JSON → `lib/db.js` upsert (re-sync preserves `status`).
+- `webui` — `GET /api/approvals` (read) + `POST /api/sync` (enqueue the browser sync) + a **결재**
+  dashboard view with a **동기화** button.
+
+Operator steps — **Hiworks (verified working end-to-end on `ibizsoftware.net`)**:
+
+```bash
+# 1. One-time login cache. Opens a real Chrome window; YOU complete the Hiworks login by hand
+#    (ID/PW + OTP/SSO if any). Lands on dashboard.office.hiworks.com -> session saved.
+bash setup/auth.sh hiworks \
+  "https://login.office.hiworks.com/<company-domain>" \
+  "**dashboard.office.hiworks.com/**"
+
+# 2. data/approvals.config (gitignored) holds the inbox URL so a bare run / the webui button work:
+#    GW_APP=hiworks
+#    GW_INBOX_URL="https://approval.office.hiworks.com/<company-domain>/approval/document/lists/W"
+#    ('/document/lists/W' is the 대기(pending) box — the approval home auto-redirects here.)
+bash bin/fetch-approvals.sh        # or: --app hiworks --url <inbox>; or the webui 동기화 button
+#    -> snapshot -> extract 대기 rows -> upsert into data/approvals.db; the 결재 view shows the cards.
+```
+
+For a **different groupware**, only `bin/extract-approvals.js` is rewritten (from its saved
+`data/approval-inbox.snapshot.json`) — `fetch-approvals.sh`, the DB, and the webui stay as-is.
+
+**Field coverage:** `doc_id/title/drafter/submitted_at` come from the Hiworks 대기 LIST; `amount/dept/raw_text`
+are DETAIL-only (per document) and stay `null` in P0 — detail enrichment is P0+.
+
+**Summarization is intentionally out of P0**: the approval body can be confidential/PII, so sending
+it to an external LLM is a policy decision. P0 stores/displays the raw text only; a policy-gated
+`bin/summarize.js` can fill the `summary` column later.
+
 ## Authoring a test (AI or human, no API key)
 
 A coding agent (e.g. Claude Code) or a human inspects the site and writes a declarative

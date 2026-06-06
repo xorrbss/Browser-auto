@@ -247,3 +247,14 @@ body[data-view="runs"] .runbar { display: flex; }
 .btn.primary { background: var(--accent); color: #08152e; font-weight: 700; border: 0; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .compile-out { margin-top: 8px; padding: 10px 12px; background: #0a0c10; border: 1px solid var(--border); border-radius: 8px; font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; max-height: 240px; overflow: auto; }
+
+/* 결재 미결함 (approvals view) */
+.approvals-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.approvals-head h3 { margin: 0; margin-right: auto; }
+.approval { border: 1px solid var(--line, #2a2a2a); border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
+.approval-head { display: flex; align-items: baseline; gap: 8px; }
+.approval-title { font-weight: 600; }
+.approval-id { margin-left: auto; opacity: 0.6; font-size: 0.85em; font-variant-numeric: tabular-nums; }
+.approval-meta { opacity: 0.75; font-size: 0.9em; margin-top: 4px; }
+.approval-summary { margin-top: 6px; }
+.approval-raw { margin-top: 6px; opacity: 0.8; white-space: pre-wrap; }

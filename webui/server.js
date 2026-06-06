@@ -42,6 +42,7 @@ import { enqueue, jobStatus, subscribe, queueState, cancel, stop, killRunning } 
 import { gitBash, recordCmd } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
 import { listAuthStates, validApp, deleteAuthState } from './auth.js';
+import { listApprovalsView } from './approvals.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const HOST = '127.0.0.1';
@@ -313,6 +314,16 @@ const server = http.createServer(async (req, res) => {
 				return sendJson(res, 200, { ok: code === 0, code, output, testFile: code === 0 ? `tests/${name}.test.sh` : null });
 			}
 
+				// 결재 동기화: drive bin/fetch-approvals.sh (login -> scrape inbox -> write the DB).
+				// It DRIVES A BROWSER (agent-browser daemon) -> must go through the single-slot serial
+				// queue, exactly like run/record/verify/auth. Optional app overrides the cached-auth name.
+				if (p === '/api/sync') {
+					const app = bodyJson.app ? String(bodyJson.app).trim() : '';
+					if (app && !validName(app)) return sendJson(res, 400, { error: 'invalid app name (use [A-Za-z0-9_-])' });
+					const job = enqueue({ kind: 'sync', label: app ? `sync ${app}` : 'sync approvals', spawnFn: () => gitBash('bin/fetch-approvals.sh', app ? ['--app', app] : []) });
+					return sendJson(res, 202, { job });
+				}
+
 			if (p === '/api/auth') {
 				const app = String(bodyJson.app || '').trim();
 				const loginUrl = String(bodyJson.loginUrl || '').trim();
@@ -409,6 +420,10 @@ const server = http.createServer(async (req, res) => {
 
 		if (p === '/api/auth') {
 			return sendJson(res, 200, { apps: await listAuthStates() });
+		}
+
+		if (p === '/api/approvals') {
+			return sendJson(res, 200, { approvals: await listApprovalsView() });
 		}
 
 		if (p === '/api/flows') {

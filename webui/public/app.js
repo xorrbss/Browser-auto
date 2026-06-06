@@ -157,6 +157,11 @@ async function refreshQueue() {
 		// Reconcile against the queue here (runs every 2s) so stuck cancel buttons clear and
 		// lists refresh once a job is no longer running/pending.
 		const activeIds = new Set([q.running && q.running.id, ...q.pending.map((p) => p.id)].filter(Boolean));
+		if (syncJob && !activeIds.has(syncJob)) {
+			syncJob = null;
+			$('#sync-cancel').hidden = true;
+			loadApprovals(); // a finished sync may have written new rows
+		}
 		if (authJob && !activeIds.has(authJob)) {
 			authJob = null;
 			$('#auth-cancel').hidden = true;
@@ -309,14 +314,77 @@ function openJob(id) {
 	streamJob(id, log, () => loadJobs());
 }
 
+// ---------- approvals (결재 미결함) — read/display only (P0; approve is P1) ----------
+
+let syncJob = null;
+
+async function loadApprovals() {
+	const box = $('#approvals-list');
+	try {
+		const { approvals } = await getJson('/api/approvals');
+		box.replaceChildren();
+		if (!approvals.length) {
+			box.append(el('div', { class: 'hint' }, '저장된 결재가 없습니다. 위의 동기화를 실행하세요.'));
+			return;
+		}
+		for (const a of approvals) {
+			const card = el(
+				'div', { class: 'approval' },
+				el(
+					'div', { class: 'approval-head' },
+					el('span', { class: 'badge sm ' + (a.status === 'approved' ? 'pass' : 'run') }, statusKo(a.status)),
+					el('span', { class: 'approval-title' }, a.title || '(제목 없음)'),
+					el('span', { class: 'approval-id' }, a.doc_id),
+				),
+				el('div', { class: 'approval-meta' }, [a.drafter, a.dept, a.submitted_at, a.amount ? a.amount + '원' : null].filter(Boolean).join(' • ')),
+			);
+			if (a.summary) card.append(el('div', { class: 'approval-summary' }, a.summary));
+			else if (a.raw_text) card.append(el('div', { class: 'approval-raw' }, a.raw_text));
+			box.append(card);
+		}
+	} catch (e) {
+		box.replaceChildren(el('div', { class: 'error' }, `결재 목록을 불러오지 못했습니다: ${e.message}`));
+	}
+}
+
+async function startSync() {
+	if (syncJob) return; // one sync in flight (avoid orphaning the tracked browser job)
+	const app = $('#sync-app').value.trim();
+	const log = $('#sync-log');
+	log.hidden = false;
+	log.textContent = '동기화 시작 중…';
+	let resp;
+	try {
+		resp = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app }) });
+	} catch (e) {
+		log.textContent = `동기화 실패: ${e.message}`;
+		return;
+	}
+	if (!resp.ok) {
+		const e = await resp.json().catch(() => ({ error: resp.statusText }));
+		log.textContent = `동기화 거부됨: ${e.error || resp.status}`;
+		return;
+	}
+	const { job } = await resp.json();
+	syncJob = job.id;
+	$('#sync-cancel').hidden = false;
+	streamJob(job.id, log, () => {
+		syncJob = null;
+		$('#sync-cancel').hidden = true;
+		loadApprovals(); // refresh once the scrape wrote the DB
+	});
+	refreshQueue();
+}
+
 // ---------- view switching ----------
 
-const NAV = { runs: '#nav-runs', flows: '#nav-flows', trends: '#nav-trends', auth: '#nav-auth', jobs: '#nav-jobs' };
+const NAV = { runs: '#nav-runs', approvals: '#nav-approvals', flows: '#nav-flows', trends: '#nav-trends', auth: '#nav-auth', jobs: '#nav-jobs' };
 
 function loadView(view) {
 	if (view === 'flows') loadFlows();
 	else if (view === 'trends') loadTrends();
 	else if (view === 'auth') loadAuth();
+	else if (view === 'approvals') loadApprovals();
 	else if (view === 'jobs') loadJobs();
 	else {
 		loadRuns();
@@ -333,6 +401,8 @@ function setView(view) {
 for (const [v, sel] of Object.entries(NAV)) $(sel).addEventListener('click', () => setView(v));
 $('#run').addEventListener('click', runSuite);
 $('#auth-btn').addEventListener('click', startAuth);
+$('#sync-btn').addEventListener('click', startSync);
+$('#sync-cancel').addEventListener('click', () => syncJob && cancelJob(syncJob));
 $('#auth-cancel').addEventListener('click', () => authJob && cancelJob(authJob));
 $('#refresh').addEventListener('click', () => loadView(document.body.dataset.view));
 
