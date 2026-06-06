@@ -24,4 +24,8 @@ services:
       - ./fixtures:/app/fixtures
     environment:
       - WEBUI_KEEP_RUNS=50      # artifacts retention (matches the server default)
+      # Bind the webui to all interfaces INSIDE the container so Docker's published port can reach it
+      # (a 127.0.0.1 listener in the container is unreachable via the published port). Still safe: the
+      # ports above publish only to the host's 127.0.0.1 — front with an auth proxy for remote access.
+      - WEBUI_HOST=0.0.0.0
     restart: unless-stopped

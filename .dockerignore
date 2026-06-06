@@ -4,6 +4,7 @@ artifacts
 fixtures/auth
 **/*.state.json
 flows/*.values.json
+data
 node_modules
 webui/node_modules
 dev

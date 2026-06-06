@@ -44,7 +44,11 @@ import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } fr
 import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
-const HOST = '127.0.0.1';
+// Bind address. Default 127.0.0.1 (localhost-only — the safe default for native Windows/macOS use).
+// A 127.0.0.1 listener inside a container is unreachable through Docker's published port, so the
+// Docker image sets WEBUI_HOST=0.0.0.0; that stays safe because compose publishes the port only to
+// the host's 127.0.0.1 (to be fronted by an auth proxy), never to 0.0.0.0 on the host.
+const HOST = process.env.WEBUI_HOST || '127.0.0.1';
 const PORT = Number(process.env.WEBUI_PORT) || 4310;
 // artifacts retention (disk hygiene). Explicit parse so 0 ("keep none") is honored and a
 // negative/NaN value can't slip through (a negative would otherwise prune ALL runs).
