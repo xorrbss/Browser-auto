@@ -43,8 +43,7 @@ import { gitBash, recordCmd } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
 import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 import { listApprovalsView } from './approvals.js';
-import { classifyIntent, runQuery, runRecordsQuery } from './agent.js';
-import { validSysName, listSystemsView, getSystemView, saveSystem, removeSystem, recordsView, readProposed } from './systems.js';
+import { rpaPost, rpaGet } from './routes-rpa.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const HOST = '127.0.0.1';
@@ -316,63 +315,8 @@ const server = http.createServer(async (req, res) => {
 				return sendJson(res, 200, { ok: code === 0, code, output, testFile: code === 0 ? `tests/${name}.test.sh` : null });
 			}
 
-				// 결재 동기화: drive bin/fetch-approvals.sh (login -> scrape inbox -> write the DB).
-				// It DRIVES A BROWSER (agent-browser daemon) -> must go through the single-slot serial
-				// queue, exactly like run/record/verify/auth. Optional app overrides the cached-auth name.
-				if (p === '/api/sync') {
-					const app = bodyJson.app ? String(bodyJson.app).trim() : '';
-					if (app && !validName(app)) return sendJson(res, 400, { error: 'invalid app name (use [A-Za-z0-9_-])' });
-					const job = enqueue({ kind: 'sync', label: app ? `sync ${app}` : 'sync approvals', spawnFn: () => gitBash('bin/fetch-approvals.sh', app ? ['--app', app] : []) });
-					return sendJson(res, 202, { job });
-				}
-
-				// 자연어 명령 라우터(NL→intent): on-prem 모델은 분류만, 실행 권한 없음. read는 인라인,
-				// browser intent는 직렬 큐. approve는 후보 조회만(실행은 2단계). 모델 실패→clarify(행위 진행 안 함).
-				if (p === '/api/agent') {
-					const text = String(bodyJson.text || '').trim();
-					if (!text) return sendJson(res, 400, { error: 'empty command' });
-					const intent = await classifyIntent(text);
-					if (intent.action === 'sync') {
-						const job = enqueue({ kind: 'sync', label: 'sync approvals (NL)', spawnFn: () => gitBash('bin/fetch-approvals.sh', []) });
-						return sendJson(res, 200, { intent, job });
-					}
-					if (intent.action === 'summarize') {
-						const args = intent.limit ? ['--limit', String(intent.limit)] : [];
-						const job = enqueue({ kind: 'summarize', label: 'summarize (NL)', spawnFn: () => gitBash('bin/enrich-approvals.sh', args) });
-						return sendJson(res, 200, { intent, job });
-					}
-					if (intent.action === 'query') return sendJson(res, 200, { intent, approvals: runQuery(intent.filter || {}), systems: runRecordsQuery(intent.filter || {}) });
-					if (intent.action === 'approve') return sendJson(res, 200, { intent, approvals: runQuery(intent.filter || {}), note: '승인 후보입니다. 실제 승인 실행은 아직 비활성(2단계, 항목별 사람 확인 후).' });
-					return sendJson(res, 200, { intent });
-				}
-
-				// --- Generic RPA system registry (register any data-collection system) ---
-				if (p === '/api/systems') {
-					const r = saveSystem({ name: String(bodyJson.name || '').trim(), label: bodyJson.label, login_url: bodyJson.login_url, success_url: bodyJson.success_url, target_url: bodyJson.target_url, recipe: bodyJson.recipe });
-					return r.ok ? sendJson(res, 200, r) : sendJson(res, 400, r);
-				}
-				const mSys = /^\/api\/systems\/([^/]+)\/(auth|analyze|sync|delete)$/.exec(p);
-				if (mSys) {
-					let name; try { name = decodeURIComponent(mSys[1]); } catch { return sendJson(res, 400, { error: 'bad name' }); }
-					if (!validSysName(name)) return sendJson(res, 400, { error: 'invalid system name' });
-					const action = mSys[2];
-					if (action === 'delete') return sendJson(res, 200, removeSystem(name));
-					const sysv = getSystemView(name);
-					if (!sysv) return sendJson(res, 404, { error: 'no such system' });
-					if (action === 'auth') {
-						if (!sysv.login_url || !sysv.success_url) return sendJson(res, 400, { error: 'register login_url + success_url first' });
-						const job = enqueue({ kind: 'auth', label: `auth ${name}`, spawnFn: () => gitBash('setup/auth.sh', [name, sysv.login_url, sysv.success_url]) });
-						return sendJson(res, 202, { job });
-					}
-					if (action === 'analyze') {
-						const job = enqueue({ kind: 'analyze', label: `analyze ${name}`, spawnFn: () => gitBash('bin/analyze-system.sh', ['--system', name]) });
-						return sendJson(res, 202, { job });
-					}
-					if (action === 'sync') {
-						const job = enqueue({ kind: 'sync', label: `sync ${name}`, spawnFn: () => gitBash('bin/sync-system.sh', ['--system', name]) });
-						return sendJson(res, 202, { job });
-					}
-				}
+				// 결재/RPA routes (sync, NL command router, system registry) — see webui/routes-rpa.js.
+				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash })) return;
 
 			if (p === '/api/auth') {
 				const app = String(bodyJson.app || '').trim();
@@ -476,11 +420,7 @@ const server = http.createServer(async (req, res) => {
 			return sendJson(res, 200, { approvals: await listApprovalsView() });
 		}
 
-		if (p === '/api/systems') return sendJson(res, 200, { systems: listSystemsView() });
-		const mSysRec = /^\/api\/systems\/([^/]+)\/records$/.exec(p);
-		if (mSysRec) { let n; try { n = decodeURIComponent(mSysRec[1]); } catch { return notFound(res); } if (!validSysName(n)) return notFound(res); return sendJson(res, 200, { records: recordsView(n, url.searchParams.get('q') || '') }); }
-		const mSysProp = /^\/api\/systems\/([^/]+)\/proposed$/.exec(p);
-		if (mSysProp) { let n; try { n = decodeURIComponent(mSysProp[1]); } catch { return notFound(res); } if (!validSysName(n)) return notFound(res); return sendJson(res, 200, { proposed: readProposed(n) }); }
+		if (rpaGet(p, url, res, { sendJson, notFound })) return;
 
 		if (p === '/api/flows') {
 			return sendJson(res, 200, { flows: await listFlows() });
