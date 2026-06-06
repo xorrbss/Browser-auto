@@ -28,6 +28,19 @@ bash tests/login.test.sh   # run a single test standalone (no suite/report)
 Artifacts (video, screenshots, report) land in `artifacts/<run-id>/` (gitignored).
 `report.json` + `report.junit.xml` are written per run.
 
+### Recovering a wedged daemon
+
+If agent-browser ops start failing with `os error 10060` (or hang ~34s then fail), a dead daemon left
+stale per-session state in `~/.agent-browser`. Recover it — stops the daemon, kills only its own PID
+(never a blanket `node` kill), removes the stale `*.engine/*.pid/*.port/*.stream/*.version` files, and
+preserves the downloaded `browsers/`:
+
+```bash
+bash bin/daemon-recover.sh
+```
+
+The next `agent-browser` op starts a fresh daemon. Re-run `setup/auth.sh` if the cached session expired.
+
 ## Writing a test
 
 ```bash
