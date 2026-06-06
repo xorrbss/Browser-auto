@@ -370,9 +370,25 @@ async function runAgent() {
 	if (intent.action === 'query' || intent.action === 'approve') {
 		if (data.note) out.append(el('div', { class: 'note' }, data.note));
 		const rows = data.approvals || [];
-		out.append(el('div', { class: 'hint' }, `${rows.length}건`));
+		out.append(el('div', { class: 'hint' }, `결재: ${rows.length}건`));
 		for (const a of rows) out.append(renderApprovalCard(a));
+		// generic registered-system matches (the RPA registry — reaches "any system", not just 결재)
+		for (const sys of (data.systems || [])) {
+			out.append(el('div', { class: 'hint' }, `${sys.label}: ${sys.records.length}건`));
+			for (const rec of sys.records) out.append(renderRecordCard(rec));
+		}
 	}
+}
+
+// renderRecordCard(rec): a generic RPA record ({key, data:{...}, summary?}) — shared by the NL output
+// and the 시스템 view's 조회 list.
+function renderRecordCard(rec) {
+	const fields = Object.entries(rec.data || {}).map(([k, v]) => `${k}: ${v}`).join('  ·  ');
+	const card = el('div', { class: 'approval' },
+		el('div', { class: 'approval-head' }, el('span', { class: 'badge sm run' }, statusKo(rec.status)), el('span', { class: 'approval-title' }, rec.key)),
+		el('div', { class: 'approval-meta' }, fields));
+	if (rec.summary) card.append(el('div', { class: 'approval-summary' }, rec.summary));
+	return card;
 }
 
 async function loadApprovals() {
@@ -502,12 +518,7 @@ async function loadRecords() {
 	try {
 		const { records } = await getJson(`/api/systems/${encodeURIComponent(selectedSystem)}/records` + (q ? `?q=${encodeURIComponent(q)}` : ''));
 		box.replaceChildren(el('div', { class: 'hint' }, `${selectedSystem}: ${records.length}건`));
-		for (const rec of records) {
-			const fields = Object.entries(rec.data || {}).map(([k, v]) => `${k}: ${v}`).join('  ·  ');
-			const card = el('div', { class: 'approval' }, el('div', { class: 'approval-head' }, el('span', { class: 'badge sm run' }, statusKo(rec.status)), el('span', { class: 'approval-title' }, rec.key)), el('div', { class: 'approval-meta' }, fields));
-			if (rec.summary) card.append(el('div', { class: 'approval-summary' }, rec.summary));
-			box.append(card);
-		}
+		for (const rec of records) box.append(renderRecordCard(rec));
 	} catch (e) { box.replaceChildren(el('div', { class: 'error' }, e.message)); }
 }
 

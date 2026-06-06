@@ -43,7 +43,7 @@ import { gitBash, recordCmd } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
 import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 import { listApprovalsView } from './approvals.js';
-import { classifyIntent, runQuery } from './agent.js';
+import { classifyIntent, runQuery, runRecordsQuery } from './agent.js';
 import { validSysName, listSystemsView, getSystemView, saveSystem, removeSystem, recordsView, readProposed } from './systems.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
@@ -341,7 +341,7 @@ const server = http.createServer(async (req, res) => {
 						const job = enqueue({ kind: 'summarize', label: 'summarize (NL)', spawnFn: () => gitBash('bin/enrich-approvals.sh', args) });
 						return sendJson(res, 200, { intent, job });
 					}
-					if (intent.action === 'query') return sendJson(res, 200, { intent, approvals: runQuery(intent.filter || {}) });
+					if (intent.action === 'query') return sendJson(res, 200, { intent, approvals: runQuery(intent.filter || {}), systems: runRecordsQuery(intent.filter || {}) });
 					if (intent.action === 'approve') return sendJson(res, 200, { intent, approvals: runQuery(intent.filter || {}), note: '승인 후보입니다. 실제 승인 실행은 아직 비활성(2단계, 항목별 사람 확인 후).' });
 					return sendJson(res, 200, { intent });
 				}

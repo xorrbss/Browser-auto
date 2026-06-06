@@ -15,7 +15,7 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const llm = require('../lib/llm.js');
-const { openDb, closeDb, queryApprovals } = require('../lib/db.js');
+const { openDb, closeDb, queryApprovals, listSystems, queryRecords } = require('../lib/db.js');
 
 // The webui is `node` (can't `source` the bash data/approvals.config), so load the model endpoint
 // config from it into process.env once at startup if not already set — then `node webui/server.js`
@@ -92,11 +92,32 @@ export async function classifyIntent(text) {
 	return out;
 }
 
-// runQuery(filter): READ-ONLY rows for query/approve-candidate intents (DB-authoritative facts).
+// runQuery(filter): READ-ONLY rows for query/approve-candidate intents (DB-authoritative facts) from
+// the 결재 approvals table.
 export function runQuery(filter = {}) {
 	const db = openDb();
 	try {
 		return queryApprovals(db, { ...filter, limit: Number.isInteger(filter.limit) ? filter.limit : 200 });
+	} finally {
+		closeDb(db);
+	}
+}
+
+// runRecordsQuery(filter): READ-ONLY search across EVERY registered system's records (the generic RPA
+// store) so the NL command box reaches "any system", not just 결재. Matches the keyword (falling back
+// to dept/drafter terms) over each system's flexible JSON data + summary; returns only systems that
+// have hits. Approve never touches this (effectful actions stay out of the generic read path).
+export function runRecordsQuery(filter = {}) {
+	const kw = filter.keyword || filter.dept || filter.drafter || '';
+	const limit = Number.isInteger(filter.limit) ? filter.limit : 200;
+	const db = openDb();
+	try {
+		const out = [];
+		for (const s of listSystems(db)) {
+			const records = queryRecords(db, s.name, { keyword: kw || undefined, limit });
+			if (records.length) out.push({ system: s.name, label: s.label || s.name, records });
+		}
+		return out;
 	} finally {
 		closeDb(db);
 	}
