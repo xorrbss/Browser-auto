@@ -74,4 +74,13 @@ OUT="$(snap "$TMP/detail" | node "$ED" "$OKVOCAB" "DOC-7")"
 eq "$(printf '%s' "$OUT" | jq -r '.dept')" "관리팀" "c5 approvals dept"
 echo "  ✓ c5 approvals-mode happy path"
 
+# ---------- c6: --generic REJECTS reserved field names (collide with record wrapper/body) ----------
+for rn in key summary raw_text; do
+	R="{\"detail\":{\"idLabel\":\"문서 번호\",\"fields\":{\"$rn\":\"기안 부서\"}}}"
+	if snap "$TMP/detail" | node "$ED" "$R" "DOC-7" --generic >/dev/null 2>&1; then
+		fail "c6 expected non-zero on reserved field name '$rn'"
+	fi
+done
+echo "  ✓ c6 reserved-field-name guard (generic)"
+
 echo "  ✓ extract-detail-unit: all cases passed"

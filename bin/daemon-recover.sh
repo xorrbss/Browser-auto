@@ -16,8 +16,10 @@ set -euo pipefail
 
 AB_DIR="${AGENT_BROWSER_HOME:-$HOME/.agent-browser}"
 
-echo "[recover] agent-browser daemon stop (best-effort)…"
-agent-browser daemon stop >/dev/null 2>&1 || true
+echo "[recover] agent-browser daemon stop (best-effort, bounded)…"
+# Bound the daemon-routed stop: a WEDGED daemon (the very thing this script cures) can hang the stop
+# ~34s. timeout (coreutils, ships with Git Bash) caps it so the daemon-independent steps below still run.
+timeout 8 agent-browser daemon stop >/dev/null 2>&1 || true
 
 # Targeted kill: if a *.pid file names a daemon process, stop THAT pid only. Never a name/blanket kill.
 if [ -d "$AB_DIR" ]; then

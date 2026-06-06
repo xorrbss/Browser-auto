@@ -34,8 +34,9 @@ function detectTables(lines) {
 }
 
 const slug = (h) => (String(h || '').replace(/\s+/g, '_').replace(/[^\w가-힣]/g, '').toLowerCase() || 'field');
-// norm: the whitespace-insensitive key used to match a model-supplied name/header to a real one.
-const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, '');
+// norm: the whitespace-insensitive key used to match a model-supplied name/header to a real one —
+// the SAME parser-shared key as the extractors (lib/aria.js), so matching agrees across the pipeline.
+const norm = aria.norm;
 // sanitizeField: keep a clean model field name (doc_id/title/…) as-is; otherwise slug it. Never empty.
 const sanitizeField = (f) => { const s = String(f == null ? '' : f).trim(); return /^[\w가-힣]+$/.test(s) ? s : slug(s); };
 

@@ -11,8 +11,9 @@
 # Usage:
 #   SUMMARY_MODEL=exaone3.5:32b bash bin/enrich-system.sh --system <name> [--limit N]   # detail + summary
 #   bash bin/enrich-system.sh --system <name>                                           # detail only
-# Prereq: system registered (POST /api/systems) with a recipe carrying a "detail" block + a target_url,
-# and a cached login (fixtures/auth/<name>.state.json). SUMMARY_* config: data/approvals.config.
+# Prereq: system registered (POST /api/systems) with a recipe carrying a "detail" block (INCLUDING
+# detail.idLabel — the per-record identity guard) + a target_url, and a cached login
+# (fixtures/auth/<name>.state.json). SUMMARY_* config: data/approvals.config.
 
 set -euo pipefail
 PROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,7 +33,10 @@ done
 CONFIG="$PROBE_ROOT/data/approvals.config"
 [ -f "$CONFIG" ] && . "$CONFIG"
 
-TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD"' EXIT
+# TMPD is cleaned by an explicit `rm -rf` at EVERY exit (NOT an EXIT trap): lib/cleanup.sh, sourced
+# below, installs its own EXIT trap (record stop + session close) and would replace ours — mirror
+# sync-system.sh's convention and remove TMPD inline so nothing leaks.
+TMPD="$(mktemp -d)"
 RECIPE="$TMPD/recipe.json"
 # Load recipe (to a FILE so Korean survives — never via argv) + target URL from the registry.
 TARGET="$(cd "$PROBE_ROOT" && node -e '
@@ -41,13 +45,18 @@ if(!s){console.error("no such system: "+process.argv[1]);process.exit(3);}
 require("node:fs").writeFileSync(process.argv[2], JSON.stringify(s.recipe||{}));
 process.stdout.write(s.target_url||"");
 d.closeDb(h);
-' "$SYSTEM" "$RECIPE")" || { echo "[enrich-system] failed to load system '$SYSTEM' from registry" >&2; exit 3; }
-[ -n "$TARGET" ] || { echo "[enrich-system] system '$SYSTEM' has no target_url" >&2; exit 3; }
+' "$SYSTEM" "$RECIPE")" || { echo "[enrich-system] failed to load system '$SYSTEM' from registry" >&2; rm -rf "$TMPD"; exit 3; }
+[ -n "$TARGET" ] || { echo "[enrich-system] system '$SYSTEM' has no target_url" >&2; rm -rf "$TMPD"; exit 3; }
 
 if [ "$(jq -r 'has("detail")' "$RECIPE")" != "true" ]; then
 	echo "[enrich-system] recipe for '$SYSTEM' has no \"detail\" block (fields + bodyFromHeadingLevel) — nothing to enrich." >&2
-	exit 3
+	rm -rf "$TMPD"; exit 3
 fi
+# detail.idLabel is MANDATORY on the generic path: it is the ONLY per-record identity guard
+# (extract-detail verifies the opened detail page's idLabel == the record key, rejecting a wrong/list
+# page). detail.urlGlob only proves SOME detail URL opened, not the RIGHT record. Refuse without it.
+ID_LABEL="$(jq -r '.detail.idLabel // empty' "$RECIPE")"
+[ -n "$ID_LABEL" ] || { echo "[enrich-system] recipe.detail.idLabel is REQUIRED on the generic path (per-record identity guard) — refusing to enrich without it." >&2; rm -rf "$TMPD"; exit 3; }
 READY_TEXT="$(jq -r '.detail.ready.text // empty' "$RECIPE")"
 DETAIL_URLGLOB="$(jq -r '.detail.urlGlob // empty' "$RECIPE")"
 
@@ -63,19 +72,19 @@ const lim=parseInt(process.argv[2],10)||0; if(lim>0) r=r.slice(0,lim);
 for(const k of r) console.log(k);
 ' "$SYSTEM" "$LIMIT" ) > "$DOCLIST" 2> "$DOCERR"; then
 	echo "[enrich-system] ✗ could not read records from the DB:" >&2; cat "$DOCERR" >&2
-	rm -f "$DOCLIST" "$DOCERR"; exit 1
+	rm -f "$DOCLIST" "$DOCERR"; rm -rf "$TMPD"; exit 1
 fi
 mapfile -t DOCS < "$DOCLIST"
 rm -f "$DOCLIST" "$DOCERR"
 
 if [ "${#DOCS[@]}" -eq 0 ]; then
 	echo "[enrich-system] nothing to enrich (all fetched records already summarized, or none synced)."
-	exit 0
+	rm -rf "$TMPD"; exit 0
 fi
 echo "[enrich-system] ${#DOCS[@]} record(s) to enrich for '$SYSTEM'."
 
 source "$PROBE_ROOT/lib/env.sh"      # AB_AUTH, AB_JSON (.success contract)
-source "$PROBE_ROOT/lib/cleanup.sh"  # close session on exit
+source "$PROBE_ROOT/lib/cleanup.sh"  # close session on exit (installs its own EXIT trap)
 source "$PROBE_ROOT/lib/assert.sh"   # wait_url (gate the click→detail navigation)
 
 echo "[enrich-system] launching browser with cached '$SYSTEM' session…"
@@ -84,9 +93,10 @@ AB_AUTH "$SYSTEM" open </dev/null >/dev/null
 i=0
 for key in "${DOCS[@]}"; do
 	echo "[enrich-system] ($((i+1))/${#DOCS[@]}) $key"
-	# Back to the list, then open this record by its visible key text (same-tab navigation).
+	# Back to the list, then open this record by its EXACT visible key text (same-tab navigation).
+	# --exact so a substring / cross-reference of the key cannot open a different record.
 	AB_JSON navigate "$TARGET" </dev/null >/dev/null 2>&1 || true
-	cj="$(AB_JSON find text "$key" click </dev/null)"
+	cj="$(AB_JSON find text "$key" --exact click </dev/null)"
 	if [ "$(printf '%s' "$cj" | jq -r '.success')" != "true" ]; then
 		echo "  ⚠ click failed ($(printf '%s' "$cj" | jq -r '.error // "?"')) — skipping" >&2; continue
 	fi
@@ -101,9 +111,10 @@ for key in "${DOCS[@]}"; do
 	if [ "$(printf '%s' "$sj" | jq -r '.success')" != "true" ]; then
 		echo "  ⚠ detail snapshot failed — skipping" >&2; continue
 	fi
-	# Extract arbitrary detail fields + raw_text (guard: idLabel==key rejects a wrong/list page). Keep
-	# `key` + `raw_text` at top level for now: the summarizer reads raw_text and logs key; the records
-	# wrap happens after. A guard failure → skip, never store.
+	# Extract arbitrary detail fields + raw_text. extract-detail --generic ENFORCES idLabel==key (the
+	# recipe's idLabel is mandatory, checked above), rejecting a wrong/list page → that record is
+	# skipped, never stored. Keep `key` + `raw_text` at top level for now: the summarizer reads raw_text
+	# and logs key; the records wrap happens after.
 	if printf '%s' "$sj" | jq '.data' | node "$PROBE_ROOT/bin/extract-detail.js" "$RECIPE" "$key" --generic \
 		| jq -c --arg k "$key" '. + {key:$k}' > "$TMPD/$i.json"; then
 		echo "  ✓ fields=$(jq -rc 'del(.raw_text,.key)|keys|join(",")' "$TMPD/$i.json"), body=$(jq -r '.raw_text|length' "$TMPD/$i.json") chars"
@@ -118,7 +129,7 @@ shopt -s nullglob
 files=( "$TMPD"/[0-9]*.json )
 shopt -u nullglob
 if [ "${#files[@]}" -eq 0 ]; then
-	echo "[enrich-system] no records successfully extracted." >&2; exit 1
+	echo "[enrich-system] no records successfully extracted." >&2; rm -rf "$TMPD"; exit 1
 fi
 ITEMS="$TMPD/items.json"
 jq -s '.' "${files[@]}" > "$ITEMS"
@@ -133,4 +144,5 @@ else
 	echo "[enrich-system] SUMMARY_MODEL unset — storing detail fields only (set SUMMARY_MODEL + a local endpoint to summarize)."
 	jq "$WRAP" < "$ITEMS" | node "$PROBE_ROOT/bin/store-records.js" --system "$SYSTEM"
 fi
+rm -rf "$TMPD"
 echo "[enrich-system] done."

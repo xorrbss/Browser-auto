@@ -42,6 +42,12 @@ function loadDetailRecipe(arg, generic) {
 		for (const f of Object.keys(d.fields || {})) {
 			if (!VOCAB.includes(f)) die(`recipe.detail.fields "${f}" is not a known db column [${VOCAB.join(', ')}]`);
 		}
+	} else {
+		// records path: field names are arbitrary EXCEPT names that collide with the record wrapper
+		// (key/summary) or the body blob (raw_text) — fail loud rather than silently overwrite.
+		for (const f of Object.keys(d.fields || {})) {
+			if (f === 'key' || f === 'summary' || f === 'raw_text') die(`recipe.detail.fields "${f}" is a reserved name on the generic path (key/summary/raw_text)`);
+		}
 	}
 	return d;
 }
@@ -52,9 +58,11 @@ process.stdin.on('data', (c) => (input += c));
 process.stdin.on('end', () => { try { main(); } catch (e) { console.error('extract-detail: ' + e.message); process.exit(1); } });
 
 function main() {
+	// Parse args: consume the FIRST --generic as the flag; everything else is positional, so a key that
+	// is literally "--generic" cannot silently disable the identity guard.
 	const args = process.argv.slice(2);
-	const generic = args.includes('--generic');
-	const pos = args.filter((a) => a !== '--generic');
+	let generic = false; const pos = [];
+	for (const a of args) { if (a === '--generic' && !generic) generic = true; else pos.push(a); }
 	const detail = loadDetailRecipe(pos[0], generic);
 	const expectId = pos[1] || null; // the doc_id / record key the enrich loop intended to open
 	const data = JSON.parse(input.trim() || '{}');
