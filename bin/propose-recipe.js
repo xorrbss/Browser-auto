@@ -12,36 +12,19 @@
 //   stdin : snapshot .data object; stdout: { recipe, tables } (recipe = proposal; tables = detected).
 
 const llm = require('../lib/llm.js');
+const aria = require('../lib/aria.js');
 
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => (input += c));
 process.stdin.on('end', () => { main().catch((e) => { console.error('propose-recipe: ' + e.message); process.exit(1); }); });
 
-function parseLine(raw) {
-	const m = raw.match(/^(\s*)-\s+(\w+)/);
-	if (!m) return null;
-	let name = null;
-	const q = raw.indexOf('"');
-	if (q >= 0) { const q2 = raw.lastIndexOf('"'); if (q2 > q) name = raw.slice(q + 1, q2); }
-	return { indent: m[1].length, role: m[2], name };
-}
-
-// detectTables: every `table` node -> { name, headers:[texts], rowCount }.
+// detectTables: every `table` node -> { name, headers:[texts], rowCount } (reuses lib/aria.rowsOf).
 function detectTables(lines) {
 	const out = [];
 	for (let i = 0; i < lines.length; i++) {
 		if (lines[i].role !== 'table') continue;
-		const ind = lines[i].indent;
-		const rows = [];
-		for (let j = i + 1; j < lines.length; j++) {
-			if (lines[j].indent <= ind) break;
-			if (lines[j].role !== 'row') continue;
-			const rInd = lines[j].indent;
-			const kids = [];
-			for (let k = j + 1; k < lines.length; k++) { if (lines[k].indent <= rInd) break; if (lines[k].indent === rInd + 2) kids.push(lines[k]); }
-			rows.push(kids);
-		}
+		const rows = aria.rowsOf(lines, i, 'row').map((r) => r.children);
 		const headerRow = rows.find((r) => r.some((c) => c.role === 'columnheader'));
 		const headers = headerRow ? headerRow.filter((c) => c.role === 'columnheader').map((c) => (c.name || '').trim()).filter(Boolean) : [];
 		const dataRows = rows.filter((r) => r.some((c) => c.role === 'cell')).length;
@@ -63,8 +46,7 @@ function deterministicRecipe(tables) {
 
 async function main() {
 	const data = JSON.parse(input.trim() || '{}');
-	const tree = typeof data.snapshot === 'string' ? data.snapshot : '';
-	const lines = tree.split('\n').map(parseLine).filter(Boolean);
+	const lines = aria.parse(data);
 	const tables = detectTables(lines).filter((t) => t.headers.length);
 	if (!tables.length) {
 		process.stdout.write(JSON.stringify({ recipe: null, tables: [], error: '표(table)를 찾지 못했습니다. 목록이 ARIA table 구조가 아닐 수 있습니다.' }));

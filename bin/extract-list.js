@@ -2,26 +2,21 @@
 'use strict';
 // bin/extract-list.js — GENERIC recipe-driven aria-table list extractor for the RPA store.
 //
-// Same engine as bin/extract-approvals.js but field-AGNOSTIC: the recipe names arbitrary fields
-// (not the fixed 결재 vocabulary), so ANY system's list (a groupware inbox, an ERP table, a ticket
-// queue…) maps to records without code changes. Emits one object per row, ready for lib/db.js
-// upsertRecords: { key, data:{ field: value, ... } }.
+// Field-AGNOSTIC: the recipe names arbitrary fields, so ANY system's list (a groupware inbox, an ERP
+// table, a ticket queue…) maps to records without code changes. Emits one object per row, ready for
+// lib/db.js upsertRecords: { key, data:{ field: value, ... } }. Shares the aria parse/walk with the
+// other extractors via lib/aria.js.
 //
 //   argv[2]: recipe (path to a recipe JSON, or inline JSON).
 //   stdin  : the snapshot DATA object (jq '.data' = {origin,refs,snapshot}).
 //   stdout : JSON array of { key, data }.
 //
-// recipe shape:
-//   { collection:{ name, role?="table", row?="row" },
-//     key: "<fieldName>",                 // which column identifies a row (must be in columns)
-//     columns: { "<fieldName>": "<header text>", ... },   // arbitrary field names
-//     strip:   { "<fieldName>": "<literal trailing suffix>" }? }
-//
 // Deterministic, no network/LLM. Anchors row→cell to the column HEADERS and FAILS LOUD (never
-// guesses) on: missing/ambiguous container, missing/duplicate mapped header, a per-row cell-count
-// != header-column count. A row with an empty key value is skipped (never fabricated).
+// guesses) on: missing/ambiguous container, missing/duplicate mapped header, per-row cell-count !=
+// header-column count, or a non-unique key. A row with an empty key value is skipped (never fabricated).
 
 const fs = require('node:fs');
+const aria = require('../lib/aria.js');
 
 function die(m) { console.error('extract-list: ' + m); process.exit(2); }
 
@@ -40,49 +35,30 @@ function loadRecipe(arg) {
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => (input += c));
-process.stdin.on('end', () => {
-	try { main(); } catch (e) { console.error('extract-list: ' + e.message); process.exit(1); }
-});
+process.stdin.on('end', () => { try { main(); } catch (e) { console.error('extract-list: ' + e.message); process.exit(1); } });
 
 function main() {
 	const recipe = loadRecipe(process.argv[2]);
 	const role = recipe.collection.role || 'table';
 	const rowRole = recipe.collection.row || 'row';
-	const wantName = norm(recipe.collection.name);
 
 	const data = JSON.parse(input.trim() || '{}');
-	const tree = typeof data.snapshot === 'string' ? data.snapshot : '';
-	if (!tree) die('stdin has no .snapshot tree (expected the .data object)');
-	const lines = tree.split('\n').map(parseLine).filter(Boolean);
+	if (typeof data.snapshot !== 'string') die('stdin has no .snapshot tree (expected the .data object)');
+	const lines = aria.parse(data);
 
-	const hits = [];
-	lines.forEach((l, i) => { if (l.role === role && norm(l.name) === wantName) hits.push(i); });
+	const hits = aria.findByRoleName(lines, role, recipe.collection.name);
 	if (hits.length === 0) die(`${role} "${recipe.collection.name}" not found`);
 	if (hits.length > 1) die(`${hits.length} ${role}s named "${recipe.collection.name}" — ambiguous; tighten collection.name`);
-	const tableIdx = hits[0];
-	const tableIndent = lines[tableIdx].indent;
-
-	const rows = [];
-	for (let i = tableIdx + 1; i < lines.length; i++) {
-		if (lines[i].indent <= tableIndent) break;
-		if (lines[i].role !== rowRole) continue;
-		const rowIndent = lines[i].indent;
-		const children = [];
-		for (let j = i + 1; j < lines.length; j++) {
-			if (lines[j].indent <= rowIndent) break;
-			if (lines[j].indent === rowIndent + 2) children.push(lines[j]);
-		}
-		rows.push({ children });
-	}
+	const rows = aria.rowsOf(lines, hits[0], rowRole);
 
 	const header = rows.find((r) => r.children.some((c) => c.role === 'columnheader'));
 	if (!header) die('no header row (columnheader) found in the container');
-	const headers = header.children.filter((c) => c.role === 'columnheader').map((c) => norm(c.name));
+	const headers = header.children.filter((c) => c.role === 'columnheader').map((c) => aria.norm(c.name));
 	const headerCount = headers.length;
 
 	const idx = {};
 	for (const [field, label] of Object.entries(recipe.columns)) {
-		const want = norm(label);
+		const want = aria.norm(label);
 		const found = [];
 		headers.forEach((h, i) => { if (h === want) found.push(i); });
 		if (found.length === 0) die(`column "${label}" (→${field}) not found among headers [${headers.join(', ')}] — refusing to guess`);
@@ -100,7 +76,7 @@ function main() {
 			die(`a row has ${cells.length} cells but the header has ${headerCount} columns — markup drift; refusing to mis-map (row: ${cells.map((c) => c.name || '∅').join(' | ')})`);
 		}
 		const rec = {};
-		for (const field of fields) rec[field] = applyStrip(clean(cells[idx[field]].name), strip[field]);
+		for (const field of fields) rec[field] = applyStrip(aria.clean(cells[idx[field]].name), strip[field]);
 		const key = rec[recipe.key];
 		if (!key) continue; // no identity → skip, never fabricate
 		items.push({ key, data: rec });
@@ -115,16 +91,7 @@ function main() {
 	process.stdout.write(JSON.stringify(items));
 }
 
-function parseLine(raw) {
-	const m = raw.match(/^(\s*)-\s+(\w+)/);
-	if (!m) return null;
-	let name = null;
-	const q = raw.indexOf('"');
-	if (q >= 0) { const q2 = raw.lastIndexOf('"'); if (q2 > q) name = raw.slice(q + 1, q2); }
-	return { indent: m[1].length, role: m[2], name };
-}
-const norm = (s) => String(s || '').replace(/\s+/g, '');
-const clean = (s) => { s = String(s == null ? '' : s).trim(); return s || null; };
+// applyStrip: remove a trailing LITERAL suffix (UI noise), then trim.
 function applyStrip(v, suffix) {
 	if (v == null || !suffix) return v;
 	const s = String(v);
