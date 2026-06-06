@@ -7,11 +7,15 @@
 // enrichment loop (open each 대기 doc → snapshot → extract-detail → store dept + raw_text). Shares
 // the aria parse/text helpers with the other extractors via lib/aria.js.
 //
-//   argv[2]: recipe path (uses recipe.detail.fields {db_field: "rowheader label"} and
-//            recipe.detail.bodyFromHeadingLevel for the raw_text body blob)
-//   argv[3]: the doc_id the enrich loop intended to open (guard against storing the wrong page)
+//   argv (positional): <recipe-path> <expected-key>
+//     <recipe-path>   uses recipe.detail.fields {field: "rowheader label"} + .bodyFromHeadingLevel
+//                     (the raw_text body blob) + .idLabel (the wrong-page guard).
+//     <expected-key>  the doc_id / record key the enrich loop intended to open (guard).
+//   --generic       records path (bin/enrich-system.sh): detail.fields names are ARBITRARY (they land
+//                   in the flexible records.data blob), so the approvals DB-vocabulary check is skipped.
+//                   Without it (legacy 결재 path), fields must be doc_id + lib/db.js SCRAPED_COLS.
 //   stdin  : the detail snapshot .data object (jq '.data')
-//   stdout : JSON object of detail db fields (e.g. { dept, raw_text }); fields not found are null.
+//   stdout : JSON object of detail fields (e.g. { dept, raw_text }); fields not found are null.
 //
 // Deterministic, no network, no LLM. Label→value is anchored to the rowheader TEXT (not a fixed
 // position). raw_text is the document body from the form's top heading onward (parent/child text
@@ -25,15 +29,19 @@ const MAX_BODY = 8000; // cap the blob handed to the summarizer
 
 function die(m) { console.error('extract-detail: ' + m); process.exit(2); }
 
-function loadDetailRecipe(arg) {
+function loadDetailRecipe(arg, generic) {
 	if (!arg) die('missing recipe arg');
 	let raw;
 	try { raw = fs.existsSync(arg) ? fs.readFileSync(arg, 'utf8') : arg; } catch (e) { die('cannot read recipe: ' + e.message); }
 	let r;
 	try { r = JSON.parse(raw); } catch (e) { die('recipe is not valid JSON: ' + e.message); }
 	const d = r.detail || {};
-	for (const f of Object.keys(d.fields || {})) {
-		if (!VOCAB.includes(f)) die(`recipe.detail.fields "${f}" is not a known db column [${VOCAB.join(', ')}]`);
+	// Legacy 결재 path: field names must be real approvals columns (typo guard). Generic records path:
+	// the fields are arbitrary (they merge into records.data), so this vocabulary check does not apply.
+	if (!generic) {
+		for (const f of Object.keys(d.fields || {})) {
+			if (!VOCAB.includes(f)) die(`recipe.detail.fields "${f}" is not a known db column [${VOCAB.join(', ')}]`);
+		}
 	}
 	return d;
 }
@@ -44,8 +52,11 @@ process.stdin.on('data', (c) => (input += c));
 process.stdin.on('end', () => { try { main(); } catch (e) { console.error('extract-detail: ' + e.message); process.exit(1); } });
 
 function main() {
-	const detail = loadDetailRecipe(process.argv[2]);
-	const expectId = process.argv[3] || null; // the doc_id the enrich loop intended to open
+	const args = process.argv.slice(2);
+	const generic = args.includes('--generic');
+	const pos = args.filter((a) => a !== '--generic');
+	const detail = loadDetailRecipe(pos[0], generic);
+	const expectId = pos[1] || null; // the doc_id / record key the enrich loop intended to open
 	const data = JSON.parse(input.trim() || '{}');
 	if (typeof data.snapshot !== 'string') die('stdin has no .snapshot tree (expected the detail .data object)');
 	const lines = aria.parse(data);
