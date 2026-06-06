@@ -50,6 +50,14 @@ const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 // the host's 127.0.0.1 (to be fronted by an auth proxy), never to 0.0.0.0 on the host.
 const HOST = process.env.WEBUI_HOST || '127.0.0.1';
 const PORT = Number(process.env.WEBUI_PORT) || 4310;
+// Host-header allowlist (DNS-rebinding defense): a malicious page can point a hostname at this
+// loopback/published port from the victim's browser, but cannot forge a Host header we accept.
+// Default localhost/127.0.0.1 (with and without :PORT). For a fronted deployment bound to 0.0.0.0,
+// set WEBUI_ALLOWED_HOSTS (comma-separated host[:port]) to the proxy/public host(s) to accept.
+const ALLOWED_HOSTS = new Set(
+	(process.env.WEBUI_ALLOWED_HOSTS || `127.0.0.1:${PORT},localhost:${PORT},127.0.0.1,localhost`)
+		.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)
+);
 // artifacts retention (disk hygiene). Explicit parse so 0 ("keep none") is honored and a
 // negative/NaN value can't slip through (a negative would otherwise prune ALL runs).
 const _keep = Number(process.env.WEBUI_KEEP_RUNS);
@@ -202,6 +210,11 @@ function serveFile(req, res, filePath) {
 
 const server = http.createServer(async (req, res) => {
 	try {
+		// Host-header allowlist — DNS-rebinding defense. Applies to GET and POST (GET routes serve
+		// artifacts/PII and have no Origin check), so reject before any routing or side effect.
+		if (!ALLOWED_HOSTS.has((req.headers.host || '').toLowerCase())) {
+			return sendJson(res, 403, { error: 'host not allowed' });
+		}
 		const url = new URL(req.url, `http://${HOST}:${PORT}`);
 		const p = url.pathname;
 
