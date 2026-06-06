@@ -8,7 +8,7 @@
 // through here (they touch no daemon) and run concurrently.
 
 import fs from 'node:fs';
-import { killTree } from './spawn.js';
+import { killTree, gitBash } from './spawn.js';
 
 const MAX_LOG = 2000; // per-job log ring-buffer cap
 const MAX_JOBS = 50; // most-recent job records kept in memory
@@ -23,6 +23,24 @@ let tail = Promise.resolve(); // the serial chain
 let runningId = null; // id of the job whose child is currently alive, or null
 const pending = []; // FIFO of queued (not-yet-running) job ids
 const jobs = new Map(); // id -> job record
+
+// reapDaemon(): best-effort graceful `agent-browser daemon stop` after a SIGKILL'd browser job. A
+// tree-killed job (cancel/watchdog) never ran its bash EXIT-trap cleanup, so its agent-browser+Chrome
+// session leaks and would wedge the NEXT job's daemon connection. Stopping the (shared, serial)
+// daemon clears that — agent-browser respawns a fresh one on next use. Cross-platform via the same
+// bash/PATH the drivers use; bounded by a timeout so a wedged stop can't stall the queue.
+function reapDaemon() {
+	return new Promise((resolve) => {
+		let done = false;
+		const fin = () => { if (!done) { done = true; resolve(); } };
+		try {
+			const c = gitBash('-c', ['agent-browser daemon stop >/dev/null 2>&1 || true']);
+			c.on('error', fin);
+			c.on('close', fin);
+			setTimeout(fin, 10000).unref();
+		} catch { fin(); }
+	});
+}
 
 function publicJob(job) {
 	return {
@@ -135,10 +153,13 @@ async function runJob(job) {
 	} finally {
 		if (timer) clearTimeout(timer);
 		if (job.stopFile) { try { fs.rmSync(job.stopFile, { force: true }); } catch {} } // clear the stop signal
+		const wasKilled = job.cancelled || job.timedOut; // SIGKILL path skipped the driver's cleanup trap
 		job.child = null;
 		job.endedAt = Date.now();
 		runningId = null;
 		finishJob(job);
+		// Reap a leaked daemon BEFORE the chain advances, so the next job starts on a clean daemon.
+		if (wasKilled) { try { await reapDaemon(); } catch {} }
 	}
 }
 

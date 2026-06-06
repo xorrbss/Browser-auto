@@ -47,13 +47,21 @@ READY_TEXT="$(jq -r '.detail.ready.text // empty' "$RECIPE")"
 # target's visible text in the list. Emitted one-per-line so special chars survive the read.
 # Run node WITH cwd=PROBE_ROOT so a relative require resolves (an absolute MSYS path like
 # /c/project/... is not a valid Node module path on Windows). db.js derives its own DB path.
-mapfile -t DOCS < <(cd "$PROBE_ROOT" && node -e '
+# Capture into a file (NOT `mapfile < <(node)`, which discards the node exit code and would mask a
+# DB read failure as an empty "nothing to enrich"). Check the exit code → fail loud on a real error.
+DOCLIST="$(mktemp)"; DOCERR="$(mktemp)"
+if ! ( cd "$PROBE_ROOT" && node -e '
 const d=require("./lib/db.js");const h=d.openDb();
 let r=d.listApprovals(h,{status:"fetched"}).filter(x=>!x.summary).map(x=>x.doc_id);
 d.closeDb(h);
 const lim=parseInt(process.argv[1],10)||0; if(lim>0) r=r.slice(0,lim);
 for(const id of r) console.log(id);
-' "$LIMIT")
+' "$LIMIT" ) > "$DOCLIST" 2> "$DOCERR"; then
+	echo "[enrich] ✗ could not read pending docs from the DB:" >&2; cat "$DOCERR" >&2
+	rm -f "$DOCLIST" "$DOCERR"; exit 1
+fi
+mapfile -t DOCS < "$DOCLIST"
+rm -f "$DOCLIST" "$DOCERR"
 
 if [ "${#DOCS[@]}" -eq 0 ]; then
 	echo "[enrich] nothing to enrich (all pending docs already have a summary, or none synced)."
