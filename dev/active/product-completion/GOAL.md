@@ -50,12 +50,22 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
 - **Done evidence:** brand-new `m1demo` system registered + synced + queried entirely from the UI, no
   product-code edits.
 
-### M2 — Generic detail + summary (finish "fetch → 요약" for any system)  [P2]
-- Generalize the 결재 detail-enrichment (`extract-detail` + `summarize`) onto the `records` path so any
-  registered system can do "open each → extract body → on-prem summarize" (recipe `detail` seam already
-  documented in `recipes/SCHEMA.md`).
-- enrich pagination: summarize **all** synced docs (currently ~10 of 177).
-- **Done when:** a registered system's records carry dept/body/summary; a digest works from the UI.
+### M2 — Generic detail + summary (finish "fetch → 요약" for any system)  [P2]  **CORE DONE (live-verified)**
+- `bin/enrich-system.sh` generalizes the 결재 detail-enrichment onto the `records` path: per record →
+  open detail (recipe `detail`) → `extract-detail --generic` (arbitrary fields + body, mandatory
+  idLabel==key guard) → on-prem `summarize` → `store-records` (merge data + summary). webui 📝 상세·요약
+  button (`/api/systems/:name/enrich`). Commits `0acbbb1`/`b3cd07b`/`9d68be2`/`16e1b76`.
+- **LIVE-VERIFIED (2026-06-07):** `enrich-system --key IB-지출(거래처)-20260604-0001` (hiworks) opened the
+  detail, extracted dept=관리팀 + 628-char body, summarized on-prem (exaone3.5:32b — accurate: 4.5억
+  대출보증료 4,502,670원, 납부 2026.06.05), stored dept+raw_text+summary into `records`. exit 0.
+- Footguns fixed live: `--exact` breaks the doc-id click (rendered inside a cell → substring); a chained
+  `find…click` exits NON-ZERO on not-found → `|| true` guard so an off-page/transient doc skips (not
+  aborts the batch). Added `--key` targeting.
+- **Remaining (scale step):** enrich **pagination** — summarize ALL 177 across the 12-page list (today
+  `find text` only reaches the current page; off-page docs are gracefully skipped). A heavy batch
+  (177 × browser-open + on-prem inference); run via CLI/the webui button when wanted.
+- **Done when:** a registered system's records carry dept/body/summary [✓ proven]; a digest works from
+  the UI [webui button + summary rendering wired; full-batch is the pagination scale step].
 
 ### M3 — Phase 2 guarded approve (the effectful feature)  [P1, SAFETY-GATED]
 - **Gate A:** **PASSED** (`dev/active/phase2-guarded-approve/REDTEAM-v3.md`). `REDTEAM-v2.md` returned
