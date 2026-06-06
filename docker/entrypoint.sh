@@ -18,6 +18,11 @@ NOVNC_PORT="${NOVNC_PORT:-6080}"
 export DISPLAY
 
 echo "[entrypoint] starting Xvfb on $DISPLAY ($SCREEN)"
+# A container restart reuses the writable layer, so a leftover lock/socket from a previously
+# crashed boot makes Xvfb fail with "Server is already active for display NN". Clear them first
+# (DISPLAY ":99" / ":99.0" -> X server number "99") so every (re)start gets a clean display.
+_xnum="${DISPLAY#:}"; _xnum="${_xnum%%.*}"
+rm -f "/tmp/.X${_xnum}-lock" "/tmp/.X11-unix/X${_xnum}" 2>/dev/null || true
 Xvfb "$DISPLAY" -screen 0 "$SCREEN" -nolisten tcp &
 
 # Wait for the display to accept connections (max ~5s) before launching anything that draws.

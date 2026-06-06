@@ -14,7 +14,9 @@
 FROM mcr.microsoft.com/playwright:v1.49.1-jammy
 
 # Remote-interactive display + media stack. x11-utils gives xdpyinfo for the readiness probe.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# DEBIAN_FRONTEND=noninteractive (inline, build-only) stops tzdata from opening an interactive
+# "select your timezone" prompt that would hang the TTY-less build forever.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         xvfb x11vnc novnc websockify fluxbox x11-utils ffmpeg jq \
     && rm -rf /var/lib/apt/lists/*
 
