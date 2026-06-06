@@ -19,6 +19,7 @@
 // can be summarized. A per-item model error (the endpoint answered but errored on one doc) is a
 // WARNING: that item keeps summary=null and the batch continues (raw_text is still stored).
 
+const { guardTransport } = require('../lib/llm.js');
 const BASE = (process.env.SUMMARY_API_URL || 'http://localhost:11434/v1').replace(/\/+$/, '');
 const MODEL = process.env.SUMMARY_MODEL || '';
 const API_KEY = process.env.SUMMARY_API_KEY || '';
@@ -70,6 +71,9 @@ async function main() {
 		console.error('  Ollama: winget install Ollama.Ollama && ollama pull qwen2.5:7b   (serves http://localhost:11434)');
 		process.exit(1);
 	}
+	// Confidential 결재 bodies go on this wire — warn (or refuse under LLM_REQUIRE_PRIVATE) if the
+	// endpoint is a public host / plain HTTP.
+	try { guardTransport(BASE); } catch (e) { console.error('summarize: ' + e.message); process.exit(1); }
 	let input = '';
 	for await (const c of process.stdin) input += c;
 	let items;

@@ -82,7 +82,12 @@ if [ "$PAGINATE" = "combobox" ]; then
 			if [ -n "$ids" ] && [ "$ids" != "$prev" ]; then mv "$ITEMS_DIR/.try.json" "$ITEMS_DIR/$(printf 'p%03d' "$p").json"; loaded=1; break; fi
 			sleep 0.5
 		done
-		if [ "$loaded" != 1 ]; then echo "  ⚠ page $p did not load — stopping (storing pages so far)" >&2; break; fi
+		if [ "$loaded" != 1 ]; then
+			# Surface WHY (a fail-loud guard like a cell-count mismatch, vs just no new rows) — don't
+			# let markup drift on page 2+ be silently swallowed by the gate's 2>/dev/null polling.
+			err="$(printf '%s' "$cur" | node "$EX" "$RECIPE" 2>&1 >/dev/null || true)"
+			echo "  ⚠ page $p did not settle (${err:-no new rows}) — stopping (storing pages so far)" >&2; break
+		fi
 		prev="$ids"
 		echo "  page $p: $(jq 'length' "$ITEMS_DIR/$(printf 'p%03d' "$p").json") rows"
 	done

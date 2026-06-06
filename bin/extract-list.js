@@ -105,6 +105,13 @@ function main() {
 		if (!key) continue; // no identity → skip, never fabricate
 		items.push({ key, data: rec });
 	}
+	// A non-unique key would silently collapse distinct rows downstream (jq unique_by / upsert keep
+	// only one) — losing records. Fail loud so a bad key choice is caught, never silently dropped.
+	const seen = new Set();
+	for (const it of items) {
+		if (seen.has(it.key)) die(`key column "${recipe.key}" is NOT unique — value "${it.key}" appears more than once; pick a column with unique values as the key`);
+		seen.add(it.key);
+	}
 	process.stdout.write(JSON.stringify(items));
 }
 

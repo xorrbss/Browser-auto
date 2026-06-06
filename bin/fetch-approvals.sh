@@ -158,7 +158,12 @@ if [ "$PAGINATE" = "combobox" ]; then
 			fi
 			sleep 0.5
 		done
-		if [ "$loaded" != 1 ]; then echo "  ⚠ page $p did not load — stopping (storing pages so far)" >&2; break; fi
+		if [ "$loaded" != 1 ]; then
+			# Surface a fail-loud guard reason (e.g. cell-count drift) instead of silently swallowing it
+			# on page 2+ via the gate's 2>/dev/null polling.
+			err="$(printf '%s' "$cur" | node "$PROBE_ROOT/bin/extract-approvals.js" "$RECIPE" 2>&1 >/dev/null || true)"
+			echo "  ⚠ page $p did not settle (${err:-no new rows}) — stopping (storing pages so far)" >&2; break
+		fi
 		prev_ids="$ids"
 		echo "  page $p: $(jq 'length' "$ITEMS_DIR/$(printf 'p%03d' "$p").json") rows"
 	done
