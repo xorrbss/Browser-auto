@@ -265,3 +265,16 @@ body[data-view="runs"] .runbar { display: flex; }
 .agent-out { border: 1px solid var(--line, #2a2a2a); border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
 .agent-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .agent-echo { opacity: 0.7; font-size: 0.9em; }
+
+/* 시스템(RPA) 등록·조회 */
+.sys-form { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.sys-row { display: flex; gap: 6px; }
+.sys-row input { flex: 1; }
+.sys-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+#sys-recipe { font-family: monospace; font-size: 0.85em; width: 100%; box-sizing: border-box; }
+.sys-list { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.sys-chip { font-size: 0.85em; }
+.sys-chip.active { outline: 2px solid #4a90d9; }
+.sys-records-head { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.sys-records-head h3 { margin: 0; }
+.sys-records-head input { flex: 1; }
