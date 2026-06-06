@@ -46,7 +46,7 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash }) 
 		r.ok ? sendJson(res, 200, r) : sendJson(res, 400, r);
 		return true;
 	}
-	const mSys = /^\/api\/systems\/([^/]+)\/(auth|analyze|sync|delete)$/.exec(p);
+	const mSys = /^\/api\/systems\/([^/]+)\/(auth|analyze|sync|enrich|delete)$/.exec(p);
 	if (mSys) {
 		let name; try { name = decodeURIComponent(mSys[1]); } catch { sendJson(res, 400, { error: 'bad name' }); return true; }
 		if (!validSysName(name)) { sendJson(res, 400, { error: 'invalid system name' }); return true; }
@@ -67,6 +67,12 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash }) 
 		}
 		if (action === 'sync') {
 			const job = enqueue({ kind: 'sync', label: `sync ${name}`, spawnFn: () => gitBash('bin/sync-system.sh', ['--system', name]) });
+			sendJson(res, 202, { job });
+			return true;
+		}
+		// enrich: per-record detail + on-prem summary onto records (bin/enrich-system.sh). Browser job.
+		if (action === 'enrich') {
+			const job = enqueue({ kind: 'summarize', label: `enrich ${name}`, spawnFn: () => gitBash('bin/enrich-system.sh', ['--system', name]) });
 			sendJson(res, 202, { job });
 			return true;
 		}

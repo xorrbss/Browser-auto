@@ -120,6 +120,7 @@ export function initSystems() {
 	$('#sys-auth').addEventListener('click', () => sysAction('auth'));
 	$('#sys-analyze').addEventListener('click', analyzeSystem);
 	$('#sys-sync').addEventListener('click', () => sysAction('sync', () => loadRecords()));
+	$('#sys-enrich').addEventListener('click', () => sysAction('enrich', () => loadRecords()));
 	$('#sys-delete').addEventListener('click', deleteSelectedSystem);
 	$('#sys-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadRecords(); });
 }
