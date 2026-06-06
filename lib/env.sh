@@ -73,7 +73,15 @@ BATCH() {
 # _batch_check: inspect a `batch --json` result array. Returns 1 (failing the test via
 # set -e) on the first command whose `.success` is false, printing which command and why.
 _batch_check() {
-	local json="$1" failed
+	local json="$1" shape failed
+	# Fail CLOSED on a missing/empty/non-array envelope. agent-browser must return a NON-EMPTY array
+	# of {success,...} results; an empty string, whitespace, "[]", or garbage means the batch did not
+	# run as sent. This function exists to PREVENT false-greens, so it must never pass on no evidence.
+	shape="$(printf '%s' "$json" | jq -r 'if type=="array" and length>0 then "ok" else "bad" end' 2>/dev/null || echo "bad")"
+	if [ "$shape" != "ok" ]; then
+		echo "  ✗ BATCH: empty/invalid result envelope — batch did not run as sent (not a silent pass)" >&2
+		return 1
+	fi
 	failed="$(printf '%s' "$json" | jq -r 'map(select(.success == false)) | .[0] // empty | @json')"
 	if [ -n "$failed" ]; then
 		local cmd err
