@@ -1,0 +1,32 @@
+# docker-compose.yml — run the agent-qa recording server (remote-human capture) on Linux.
+#
+#   docker compose up --build      # build + start
+#   open http://127.0.0.1:6080/vnc.html   (noVNC — drive the recorder's Chrome)
+#   open http://127.0.0.1:4310            (webui — start/stop record, compile, run, results)
+#
+# SECURITY: both ports are bound to 127.0.0.1 (host-localhost) ONLY. The webui has NO auth and
+# spawns processes; noVNC has no password. NEVER publish these to 0.0.0.0 / the internet directly.
+# To reach them externally, front with an authenticated tunnel/proxy + set WEBUI_ALLOWED_HOSTS
+# (Host-header allowlist) — see README "Docker recording server".
+services:
+  agent-qa:
+    build: .
+    ports:
+      - "127.0.0.1:4310:4310"   # webui control plane
+      - "127.0.0.1:6080:6080"   # noVNC interactive browser view
+    # Chromium maps large shared buffers into /dev/shm; Docker's 64 MB default makes it crash
+    # ("Target closed" / renderer OOM). 1 GB is the standard headed-Chrome-in-Docker fix.
+    shm_size: "1gb"
+    volumes:
+      # Persist the framework's data dirs across rebuilds. fixtures/auth holds login state (secrets);
+      # flows are authored artifacts; artifacts are run videos/reports.
+      - ./artifacts:/app/artifacts
+      - ./flows:/app/flows
+      - ./fixtures:/app/fixtures
+    environment:
+      - WEBUI_KEEP_RUNS=50      # artifacts retention (matches the server default)
+      # Bind the webui to all interfaces INSIDE the container so Docker's published port can reach it
+      # (a 127.0.0.1 listener in the container is unreachable via the published port). Still safe: the
+      # ports above publish only to the host's 127.0.0.1 — front with an auth proxy for remote access.
+      - WEBUI_HOST=0.0.0.0
+    restart: unless-stopped

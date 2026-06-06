@@ -9,9 +9,11 @@ import path from 'node:path';
 
 export const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 
-// Git Bash (MINGW64) — the SAME shim record.cmd uses. NOT WSL bash (which breaks the CLI).
-// Override only for tests/non-standard installs via WEBUI_BASH.
-const GIT_BASH = process.env.WEBUI_BASH || 'C:\\Program Files\\Git\\bin\\bash.exe';
+// Bash that runs the CLI. Windows: Git Bash (MINGW64) — the SAME shim record.cmd uses, NOT WSL
+// bash (which breaks the CLI). Linux/macOS (e.g. the Docker recording server): the system bash.
+// Override either via WEBUI_BASH.
+const IS_WIN = process.platform === 'win32';
+const GIT_BASH = process.env.WEBUI_BASH || (IS_WIN ? 'C:\\Program Files\\Git\\bin\\bash.exe' : 'bash');
 
 // gitBash(scriptRel, args): run a bash CLI script (path relative to PROBE_ROOT), e.g.
 // gitBash('run.sh', ['login'])  ->  bash.exe run.sh login   (cwd = PROBE_ROOT).
@@ -20,6 +22,11 @@ export function gitBash(scriptRel, args = [], extraEnv = null) {
 		cwd: PROBE_ROOT,
 		env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
 		windowsHide: true,
+		// POSIX: run the child in its OWN process group (pgid === pid) so killTree() can reap the
+		// whole bash -> run.sh -> agent-browser -> Chrome tree with one group kill. We never unref()
+		// — jobs.js still awaits 'close', so the parent keeps tracking it. Windows uses taskkill /T
+		// and must NOT be detached (detached there spawns a stray console window).
+		detached: !IS_WIN,
 	});
 }
 
@@ -41,14 +48,20 @@ export function recordCmd(name, startUrl, { app, seconds, stopFile } = {}) {
 	return gitBash('bin/probe-record.sh', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
 }
 
-// killTree(pid): kill a process AND its whole descendant tree. On Windows child.kill()
-// only signals the top process — it does NOT reap bash -> run.sh -> agent-browser -> Chrome,
-// which would leave a wedged daemon. taskkill /T walks the tree; /F forces. Best-effort.
+// killTree(pid): kill a process AND its whole descendant tree. child.kill() only signals the top
+// process — it does NOT reap bash -> run.sh -> agent-browser -> Chrome, which would leave a wedged
+// daemon. Windows: taskkill /T walks the tree, /F forces. POSIX: gitBash() spawned the child
+// detached (its own process group, pgid === pid), so a negative-pid SIGKILL reaps the whole group.
+// Best-effort either way — the child's own 'close' still resolves the queue slot.
 export function killTree(pid) {
 	if (!pid) return;
 	try {
-		spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+		if (IS_WIN) {
+			spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+		} else {
+			process.kill(-pid, 'SIGKILL');
+		}
 	} catch {
-		/* best-effort: the child's own 'close' (below) still resolves the queue slot */
+		/* best-effort: the child's own 'close' still resolves the queue slot */
 	}
 }
