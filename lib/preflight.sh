@@ -78,8 +78,11 @@ echo "[preflight] --json contract..."
 _IS_ABSENT_JSON="$(agent-browser --session preflight is visible "does-not-exist-xyz" --json 2>/dev/null || true)"
 _IS_SUCCESS="$(printf '%s' "$_IS_ABSENT_JSON" | jq -r '.success' 2>/dev/null || echo "ERR")"
 if [ "$_IS_SUCCESS" != "false" ]; then
-	echo "[preflight] WARNING: --json envelope changed (.success on absent element = $_IS_SUCCESS, expected false)." >&2
-	echo "[preflight] WARNING: assert.sh reads .success to decide pass/fail. Review before trusting results." >&2
+	echo "[preflight] FATAL: --json contract broken (.success on an absent element = $_IS_SUCCESS, expected false)." >&2
+	echo "[preflight] FATAL: assert.sh decides pass/fail from .success — if 'absent' is not false, every assert_* can false-green." >&2
+	echo "[preflight] FATAL: aborting rather than running the suite against a broken contract (this file promises fail-loud)." >&2
+	agent-browser --session preflight close >/dev/null 2>&1 || true
+	exit 1
 fi
 echo "[preflight] contract OK."
 

@@ -50,6 +50,20 @@ compile() {
 		exit 1
 	fi
 
+	# FAIL-LOUD on any UNRECOGNIZED step/assert kind. The step/assert jq below both end in `else
+	# empty`, which would silently DROP an unknown (typo'd or future) kind and compile a green-but-
+	# incomplete test — the exact false-green this framework forbids. Refuse instead of dropping.
+	local bad_kinds
+	bad_kinds="$(jq -r '
+		[ (.steps[]?   | select((.kind|tostring) | test("^(find|wait|press|scroll)$") | not)             | "step:"   + (.kind|tostring)),
+		  (.asserts[]? | select((.kind|tostring) | test("^(url|text|value|visible|count|absent)$") | not) | "assert:" + (.kind|tostring)) ]
+		| unique | .[]' "$flow")"
+	if [ -n "$bad_kinds" ]; then
+		echo "[probe] compile refused: $flow has unrecognized kind(s) (the compiler would silently drop them):" >&2
+		printf '  %s\n' $bad_kinds >&2
+		exit 1
+	fi
+
 	local name app starturl
 	name="$(jq -r '.name' "$flow")"
 	app="$(jq -r '.app // empty' "$flow")"
