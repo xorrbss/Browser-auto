@@ -23,9 +23,22 @@ A recipe is selected by the `--app` / system name (`recipes/<name>.json`), mirro
 | `ready.timeout` | — | bash | seconds for the ready gate (default 15). |
 | `pagination.mode` | — | bash | `"combobox"` → drive the list's single page-number `<select>` (via its transient `@ref`, read fresh per page — never stored) and accumulate every page, deduped by `key`. Omit ⇒ first page only. |
 
-### Reserved (documented seams, not all wired on every path)
-- `detail` (결재 enrich): `{ ready{text}, urlGlob, idLabel, fields{db_field:"rowheader label"}, bodyFromHeadingLevel }` — open each row's detail page, verify `idLabel == key` (refuse a wrong/list page), pull label→value fields + a `raw_text` body blob. Used by `bin/extract-detail.js` + `enrich-approvals.sh`.
-- `summarize` / `approve` — future phases (local-model summary of `raw_text`; the human-gated approve action). Not built.
+### `detail` — per-record enrichment (wired on BOTH paths)
+`{ ready{text}, urlGlob, idLabel, fields{field:"rowheader label"}, bodyFromHeadingLevel }` — open each
+row's detail page, verify `idLabel == key` (refuse a wrong/list page — never store the list), pull
+label→value `fields` + a `raw_text` body blob (`bin/extract-detail.js`). Drivers:
+- **결재 path** — `bin/enrich-approvals.sh`: `fields` restricted to the approvals DB vocabulary
+  (`doc_id` + `lib/db.js` SCRAPED_COLS); writes the `approvals` table.
+- **generic records path** — `bin/enrich-system.sh` (`extract-detail.js --generic`): `fields` are
+  ARBITRARY (they merge into `records.data`; `raw_text` lands in `data` too); writes the `records` table.
+
+Both drivers, when `SUMMARY_MODEL` (+ a local/on-prem endpoint) is set, summarize the `raw_text` body via
+`bin/summarize.js` into the `summary` column — the body **never leaves** the configured local endpoint.
+`upsertRecords`/`upsertApprovals` merge so this pass accumulates onto the list sync (never clobbers it).
+
+### Reserved (not built)
+- `approve` — the human-gated Phase-2 action (`dev/active/phase2-guarded-approve/`, DESIGN-ONLY,
+  safety-gated; Gate A re-red-team = REVISE-FIRST). Not implemented.
 
 ## Portability
 A recipe with `collection.name` + `key` + `columns` (and `key` ∈ `columns`) is valid for **both** the

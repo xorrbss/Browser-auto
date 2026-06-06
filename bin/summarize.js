@@ -7,7 +7,7 @@
 // leaves that endpoint. Zero external deps (global fetch). Sits OFF the deterministic read path:
 // it is best-effort enrichment, never a pass/fail gate.
 //
-//   stdin : JSON array of items (each { doc_id, title?, raw_text?, ... }).
+//   stdin : JSON array of items (each { doc_id|key, title?, raw_text?, ... }).
 //   stdout : the SAME array with `.summary` filled for items that had raw_text.
 //   config (env):
 //     SUMMARY_API_URL   base URL, OpenAI-compatible (default http://localhost:11434/v1 = Ollama)
@@ -96,11 +96,11 @@ async function main() {
 		try {
 			it.summary = await summarizeOne(it.title || '', body);
 			done++;
-			console.error(`summarize: ${it.doc_id || '?'} ✓ (${it.summary.length} chars)`);
+			console.error(`summarize: ${it.doc_id || it.key || '?'} ✓ (${it.summary.length} chars)`);
 		} catch (e) {
 			if (e.perItem) {
 				warned++;
-				console.error(`summarize: ${it.doc_id || '?'} ⚠ skipped — ${e.message}`);
+				console.error(`summarize: ${it.doc_id || it.key || '?'} ⚠ skipped — ${e.message}`);
 				continue;
 			}
 			// A network/abort error: the endpoint is unreachable/misconfigured — nothing will work.
