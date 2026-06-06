@@ -1,0 +1,14 @@
+{
+  "app": "daou",
+  "ready": { "text": "기안일자" },
+  "collection": { "name": "결재 대기함" },
+  "key": "doc_id",
+  "columns": {
+    "doc_id": "문서번호",
+    "title": "제목",
+    "drafter": "기안자",
+    "submitted_at": "기안일자",
+    "amount": "금액"
+  },
+  "strip": { "amount": "원" }
+}

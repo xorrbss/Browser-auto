@@ -1,6 +1,7 @@
 # Secrets & per-run artifacts — never commit
 fixtures/auth/
 artifacts/
+data/
 *.state.json
 *.webm
 *.har

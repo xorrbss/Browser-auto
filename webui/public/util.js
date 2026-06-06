@@ -36,7 +36,7 @@ export const fmtTime = (iso) => {
 // status -> Korean badge label (job/test/run states); unknown values fall back to upper-case.
 export const statusKo = (s) => {
 	const k = String(s == null ? '' : s).toLowerCase();
-	return { pass: '통과', fail: '실패', ok: '정상', done: '완료', failed: '실패', cancelled: '취소', running: '실행중', pending: '대기', queued: '대기' }[k] || String(s == null ? '' : s).toUpperCase();
+	return { pass: '통과', fail: '실패', ok: '정상', done: '완료', failed: '실패', cancelled: '취소', running: '실행중', pending: '대기', queued: '대기', fetched: '미결', approved: '승인' }[k] || String(s == null ? '' : s).toUpperCase();
 };
 
 // Exactly one job stream is open at a time. Starting another closes the prior one, so a stale

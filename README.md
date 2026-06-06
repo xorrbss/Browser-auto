@@ -55,6 +55,19 @@ externally, front with an authenticated tunnel / reverse proxy. Two controls bou
 Recording and OTP login need the headed browser (driven via noVNC); `run`, results, and compile work
 from the webui alone.
 
+### Recovering a wedged daemon
+
+If agent-browser ops start failing with `os error 10060` (or hang ~34s then fail), a dead daemon left
+stale per-session state in `~/.agent-browser`. Recover it — stops the daemon, kills only its own PID
+(never a blanket `node` kill), removes the stale `*.engine/*.pid/*.port/*.stream/*.version` files, and
+preserves the downloaded `browsers/`:
+
+```bash
+bash bin/daemon-recover.sh
+```
+
+The next `agent-browser` op starts a fresh daemon. Re-run `setup/auth.sh` if the cached session expired.
+
 ## Writing a test
 
 ```bash
@@ -129,6 +142,134 @@ plain substring, matched across origins — then saves `fixtures/auth/myapp.stat
 (It polls rather than calling `wait --url` because that command is broken for globs on
 0.27.0.) Tests then start with `AB_AUTH myapp open <url>` and replay unattended — the OTP
 cost is paid once.
+
+## 결재 (approval) sync — P0: read & display
+
+A built-on-top feature that scrapes a groupware **approval inbox** into a local DB and shows it on
+the webui dashboard. P0 is **read-only** (no approval execution — that is a later, human-gated phase).
+It reuses the existing pieces: cached auth (`setup/auth.sh`), the agent-browser `.success` contract
+(`lib/env.sh`), and the webui serial job queue (so the browser sync runs one-at-a-time like any run).
+
+New pieces (no new stack):
+
+- `lib/db.js` — the approvals store over **`node:sqlite`** (built-in, zero external deps; needs
+  Node ≥ 22.5). One table `approvals(doc_id PK, title, drafter, dept, submitted_at, amount,
+  raw_text, summary, status, fetched_at)`. The DB is the **single source of truth** for fetched
+  결재 (unlike runs, which are fs-authoritative). Lives at gitignored `data/approvals.db` (PII).
+- `recipes/<app>.json` — the **declarative read recipe** (committed; product STRUCTURE only — no PII,
+  no CSS, no `@eN` refs). Selected by `--app` (like `fixtures/auth/<app>.state.json`). It is the ONLY
+  thing that differs per groupware — **no per-site code**. Fields: `collection.name` (the aria table's
+  accessible name, matched normalized-exact — exactly one match or fail loud), `columns`
+  (`{db_field: "header text"}`, header-anchored), optional `strip` (`{db_field: "literal suffix"}` for
+  UI noise like Hiworks' `첨부 파일 표시`), optional `ready.{text,timeout}` (an in-batch `wait --text`
+  settle gate for async lists). `doc_id` is mandatory; reserved seams `steps/detail/summarize/approve`
+  are documented, not yet built.
+- `bin/fetch-approvals.sh` — generic driver: resolve `recipes/<app>.json` → launch (`AB_AUTH open`) →
+  `navigate` inbox → optional `ready` gate → snapshot → `extract-approvals.js <recipe>` →
+  `store-approvals.js`. fd-hang-guarded (`</dev/null`, no inline pipe), with a generic
+  redirect/stale-session warning. Reads gitignored `data/approvals.config` (`GW_APP`/`GW_INBOX_URL`)
+  so a bare run and the webui button need no args.
+- `bin/extract-approvals.js` — **generic, recipe-driven** aria-table list extractor (NOT site-coupled):
+  parses the saved aria-snapshot tree per the recipe → items JSON. Anchors row→cell mapping to the
+  column HEADERS and FAILS LOUD (never guesses) on a missing/duplicate header, a per-row cell-count ≠
+  header-column count, an unknown db field, or 0/≥2 matching tables. Pinned by the browser-free golden
+  `tests/extract-approvals.test.sh` (part of the `run.sh` gate).
+- `bin/store-approvals.js` — stdin items JSON → `lib/db.js` upsert (re-sync preserves `status`).
+- `webui` — `GET /api/approvals` (read) + `POST /api/sync` (enqueue the browser sync) + a **결재**
+  dashboard view with a **동기화** button.
+
+Operator steps — **Hiworks (verified working end-to-end on `ibizsoftware.net`)**:
+
+```bash
+# 1. One-time login cache. Opens a real Chrome window; YOU complete the Hiworks login by hand
+#    (ID/PW + OTP/SSO if any). Lands on dashboard.office.hiworks.com -> session saved.
+bash setup/auth.sh hiworks \
+  "https://login.office.hiworks.com/<company-domain>" \
+  "**dashboard.office.hiworks.com/**"
+
+# 2. data/approvals.config (gitignored) holds the inbox URL so a bare run / the webui button work:
+#    GW_APP=hiworks
+#    GW_INBOX_URL="https://approval.office.hiworks.com/<company-domain>/approval/document/lists/W"
+#    ('/document/lists/W' is the 대기(pending) box — the approval home auto-redirects here.)
+bash bin/fetch-approvals.sh        # or: --app hiworks --url <inbox>; or the webui 동기화 button
+#    -> snapshot -> extract 대기 rows -> upsert into data/approvals.db; the 결재 view shows the cards.
+```
+
+For a **different groupware**, write `recipes/<app>.json` (no code) from its saved
+`data/approval-inbox.snapshot.json` — `bin/*`, the DB, and the webui all stay byte-identical.
+`recipes/daou.json` is a committed example for a different vendor; the golden test exercises it.
+**Ceiling (honest):** the extractor handles the ARIA **table** family (a single named `table`/`grid`
+with `columnheader`/`row`/`cell`); a pure CSS div-grid with no table semantics, or two same-named
+tables on one page, is out of scope and fails loud rather than guessing.
+
+**Field coverage:** `doc_id/title/drafter/submitted_at` come from the Hiworks 대기 LIST; `dept/raw_text`
+are DETAIL-only (per document), filled by the P0+ enrichment below. (Structured `amount` is form-specific —
+it lives inside `raw_text` for now; a per-form recipe can lift it later.)
+
+### P0+ — per-document detail enrichment + local summary
+
+A SECOND, slower pass that opens each pending doc, pulls `dept` + the body `raw_text`, and (optionally)
+summarizes it with a **local / on-prem model** — kept separate from the fast list sync so the dashboard
+shows the list immediately and enrichment fills in. The body **never leaves the configured local endpoint**.
+
+- `bin/extract-detail.js` — recipe-driven DETAIL extractor. The detail page is a **label→value** layout
+  (`rowheader "기안 부서"` → adjacent cell), not the list's column model, so it's a separate parser. It
+  also collects the form body from the top heading onward as `raw_text` (a blob for the summarizer).
+  Driven by the recipe's `detail` block: `{ ready{text}, fields{db_field: "rowheader label"},
+  bodyFromHeadingLevel }`.
+- `bin/summarize.js` — fills `summary` from an **OpenAI-compatible local endpoint** (Ollama / vLLM / a
+  사내 gateway). Zero external deps. Config (env): `SUMMARY_MODEL` (required), `SUMMARY_API_URL`
+  (default `http://localhost:11434/v1`), `SUMMARY_API_KEY` (optional). A network failure is fatal; a
+  per-doc model error is a warning (that doc keeps `raw_text`, no summary).
+- `bin/enrich-approvals.sh` — the loop: for each pending doc lacking a summary → open it (`find text
+  "<doc_id>" click`, same tab) → detail snapshot → `extract-detail` → (`summarize` if `SUMMARY_MODEL`
+  set) → store. `lib/db.js` upsert uses `COALESCE`, so this pass and the list sync never null out each
+  other's fields. `--limit N` bounds a run.
+
+```bash
+# detail only (no model yet): fills dept + raw_text for the cards
+bash bin/enrich-approvals.sh                     # or --app hiworks --limit 3
+
+# with a local model (body stays on-prem):
+#   Ollama: winget install Ollama.Ollama && ollama pull qwen2.5:7b   (serves :11434)
+SUMMARY_MODEL=qwen2.5:7b bash bin/enrich-approvals.sh
+#   -> opens each 대기 doc, stores dept + raw_text + summary; the 결재 view shows the summary.
+```
+
+**Correctness guard:** `extract-detail` verifies the opened page's `idLabel` (문서 번호) equals the
+doc it meant to open, and `enrich` gates on the detail URL (`detail.urlGlob`) — a click that stays on
+the list or opens the wrong document is **rejected, never stored** (no silent wrong-data).
+
+**Pagination:** when `recipe.pagination.mode == "combobox"`, `fetch-approvals` drives the list's
+single page-number `<select>` (via its transient `@ref`, read fresh per page — never stored) and
+accumulates EVERY page, deduped by `doc_id` — so the list sync captures the full inbox (verified:
+177/177 on the live tenant), not just the first page. **Enrichment** (`enrich-approvals.sh`) still
+walks the **first page's** docs; summarizing all N is a deliberate, heavy batch (each doc = a browser
+open + a local-model inference) and is the remaining scale step.
+
+### NL command box (web) — describe, don't hand-build
+
+The 결재 view has a command box: type Korean ("관리팀 출장 관련 조회", "최근 10건 요약", "미결 새로고침")
+and it runs. The **on-prem model ONLY classifies** the text into one validated intent — it never drives
+the browser, never decides/executes an approval, never touches the pass/fail gate:
+
+- `lib/llm.js` — shared on-prem OpenAI-compatible client (reads `LLM_*`/`SUMMARY_*` lazily; same model
+  as summaries; nothing leaves the endpoint).
+- `webui/agent.js` — `classifyIntent` (model reply is UNTRUSTED: JSON-extract → strict allowlist/type
+  validation → degrade to **clarify** on any doubt; never a default action, NEVER approve) + `runQuery`.
+- `POST /api/agent {text}` — routes: `sync`→fetch-approvals (queue), `summarize`→enrich (queue),
+  `query`/`approve`→read-only `db.queryApprovals` rows. `approve` returns **candidates only** —
+  execution is the human-gated Phase 2, never triggered from here. amount has no numeric filter
+  (TEXT column) → the model maps it to a keyword.
+
+If the on-prem model is unreachable, every command safely degrades to `clarify` (no action taken).
+**Not built here (by design / per the safety review): an open live agent that improvises browser
+actions** — both the safety and feasibility reviews rejected an LLM→click path on live approval pages;
+the model stays a classifier, effectful actions stay deterministic + human-gated.
+
+**Summarization is intentionally out of P0**: the approval body can be confidential/PII, so sending
+it to an external LLM is a policy decision. P0 stores/displays the raw text only; a policy-gated
+`bin/summarize.js` can fill the `summary` column later.
 
 ## Authoring a test (AI or human, no API key)
 

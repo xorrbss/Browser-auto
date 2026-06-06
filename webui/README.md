@@ -11,10 +11,12 @@ visualizes their artifacts. localhost-only.
 node webui/server.js          # http://127.0.0.1:4310  (WEBUI_PORT overrides)
 ```
 
-No `npm install` — there are **zero runtime dependencies** (Node v18+ stdlib only:
-`node:http`, `node:fs`, `node:child_process`). The `package.json` lives here (not at the
-repo root) so `"type":"module"` is scoped to `webui/` and never changes how the existing
-`bin/*.js` are parsed.
+No `npm install` — there are **zero runtime dependencies** (Node stdlib only: `node:http`,
+`node:fs`, `node:child_process`). The `package.json` lives here (not at the repo root) so
+`"type":"module"` is scoped to `webui/` and never changes how the existing `bin/*.js` are parsed.
+
+> **Node ≥ 22.5** since the 결재 feature: the approvals view reads `lib/db.js`, which uses the
+> built-in `node:sqlite`. The pre-결재 dashboard (runs/flows/trends/auth) still works on Node 18+.
 
 ## Architecture (decided by WF-Arch, 2026-06-03)
 
@@ -26,8 +28,9 @@ repo root) so `"type":"module"` is scoped to `webui/` and never changes how the 
   framework.
 - **Live log (P1+):** SSE (one-way server→browser). No WebSocket (no stable stdlib server).
 - **Index:** in-process, mtime-keyed cache over an fs-scan of `artifacts/*/report.json`.
-  The filesystem is the single source of truth; the cache is rebuildable. No DB
-  (`node:sqlite` is experimental on this Node and would be a second source of truth).
+  The filesystem is the single source of truth for **runs**; the cache is rebuildable. No DB
+  for runs — report.json IS the authority. (**결재** data is different: it has no fs original,
+  so `lib/db.js`/`node:sqlite` is *its* single source of truth — not a second copy of runs.)
 - **Frontend:** no-build vanilla JS/HTML/CSS (disk-constrained host; KISS/YAGNI).
 - **Serial browser-job queue (P1+):** in-process single-slot promise chain — at most ONE
   browser-driving child (run/record/verify/auth) alive at a time, because the project
@@ -74,3 +77,8 @@ repo root) so `"type":"module"` is scoped to `webui/` and never changes how the 
 - `GET /api/runs` → `{ runs: [{ runId, startedAt, total, passed, failed, durationMs }] }`
 - `GET /api/runs/:id` → run detail with `tests: [{ name, status, durationMs, hasVideo }]`
 - `GET /artifacts/<path>` → static file under `artifacts/` (Range-enabled), path-guarded
+
+## Endpoints (결재)
+
+- `GET /api/approvals` → `{ approvals: [{ doc_id, title, drafter, dept, submitted_at, amount, raw_text, summary, status, fetched_at }] }` (reads `lib/db.js`)
+- `POST /api/sync` `{ app? }` → enqueue `bin/fetch-approvals.sh` on the serial browser queue (202 `{ job }`)
