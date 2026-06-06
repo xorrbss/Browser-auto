@@ -9,7 +9,7 @@ pass/fail gate.
 
 ## Requirements (Windows + Git Bash)
 
-- Git Bash (`C:\Program Files\Git\usr\bin\bash.exe`)
+- Git Bash (`C:\Program Files\Git\bin\bash.exe`)
 - `agent-browser` 0.27.0 — `npm i -g agent-browser && agent-browser install`
 - `jq`, `ffmpeg` (video) — `winget install jqlang.jq Gyan.FFmpeg`
 - `node`
@@ -27,6 +27,33 @@ bash tests/login.test.sh   # run a single test standalone (no suite/report)
 
 Artifacts (video, screenshots, report) land in `artifacts/<run-id>/` (gitignored).
 `report.json` + `report.junit.xml` are written per run.
+
+## Docker recording server (Linux)
+
+Run the framework on a Linux host as a remote recording service. Replay (`run.sh`) is headless; a
+remote human drives the recorder's **headed** Chrome through a browser-based noVNC view.
+
+```bash
+docker compose up -d
+#   http://localhost:4310            webui — run tests, view results, record/compile flows
+#   http://localhost:6080/vnc.html   noVNC — drive the recorder's Chrome (record / OTP login)
+docker compose exec agent-qa bash run.sh   # the headless gate, in-container
+```
+
+The image is a Playwright base (Node 24, so `node:sqlite` is unflagged) plus Xvfb + x11vnc + noVNC
+for the headed browser. The same cross-platform `webui/spawn.js` runs on Windows (Git Bash) and Linux.
+
+**Security.** The webui has no built-in auth and spawns processes; noVNC has no password. Compose
+publishes both ports to the host's `127.0.0.1` only — never expose them directly. To reach them
+externally, front with an authenticated tunnel / reverse proxy. Two controls bound the exposure:
+
+- `WEBUI_HOST` — bind address (default `127.0.0.1`; the image sets `0.0.0.0` so the published port is
+  reachable inside the container).
+- `WEBUI_ALLOWED_HOSTS` — Host-header allowlist, a DNS-rebinding defense (default `localhost`/`127.0.0.1`).
+  When fronting with a proxy on a public hostname, set this to that hostname.
+
+Recording and OTP login need the headed browser (driven via noVNC); `run`, results, and compile work
+from the webui alone.
 
 ## Writing a test
 
