@@ -5,6 +5,18 @@ invariants (3 critical + 9 high). v2 closes those; §11 is the v1→v2 changelog
 *effectful, irreversible* action (real 결재 가 승인됨) — implementation stays gated on (a) a second
 red-team of THIS doc and (b) the mandatory empirical capture in §12.
 
+> **GATE A — second re-red-team DONE → verdict REVISE-FIRST (see `REDTEAM-v2.md`).** 28 claims triaged →
+> 13 confirmed-real: **0 critical, 1 HIGH (PRESENCE-1), 4 medium, 8 low**; 15 refuted. v2 held well
+> (CRIT-2/CRIT-3 closed, browser-CSRF blocked, positive-commit verify robust), but the **sole blocker
+> PRESENCE-1** is gate-blocking: the `echoedDocNo` "human-presence" factor is **vacuous** — on the 결재
+> path 문서번호 == doc_id, which is already in the `/api/approve` body and returned to every same-origin
+> caller (`queryApprovals SELECT *`), so it carries zero presence entropy and a same-origin script can
+> self-approve. **Implementation stays FORBIDDEN** until **DESIGN v3** closes PRESENCE-1 (a real OOB
+> human-only factor, e.g. OS-credential/WebAuthn per item — OR an honest restatement that approve is
+> serialized-not-software-gated and rests on the operator's manual click + I7) AND a **third re-red-team**
+> returns safe-to-implement AND §12 staged capture is done. The 4 mediums + 8 lows are the v3 changelog
+> seed (`REDTEAM-v2.md` final section). Until then: **fail-closed.**
+
 > **HARD PREREQUISITE:** the approve path MUST NOT be implemented until the target app's real approve
 > UI is captured on a *disposable staged document* (§12). Every guard below depends on empirically
 > verified facts (is 문서번호 unique on the detail page? does the 승인 affordance disappear after

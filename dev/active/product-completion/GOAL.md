@@ -53,8 +53,14 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
 - **Done when:** a registered system's records carry dept/body/summary; a digest works from the UI.
 
 ### M3 — Phase 2 guarded approve (the effectful feature)  [P1, SAFETY-GATED]
-- **Gate A:** re-red-team `DESIGN.md` v2 (same 6 lenses) → must reach **safe-to-implement** (v1 was
-  revise-first; v2 closes the 3 criticals + 9 highs — verify it actually does).
+- **Gate A:** re-red-team `DESIGN.md` v2 (same 6 lenses) → must reach **safe-to-implement**. **DONE →
+  verdict REVISE-FIRST** (`dev/active/phase2-guarded-approve/REDTEAM-v2.md`): 0 critical, **1 HIGH
+  (PRESENCE-1)**, 4 medium, 8 low; 15 refuted. v2 held well, but PRESENCE-1 is gate-blocking (the
+  `echoedDocNo` presence factor is vacuous — 문서번호==doc_id is returned to every same-origin caller).
+  **Next:** author **DESIGN v3** to close PRESENCE-1 (real OOB human-only factor, or honest "serialized,
+  not software-gated, rests on operator click + I7") + fold the 4 mediums/8 lows → then a **third
+  re-red-team** must return safe-to-implement. The PRESENCE-1 fix DIRECTION is a product/security
+  decision for the operator (awaiting input). Until safe-to-implement: **Gate A NOT passed.**
 - **Gate B:** §12 of DESIGN — capture the **real approve UI on a disposable staged doc** and pin
   `recipe.approve` (문서번호 uniqueness, native confirm dialog?, required comment?, positive completion
   marker, does the 승인 affordance disappear?). **Until A+B: fail-closed, do not implement.**
