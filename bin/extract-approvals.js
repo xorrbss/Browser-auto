@@ -1,20 +1,58 @@
 #!/usr/bin/env node
 'use strict';
-// bin/extract-approvals.js — Hiworks(하이웍스) 전자결재 "대기"(pending) list -> 결재 items JSON.
+// bin/extract-approvals.js — generic, RECIPE-DRIVEN aria-snapshot LIST extractor.
 //
-// THE one site-coupled step (authored from a real snapshot of approval/document/lists/W). The
-// groupware inbox markup is product-specific, so this lives apart from the generic fetch-approvals.sh.
+// Was Hiworks-specific; the four site constants (table name, column→field map, the mandatory
+// doc_id key, and the title suffix strip) now live in recipes/<app>.json, so the SAME parser
+// handles any ARIA-table list screen with NO code change — only the recipe (data) differs.
 //
-//   stdin : the snapshot DATA object saved by fetch-approvals.sh (jq '.data' = {origin,refs,snapshot}),
-//           where .snapshot is the Playwright aria-snapshot YAML tree of the 대기 list page.
-//   stdout: JSON array of { doc_id, title, drafter, submitted_at }.
+//   argv[2]: recipe — a path to recipes/<app>.json, OR an inline JSON string (used by the unit test).
+//   stdin  : the snapshot DATA object saved by fetch-approvals.sh (jq '.data' = {origin,refs,snapshot}),
+//            where .snapshot is the Playwright aria-snapshot YAML tree of the list page.
+//   stdout : JSON array of items keyed by the recipe's db fields (doc_id always present).
 //
-// Hiworks 대기 list columns (verified live): [checkbox] · 문서 번호 · [icon] · 제목 · 기안자 · 기안일 · 구분.
-// Only 문서번호/제목/기안자/기안일 are IN the list; 금액·기안부서·본문 are DETAIL-only (left to P0+), so
-// amount/dept/raw_text are intentionally NOT set here (store-approvals upserts them as null).
+// Deterministic, no network, no LLM. Anchors row→cell mapping to the column HEADERS and FAILS LOUD
+// (never guesses) on: missing/ambiguous container, missing/duplicate mapped header, a row whose cell
+// count != the header column count (the silent positional-mis-map vector), or a recipe field outside
+// the DB vocabulary. A row with an empty doc_id cell is skipped — never fabricated.
 //
-// We parse the aria TREE and anchor the row->cell mapping to the column HEADERS (not a fixed cell
-// index), so adding/reordering a column does not silently mis-map fields — it fails loud instead.
+// Ceiling (honest): handles the ARIA TABLE family (role table/grid with columnheader/row/cell and a
+// single named container). A pure CSS div-grid with no ARIA table semantics, or a page with multiple
+// same-named containers, is out of scope — it fails loud rather than guessing.
+
+const fs = require('node:fs');
+const { SCRAPED_COLS } = require('../lib/db.js');
+// The legal field vocabulary is the DB's own column set (single source of truth) + the doc_id PK.
+const VOCAB = ['doc_id', ...SCRAPED_COLS];
+
+function die(msg) {
+	console.error('extract-approvals: ' + msg);
+	process.exit(2);
+}
+
+function loadRecipe(arg) {
+	if (!arg) die('missing recipe arg (path to recipes/<app>.json or inline JSON)');
+	let raw;
+	try {
+		raw = fs.existsSync(arg) ? fs.readFileSync(arg, 'utf8') : arg; // path, else inline JSON
+	} catch (e) {
+		die('cannot read recipe: ' + e.message);
+	}
+	let r;
+	try {
+		r = JSON.parse(raw);
+	} catch (e) {
+		die('recipe is not valid JSON: ' + e.message);
+	}
+	if (!r || !r.collection || !r.collection.name) die('recipe.collection.name is required');
+	const cols = r.columns;
+	if (!cols || typeof cols !== 'object' || !Object.keys(cols).length) die('recipe.columns is required');
+	for (const f of Object.keys(cols)) {
+		if (!VOCAB.includes(f)) die(`recipe.columns field "${f}" is not a known db column [${VOCAB.join(', ')}]`);
+	}
+	if (!cols.doc_id) die('recipe.columns must map doc_id (the approvals primary key)');
+	return r;
+}
 
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -29,27 +67,31 @@ process.stdin.on('end', () => {
 });
 
 function main() {
+	const recipe = loadRecipe(process.argv[2]);
+	const role = recipe.collection.role || 'table';
+	const rowRole = recipe.collection.row || 'row';
+	const wantName = norm(recipe.collection.name);
+
 	const data = JSON.parse(input.trim() || '{}');
 	const tree = typeof data.snapshot === 'string' ? data.snapshot : '';
-	if (!tree) {
-		console.error('extract-approvals: stdin has no .snapshot tree (expected fetch-approvals .data object)');
-		process.exit(1);
-	}
+	if (!tree) die('stdin has no .snapshot tree (expected the fetch-approvals .data object)');
 	const lines = tree.split('\n').map(parseLine).filter(Boolean);
 
-	// Locate the 대기 list table.
-	const tableIdx = lines.findIndex((l) => l.role === 'table' && /대기 문서 리스트/.test(l.name || ''));
-	if (tableIdx < 0) {
-		console.error('extract-approvals: "대기 문서 리스트" table not found — is the page the pending (대기) list?');
-		process.exit(2);
-	}
+	// 1. Locate the container: EXACTLY one role+name match (0 or >1 → fail loud).
+	const hits = [];
+	lines.forEach((l, i) => {
+		if (l.role === role && norm(l.name) === wantName) hits.push(i);
+	});
+	if (hits.length === 0) die(`${role} "${recipe.collection.name}" not found — is the page the expected list?`);
+	if (hits.length > 1) die(`${hits.length} ${role}s named "${recipe.collection.name}" — ambiguous; tighten collection.name`);
+	const tableIdx = hits[0];
 	const tableIndent = lines[tableIdx].indent;
 
-	// Collect the table's rows and each row's DIRECT children (cells / columnheaders).
+	// 2. Collect rows + each row's DIRECT children within the container subtree.
 	const rows = [];
 	for (let i = tableIdx + 1; i < lines.length; i++) {
-		if (lines[i].indent <= tableIndent) break; // left the table subtree
-		if (lines[i].role !== 'row') continue;
+		if (lines[i].indent <= tableIndent) break; // left the container
+		if (lines[i].role !== rowRole) continue;
 		const rowIndent = lines[i].indent;
 		const children = [];
 		for (let j = i + 1; j < lines.length; j++) {
@@ -59,61 +101,70 @@ function main() {
 		rows.push({ children });
 	}
 
-	// Header row = the one whose direct children are columnheaders; it defines column ORDER.
+	// 3. Header row → ordered column labels (INCLUDING empty filler cols, to stay position-aligned
+	//    with the data cells). The header count is the integrity anchor for every data row.
 	const header = rows.find((r) => r.children.some((c) => c.role === 'columnheader'));
-	if (!header) {
-		console.error('extract-approvals: header row (columnheaders) not found');
-		process.exit(2);
-	}
-	const cols = header.children.filter((c) => c.role === 'columnheader').map((c) => norm(c.name));
-	const idx = {
-		doc_id: cols.indexOf('문서번호'),
-		title: cols.indexOf('제목'),
-		drafter: cols.indexOf('기안자'),
-		submitted_at: cols.indexOf('기안일'),
-	};
-	for (const k of Object.keys(idx)) {
-		if (idx[k] < 0) {
-			console.error(`extract-approvals: column "${k}" not found among headers [${cols.join(', ')}] — markup changed; refusing to guess`);
-			process.exit(2);
-		}
+	if (!header) die('no header row (columnheader) found in the container');
+	const headers = header.children.filter((c) => c.role === 'columnheader').map((c) => norm(c.name));
+	const headerCount = headers.length;
+
+	// 4. Resolve each mapped field to a UNIQUE column index (0 or duplicate → fail loud).
+	const idx = {};
+	for (const [field, label] of Object.entries(recipe.columns)) {
+		const want = norm(label);
+		const found = [];
+		headers.forEach((h, i) => {
+			if (h === want) found.push(i);
+		});
+		if (found.length === 0) die(`column "${label}" (→${field}) not found among headers [${headers.join(', ')}] — refusing to guess`);
+		if (found.length > 1) die(`column "${label}" (→${field}) matches ${found.length} headers — ambiguous`);
+		idx[field] = found[0];
 	}
 
+	// 5. Emit data rows. Per-row cell count MUST equal the header column count (the silent
+	//    positional-mis-map guard). doc_id-empty rows are skipped, never fabricated.
+	const strip = recipe.strip || {};
+	const fields = Object.keys(recipe.columns);
 	const items = [];
 	for (const r of rows) {
 		const cells = r.children.filter((c) => c.role === 'cell');
-		if (!cells.length) continue; // header row has columnheaders, not cells
-		const doc_id = clean(cells[idx.doc_id] && cells[idx.doc_id].name);
-		if (!doc_id) continue; // not a data row (or empty) — skip, never fabricate
-		items.push({
-			doc_id,
-			title: stripAttach(clean(cells[idx.title] && cells[idx.title].name)),
-			drafter: clean(cells[idx.drafter] && cells[idx.drafter].name),
-			submitted_at: clean(cells[idx.submitted_at] && cells[idx.submitted_at].name),
-		});
+		if (!cells.length) continue; // the header row (columnheaders) and any non-data row
+		if (cells.length !== headerCount) {
+			die(`a row has ${cells.length} cells but the header has ${headerCount} columns — markup drift; refusing to mis-map (row cells: ${cells.map((c) => c.name || '∅').join(' | ')})`);
+		}
+		const doc_id = applyStrip(clean(cells[idx.doc_id].name), strip.doc_id);
+		if (!doc_id) continue;
+		const item = { doc_id };
+		for (const field of fields) {
+			if (field === 'doc_id') continue;
+			item[field] = applyStrip(clean(cells[idx[field]].name), strip[field]);
+		}
+		items.push(item);
 	}
 	process.stdout.write(JSON.stringify(items));
 }
 
-// parseLine: "        - cell \"IB-...\" [ref=e55]" -> { indent, role:'cell', name:'IB-...' }.
+// parseLine: "        - cell \"IB-...\" [ref=e55]" → { indent, role:'cell', name:'IB-...' }.
 function parseLine(raw) {
 	const m = raw.match(/^(\s*)-\s+(\w+)/);
 	if (!m) return null;
-	const indent = m[1].length;
-	const role = m[2];
 	let name = null;
 	const q = raw.indexOf('"');
 	if (q >= 0) {
-		const q2 = raw.lastIndexOf('"'); // ref is [ref=eN] (no quotes), so this is the name's closing quote
+		const q2 = raw.lastIndexOf('"'); // [ref=eN] has no quotes, so this is the name's closing quote
 		if (q2 > q) name = raw.slice(q + 1, q2);
 	}
-	return { indent, role, name };
+	return { indent: m[1].length, role: m[2], name };
 }
 
-const norm = (s) => String(s || '').replace(/\s+/g, ''); // "문서 번호" -> "문서번호"
+const norm = (s) => String(s || '').replace(/\s+/g, ''); // "문서 번호" → "문서번호"
 const clean = (s) => {
 	s = String(s == null ? '' : s).trim();
 	return s || null;
 };
-// The title cell appends " 첨부 파일 표시" when the doc has an attachment — strip that UI suffix.
-const stripAttach = (t) => (t == null ? null : String(t).replace(/\s*첨부 파일 표시\s*$/, '').trim() || null);
+// applyStrip: remove a trailing LITERAL suffix (e.g. the " 첨부 파일 표시" attachment tag), then trim.
+function applyStrip(v, suffix) {
+	if (v == null || !suffix) return v;
+	const s = String(v);
+	return (s.endsWith(suffix) ? s.slice(0, s.length - suffix.length).trim() : s) || null;
+}

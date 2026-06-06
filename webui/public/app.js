@@ -318,6 +318,62 @@ function openJob(id) {
 
 let syncJob = null;
 
+// one approval card (shared by the list and the NL command results)
+function renderApprovalCard(a) {
+	const card = el(
+		'div', { class: 'approval' },
+		el(
+			'div', { class: 'approval-head' },
+			el('span', { class: 'badge sm ' + (a.status === 'approved' ? 'pass' : 'run') }, statusKo(a.status)),
+			el('span', { class: 'approval-title' }, a.title || '(제목 없음)'),
+			el('span', { class: 'approval-id' }, a.doc_id),
+		),
+		el('div', { class: 'approval-meta' }, [a.drafter, a.dept, a.submitted_at, a.amount ? a.amount + '원' : null].filter(Boolean).join(' • ')),
+	);
+	if (a.summary) card.append(el('div', { class: 'approval-summary' }, a.summary));
+	else if (a.raw_text) card.append(el('div', { class: 'approval-raw' }, a.raw_text));
+	return card;
+}
+
+// NL command box: POST /api/agent -> show the routed intent, then stream a job (sync/summarize)
+// or render rows (query/approve-candidates) or the clarify question. The model only classified;
+// the server did the routing. Approval EXECUTION is never triggered here (Phase 2, human-gated).
+async function runAgent() {
+	const text = $('#agent-cmd').value.trim();
+	if (!text) return;
+	const out = $('#agent-out');
+	out.hidden = false;
+	out.replaceChildren(el('div', { class: 'hint' }, '명령 분류 중…'));
+	let resp;
+	try {
+		resp = await fetch('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+	} catch (e) {
+		out.replaceChildren(el('div', { class: 'error' }, `요청 실패: ${e.message}`));
+		return;
+	}
+	if (!resp.ok) {
+		const e = await resp.json().catch(() => ({ error: resp.statusText }));
+		out.replaceChildren(el('div', { class: 'error' }, `거부됨: ${e.error || resp.status}`));
+		return;
+	}
+	const data = await resp.json();
+	const intent = data.intent || {};
+	out.replaceChildren(el('div', { class: 'agent-head' }, el('span', { class: 'badge run' }, '의도: ' + (intent.action || '?')), el('span', { class: 'agent-echo' }, text)));
+	if (intent.action === 'clarify') { out.append(el('div', { class: 'note' }, intent.question || '무엇을 도와드릴까요?')); return; }
+	if (intent.action === 'sync' || intent.action === 'summarize') {
+		const log = el('pre', { class: 'joblog' });
+		out.append(log);
+		if (data.job) streamJob(data.job.id, log, () => loadApprovals());
+		return;
+	}
+	if (intent.action === 'query' || intent.action === 'approve') {
+		if (data.note) out.append(el('div', { class: 'note' }, data.note));
+		const rows = data.approvals || [];
+		out.append(el('div', { class: 'hint' }, `${rows.length}건`));
+		for (const a of rows) out.append(renderApprovalCard(a));
+	}
+}
+
 async function loadApprovals() {
 	const box = $('#approvals-list');
 	try {
@@ -327,21 +383,7 @@ async function loadApprovals() {
 			box.append(el('div', { class: 'hint' }, '저장된 결재가 없습니다. 위의 동기화를 실행하세요.'));
 			return;
 		}
-		for (const a of approvals) {
-			const card = el(
-				'div', { class: 'approval' },
-				el(
-					'div', { class: 'approval-head' },
-					el('span', { class: 'badge sm ' + (a.status === 'approved' ? 'pass' : 'run') }, statusKo(a.status)),
-					el('span', { class: 'approval-title' }, a.title || '(제목 없음)'),
-					el('span', { class: 'approval-id' }, a.doc_id),
-				),
-				el('div', { class: 'approval-meta' }, [a.drafter, a.dept, a.submitted_at, a.amount ? a.amount + '원' : null].filter(Boolean).join(' • ')),
-			);
-			if (a.summary) card.append(el('div', { class: 'approval-summary' }, a.summary));
-			else if (a.raw_text) card.append(el('div', { class: 'approval-raw' }, a.raw_text));
-			box.append(card);
-		}
+		for (const a of approvals) box.append(renderApprovalCard(a));
 	} catch (e) {
 		box.replaceChildren(el('div', { class: 'error' }, `결재 목록을 불러오지 못했습니다: ${e.message}`));
 	}
@@ -402,6 +444,8 @@ for (const [v, sel] of Object.entries(NAV)) $(sel).addEventListener('click', () 
 $('#run').addEventListener('click', runSuite);
 $('#auth-btn').addEventListener('click', startAuth);
 $('#sync-btn').addEventListener('click', startSync);
+$('#agent-run').addEventListener('click', runAgent);
+$('#agent-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent(); });
 $('#sync-cancel').addEventListener('click', () => syncJob && cancelJob(syncJob));
 $('#auth-cancel').addEventListener('click', () => authJob && cancelJob(authJob));
 $('#refresh').addEventListener('click', () => loadView(document.body.dataset.view));

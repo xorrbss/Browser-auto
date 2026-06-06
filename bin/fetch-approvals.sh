@@ -49,6 +49,21 @@ if [ -z "$INBOX_URL" ]; then
 	exit 2
 fi
 
+# Resolve the READ recipe (committed product STRUCTURE: recipes/<app>.json — collection.name +
+# columns→headers + optional strip/ready). Selected by --app, mirroring fixtures/auth/<app>.state.json.
+# This is the one declarative file that makes the engine site-agnostic; absent ⇒ fail loud (never guess).
+RECIPE="$PROBE_ROOT/recipes/${APP}.json"
+if [ ! -s "$RECIPE" ]; then
+	echo "[fetch-approvals] no recipe for app '$APP' — create $RECIPE (collection.name + columns→headers). See README '결재 (approval) sync'." >&2
+	exit 3
+fi
+# Sanity-pin: a recipe's own .app must match --app (catches a mis-copied recipe pointing at the wrong list).
+recipe_app="$(jq -r '.app // empty' "$RECIPE")"
+if [ -n "$recipe_app" ] && [ "$recipe_app" != "$APP" ]; then
+	echo "[fetch-approvals] recipe app mismatch: $RECIPE declares app '$recipe_app' but --app is '$APP'." >&2
+	exit 2
+fi
+
 source "$PROBE_ROOT/lib/env.sh"      # S, AB_AUTH, AB_JSON, BATCH (the .success contract)
 source "$PROBE_ROOT/lib/cleanup.sh"  # EXIT trap: close this session (record stop no-ops here)
 source "$PROBE_ROOT/lib/assert.sh"   # wait_url (gate any in-extractor transition)
@@ -86,41 +101,71 @@ if [ -n "$got_host" ] && [ "$got_host" != "$want_host" ]; then
 fi
 echo "[fetch-approvals] landed: ${landed:-?}"
 
-# Snapshot the settled inbox via the .success-checked JSON envelope, then save just the data.
+# Optional settle gate (recipe.ready): wait for a header text before snapshotting an async-rendered
+# list. Uses the verified-working in-batch `wait --text`; NEVER `wait --url` (broken glob on 0.27.0).
+ready_text="$(jq -r '.ready.text // empty' "$RECIPE")"
+if [ -n "$ready_text" ]; then
+	ready_to="$(jq -r '(.ready.timeout // 15)' "$RECIPE")"
+	echo "[fetch-approvals] waiting for list to render (text: \"$ready_text\", ${ready_to}s)…"
+	rj="$(AB_JSON wait --text "$ready_text" --timeout "$(( ready_to * 1000 ))" </dev/null)"
+	if [ "$(printf '%s' "$rj" | jq -r '.success')" != "true" ]; then
+		echo "[fetch-approvals] ✗ ready gate failed (text \"$ready_text\" not seen): $(printf '%s' "$rj" | jq -r '.error // "timeout"')" >&2
+		exit 1
+	fi
+fi
+
+# --- Snapshot + extract (paginated if recipe.pagination.mode set) -> dedupe -> DB -------------
+# bin/extract-approvals.js is GENERIC; recipes/<app>.json supplies the table + column map. When the
+# list paginates (recipe.pagination.mode=="combobox"), we drive the single page-number <select> with
+# its TRANSIENT @ref (read fresh from each page's snapshot, NEVER stored — @ref is forbidden only as a
+# persisted locator) and accumulate every page, deduped by doc_id.
+PAGINATE="$(jq -r '.pagination.mode // empty' "$RECIPE")"
+ITEMS_DIR="$(mktemp -d)"
+
 snap_json="$(AB_JSON snapshot </dev/null)"
 if [ "$(printf '%s' "$snap_json" | jq -r '.success')" != "true" ]; then
 	echo "[fetch-approvals] ✗ inbox snapshot failed: $(printf '%s' "$snap_json" | jq -r '.error // "unknown"')" >&2
-	exit 1
+	rm -rf "$ITEMS_DIR"; exit 1
 fi
-printf '%s' "$snap_json" | jq '.data' > "$SNAP"
+cur="$(printf '%s' "$snap_json" | jq '.data')"
+printf '%s' "$cur" > "$SNAP"   # first page kept as the detail-authoring aid
 echo "[fetch-approvals] inbox snapshot saved -> $SNAP"
 
-# --- Extraction (the ONE site-coupled step) ---------------------------------------------------
-# bin/extract-approvals.js maps THIS groupware's inbox DOM -> a JSON array of items
-# (stdin: the snapshot above; stdout: [{doc_id,title,drafter,dept,submitted_at,amount,raw_text}]).
-# It is authored ONCE per product from the saved snapshot, because the markup is product-specific
-# and fabricating row/field locators would risk exactly the silent-wrong-element matches this
-# framework exists to prevent. Until it exists, we STOP LOUD rather than store nothing or guess.
-EXTRACTOR="$PROBE_ROOT/bin/extract-approvals.js"
-if [ ! -s "$EXTRACTOR" ]; then
-	cat >&2 <<EOF
+# Page 1. pipefail makes a failing extractor (e.g. table-not-found on a stale session, or a
+# markup-drift guard) fail the whole sync — never a partial/silent store.
+printf '%s' "$cur" | node "$PROBE_ROOT/bin/extract-approvals.js" "$RECIPE" > "$ITEMS_DIR/p001.json"
+prev_ids="$(jq -r '[.[].doc_id]|sort|join(",")' "$ITEMS_DIR/p001.json")"
+echo "[fetch-approvals] page 1: $(jq 'length' "$ITEMS_DIR/p001.json") rows"
 
-[fetch-approvals] EXTRACTION NOT YET AUTHORED — stopping (no items stored).
-  Author bin/extract-approvals.js from the snapshot just saved:
-      stdin : $SNAP
-      stdout: JSON array of { doc_id, title, drafter, dept, submitted_at, amount, raw_text }
-  Then re-run; this script pipes it to bin/store-approvals.js automatically.
-
-  # TODO: [BLOCKED]
-  #   violated: 가정 금지 — no live groupware DOM to map inbox rows -> fields
-  #   reason:   결재 inbox markup is product-specific; guessing locators risks the
-  #             silent-wrong-element matches the framework exists to prevent
-  #   required_change: author bin/extract-approvals.js from the saved snapshot (one-time, per product)
-EOF
-	exit 3
+if [ "$PAGINATE" = "combobox" ]; then
+	# Total pages = count of NUMERIC options under the page <select> (non-numeric = filter dropdowns).
+	total="$(printf '%s' "$cur" | jq '[.refs[]|select(.role=="option" and (((.name//"")|test("^[0-9]+$"))))]|length')"
+	[ "$total" -ge 1 ] 2>/dev/null || total=1
+	[ "$total" -gt 100 ] && total=100   # runaway guard
+	echo "[fetch-approvals] paginating via combobox: $total page(s)…"
+	for ((p=2; p<=total; p++)); do
+		ref="$(printf '%s' "$cur" | jq -r '.refs|to_entries[]|select(.value.role=="combobox")|.key' | head -1)"
+		[ -n "$ref" ] || { echo "  ⚠ no combobox on page — stopping pagination" >&2; break; }
+		AB select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
+		# Gate: poll until the row set CHANGES (the AJAX page actually loaded), capturing it once loaded.
+		loaded=0
+		for _t in $(seq 1 12); do
+			cur="$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)"
+			printf '%s' "$cur" | node "$PROBE_ROOT/bin/extract-approvals.js" "$RECIPE" > "$ITEMS_DIR/.try.json" 2>/dev/null || true
+			ids="$(jq -r '[.[].doc_id]|sort|join(",")' "$ITEMS_DIR/.try.json" 2>/dev/null || true)"
+			if [ -n "$ids" ] && [ "$ids" != "$prev_ids" ]; then
+				mv "$ITEMS_DIR/.try.json" "$ITEMS_DIR/$(printf 'p%03d' "$p").json"; loaded=1; break
+			fi
+			sleep 0.5
+		done
+		if [ "$loaded" != 1 ]; then echo "  ⚠ page $p did not load — stopping (storing pages so far)" >&2; break; fi
+		prev_ids="$ids"
+		echo "  page $p: $(jq 'length' "$ITEMS_DIR/$(printf 'p%03d' "$p").json") rows"
+	done
 fi
 
-# Author-complete path: snapshot -> items (site extractor) -> DB (shared store). pipefail makes a
-# failing extractor fail the whole sync (never a partial/silent store).
-node "$EXTRACTOR" < "$SNAP" | node "$PROBE_ROOT/bin/store-approvals.js"
+jq -s 'add | unique_by(.doc_id)' "$ITEMS_DIR"/p*.json > "$ITEMS_DIR/all.json"
+echo "[fetch-approvals] total unique 결재: $(jq 'length' "$ITEMS_DIR/all.json")"
+node "$PROBE_ROOT/bin/store-approvals.js" < "$ITEMS_DIR/all.json"
+rm -rf "$ITEMS_DIR"
 echo "[fetch-approvals] done."
