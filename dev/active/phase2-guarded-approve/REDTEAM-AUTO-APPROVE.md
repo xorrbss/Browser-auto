@@ -218,3 +218,33 @@ immediately.** It also resolves the two LOW carry-forwards just above: actor ide
 **Gate B amount-cell capture** (exact value ceiling vs heuristic), and agreed **auto-approve criteria**.
 Until those clear, **unattended LIVE approve stays fail-closed** (the scheduler refuses `--live`); run
 **supervised + bounded**.
+
+---
+
+## 2026-06-08 — DESIGN PIVOT: human-reviewed batch approve (`58ce1d1`) → adversarial verify SAFE
+
+Live read-only probes (5 docs / 3 form types) showed the **amount label is drafter-TYPED**: a Gate-B
+diagnostic found the recipe's `amount.label "총 금액"` actually pointed at a 거래내역 **column header** (the
+real total is a `총 합 계` row), and the wording varies per drafter — so a label-anchored ceiling is
+fundamentally a heuristic. The owner therefore replaced the automated amount ceiling with **human review**:
+the 결재 view shows each pending doc + summary with a **checkbox**; the operator checks the items and clicks
+**선택 항목 결재** → the leaf batch-approves the checked docs (`reviewed:true`).
+
+**What changed:** leaf `--reviewed` relaxes ONLY the **full-auto-only** form-homogeneity + readable-h1
+checks (a mixed-form selection is the human's deliberate choice); the route drops the value-ceiling
+requirement (count cap = checked count). **Every form-AGNOSTIC guard stays fail-closed:** unique 문서번호
+open (all pages), urlGlob, exactly-one idLabel, title binding, 승인-radio asserted-checked, positive 완료
+verify (today stamp + 대기 departure), append-only audit (now records `reviewed`), `--max`(clicks) cap,
+kill-switch, crash reconcile, session+Origin gate, synced-title requirement. The typed full-auto path is
+UNCHANGED (still enforces ceiling + homogeneity).
+
+**Verified:** a reviewed **MIXED-form** dry-run via the webui route (지출 + 품의) → BOTH reach `dry_ok` (the
+품의, previously `skipped:mixed-form` in full-auto, is now allowed), audit rows carry `reviewed:true`, both
+docs stay `fetched` (no approval). **Adversarial refute workflow (4 agents — safety-net / wrong-doc-bypass /
+regression + adjudicator) → SAFE-TO-COMMIT, 0 confirmed findings** (no guard lost, no unchecked/wrong-doc
+approve, no access bypass, no full-auto regression).
+
+**Net effect on the unattended prereqs:** the "Gate B amount-cell capture" prereq is now **MOOT for the
+recommended (reviewed) flow** — the human reviews the summary instead. What remains before live use is a
+**live end-to-end test of the reviewed batch** (one real approval through 확인 verifying the positive
+승인-stamp marker) + agreed criteria. Still no real financial approval in any automated test.

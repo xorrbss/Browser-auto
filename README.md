@@ -349,16 +349,30 @@ Read/sync/enrich stay on agent-browser. **The model is structurally OFF this pat
 approval **candidates only** and has no route to the leaf; the effectful action is a separate deterministic
 route (`POST /api/approve/run`).
 
+**Two ways to drive it — the human-reviewed batch is recommended:**
+- **검토 후 일괄 결재 (recommended).** The 결재 view lists each pending doc with its summary + a **checkbox**;
+  the operator reviews and **checks** the items to approve, then clicks **선택 항목 결재** to approve all the
+  checked docs in one batch. **The human's review of the summary is the content/amount control** — important
+  because a form's 총 금액/총 합 계 figure is **drafter-typed free text**, so a label-anchored amount ceiling
+  is unreliable. This mode (`reviewed:true`) drops the automated amount ceiling and the form-homogeneity
+  guard (a mixed-form selection is the human's deliberate choice); every *form-agnostic* guard below still
+  fires per item, and the count cap defaults to the number of checked items.
+- **자동 승인 (advanced, typed).** Type 문서번호s for a fully-unattended batch with **no** human review; here
+  the deterministic guards — **including** the amount ceiling and form-homogeneity — are the sole safety.
+
 **Per-doc deterministic guards (all fail-closed) before the irreversible 확인:**
 - open by the **UNIQUE exact 문서번호 cell, counted across ALL pages** (===1, abort 0/≥2) — never substring;
 - the detail URL matches the recipe `urlGlob`; **exactly one** idLabel cell == doc_id;
 - **TITLE content binding** — the synced title (from the approvals DB) must appear on the live detail (a doc
   not in the DB is refused — can't content-verify);
-- **amount ceiling** — label-anchored (`approve.amount.label`, e.g. 총 금액), largest KRW figure ≤ ceiling,
-  **fail-closed** when no locator/figure; live requires a ceiling OR an explicit `allowNoValueCeiling` opt-out;
-- **decision radio asserted checked** (승인) before 확인;
-- **form-type guard** — the detail h1 (form type) must be readable, match an optional `approve.formType`
-  pin, and stay **homogeneous across the batch** (no mixed forms);
+- **amount ceiling** *(full-auto/typed mode only)* — label-anchored (`approve.amount.label`), largest KRW
+  figure ≤ ceiling, **fail-closed** when no locator/figure; live requires a ceiling OR `allowNoValueCeiling`.
+  Because the label is **drafter-typed**, this is a heuristic — the human-reviewed mode replaces it with the
+  operator's review of the summary;
+- **decision radio asserted checked** (승인) before 확인 *(both modes)*;
+- **form-type guard** *(full-auto/typed mode only)* — the detail h1 must be readable, match an optional
+  `approve.formType` pin, and stay **homogeneous across the batch**; relaxed in human-reviewed mode (the
+  operator checked each item, so a mixed-form selection is intended);
 - **reliable pager** — the all-pages scan only trusts a contiguous `1..N` combobox; a windowed/ambiguous
   pager ⇒ uncertain ⇒ fail-closed (never under-scans → never a false "left 대기").
 
@@ -369,7 +383,8 @@ first **reconciles** any doc stranded at `clicked` (committed but the process di
 the stamp. The **live approver identity** is bound into the `confirmed` audit row.
 
 **Access control:** dry-run is the **default**; live requires explicit `--live` + a positive `--max` count
-cap + a value ceiling; the irreversible-click counter (`clicksIssued`) binds the cap; a **kill-switch**
+cap (the human-reviewed mode supplies it as the checked-item count) + a value ceiling (full-auto/typed mode
+only); the irreversible-click counter (`clicksIssued`) binds the cap; a **kill-switch**
 (`data/approve-STOP`, the webui 🛑 일괄 중지 button) halts before the next doc. The webui route is gated by a
 present same-origin **Origin/Referer + a session cookie** (`webui/session.js`); it is only safe on a
 **single-user, operator-controlled host**.

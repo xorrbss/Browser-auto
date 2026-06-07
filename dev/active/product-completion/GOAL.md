@@ -206,6 +206,19 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   change was adversarially re-verified (3 refute workflows; the one confirmed high — unreadable-h1 form
   bypass — fixed). **Remaining for unattended-at-scale = operator-accompanied:** live e2e verify + Gate B
   amount-cell capture + auto-approve criteria.
+  **[2026-06-08] DESIGN PIVOT — human-reviewed batch approve (`58ce1d1`).** The owner clarified the
+  총 금액/총 합 계 figure is **drafter-TYPED free text** (a Gate-B amount-cell pin diagnosed the wrong-label
+  bug live, but the label itself is unreliable), so the automated amount ceiling is **superseded by human
+  review**. New primary flow: the 결재 view lists each pending doc + summary with a **checkbox**; the
+  operator checks the items and clicks **선택 항목 결재** → the leaf approves all checked in one batch
+  (`reviewed:true` → leaf `--reviewed` relaxes ONLY form-homogeneity+readable-h1; route drops the value-
+  ceiling requirement, count cap = checked count). Every form-AGNOSTIC guard stays (unique 문서번호/urlGlob/
+  idLabel/title-binding/승인-radio/positive-완료/audit/cap/kill-switch/session+Origin). The typed full-auto
+  path is unchanged (still enforces ceiling+homogeneity). Verified: reviewed MIXED-form dry-run → both
+  dry_ok, no approval; adversarial refute workflow → safe-to-commit (0 findings). **So "Gate B amount-cell
+  capture" is now MOOT for the recommended flow** — remaining unattended prereqs reduce to: a **live e2e of
+  the reviewed batch** (one real approval through 확인) + agreed criteria. Live h1-readability + the form
+  guards were live-verified by read-only probes (5 docs, 3 form types).
 - The DESIGN-v3 human-gated build below is **superseded** by the owner-override full-auto path (DESIGN §14);
   it stays as the revert target if the gate is re-imposed. After Gate A+B only, that path would implement:
   `bin/approve-doc.sh`, `webui/routes-approve.js`
