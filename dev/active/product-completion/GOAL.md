@@ -99,13 +99,16 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   layout is metadata → **결재선 → body**, so DESIGN's `untilMarker:"결재선"` is wrong (결재선 precedes the
   body); completion marker = self-line `button "결재"` → `cell "결재 <date>"`+image. Draft `recipe.approve`
   pinned in the capture doc.
-  **Phase 2 (effectful 결재 click) LEFT FAIL-CLOSED (2026-06-07, operator decision).** No disposable,
-  non-effectful doc was available in the operator's 대기 box: the candidates offered were either
-  drafted-by-operator (not in 대기 — `IB-지출-20260607-0001`, `IB-품의(기안)-20260528-0001`) or a **real
-  financial doc** (`IB-지출(거래처)-20260518-0001` — refused per the "never a real financial approval"
-  gate). So the click-only §12 facts (confirm leg, required-comment, completion transition, affordance
-  disappearance, URL behavior) stay UNDETERMINED. **Gate B is incomplete → approve implementation
-  remains forbidden / fail-closed.** Read-only Phase-1 facts stand (`GATE-B-CAPTURE.md`).
+  **Phase 2 (effectful 결재 click) EXERCISED then FAIL-CLOSED at the STACK level (2026-06-07).** After two
+  candidates that weren't in 대기 (operator-drafted) and one real financial doc (initially refused), the
+  operator clarified `IB-지출(거래처)-20260518-0001` is **test data made to look real** and authorized it,
+  so Phase 2 was run on it. Result: 결재 → a **DOM confirm modal** (의견 required + buttons `확인`/`취소`/
+  `확인 후 다음 문서`[auto-advance]), but **clicking `확인` does NOT complete the approval on agent-browser
+  0.27.0** (the post-`확인` step — likely a native `confirm()` — is unhandleable; tried single + atomic
+  batch, both success but modal stayed open). Doc **left UNAPPROVED** (`취소`). ⇒ **the Hiworks approve is
+  NOT buildable on agent-browser 0.27.0** (confirm leg = native/unhandleable → DESIGN fail-closed). A
+  native-dialog-capable driver/version (or another surface) is a prerequisite. **Approve implementation
+  remains forbidden.** Full capture incl. the correct `find` syntax in `GATE-B-CAPTURE.md`.
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),

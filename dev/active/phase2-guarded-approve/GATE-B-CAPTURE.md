@@ -1,9 +1,10 @@
 # Phase 2 approve — Gate B staged capture (Hiworks 지출결의서)
 
 Empirical capture of the REAL Hiworks approve UI, required by DESIGN §12 before any approve
-implementation. **Phase 1 (read-only) is DONE.** **Phase 2 (the effectful 결재 click) is LEFT
-FAIL-CLOSED / NOT COMPLETED** (2026-06-07, operator decision) — see *Phase 2 status* below. Approve
-implementation therefore **remains forbidden** (Gate B incomplete).
+implementation. **Phase 1 (read-only) is DONE.** **Phase 2 (the effectful 결재 click) was EXERCISED on
+an operator-authorized disposable test doc (2026-06-07) and revealed a FAIL-CLOSED BLOCKER**: the approve
+cannot be completed on agent-browser 0.27.0. The test doc was **left UNAPPROVED**. Approve implementation
+therefore **remains forbidden** on this stack — see *Phase 2 findings* below.
 
 ## How this was captured
 - **Phase 1 — read-only (no click):** opened a real *pending* 지출결의서(거래처) doc's detail page with
@@ -26,15 +27,36 @@ implementation therefore **remains forbidden** (Gate B incomplete).
 | Completion marker (positive, per-doc, self-line) | Completed approver lines render as **`cell "결재 YYYY-MM-DD"` + `image "결재"`** (observed for the already-approved approvers, e.g. "결재 2026-06-04", "결재 2026-06-05"). The current approver's line shows the **`button "결재"`** instead. ⇒ I6 success = the operator's own decision line transitions `button "결재"` → `cell "결재 <date>"`+image (absent-before / present-after). **Transition itself needs Phase 2 to confirm.** |
 | Comment (의견) required? | A general **댓글 thread** at the bottom (`textbox "댓글을 남겨주세요." [ref=e43]` + `button "등록"`), separate from the 결재 action — appears **optional**. Whether clicking 결재 opens a **required-opinion modal** is **UNKNOWN (Phase 2)**. |
 
-## STILL UNKNOWN — require Phase 2 (the effectful 결재 click on a DISPOSABLE doc)
-- **confirm leg** `none | dom | native`: does 결재 pop a DOM modal, a native dialog, or commit directly?
-  If native, is an agent-browser 0.27.0 accept primitive provable? (else fail-closed per DESIGN.)
-- **required comment / opinion** at approve time?
-- **affordance disappearance** (does `button "결재"` vanish after approval?) + the exact completion-marker transition.
-- **auto-advance / URL mutation** across the click (capture `get url` before/after; abort on uninitiated delta).
-- **server-fresh / inbox-departure** cross-check (does the doc leave the 대기 box on a fresh fetch?).
-- **PRESENCE-3 trusted-display feasibility**: can a Windows native helper render the consented **body
-  region** (where the amount lives) + doc binding outside same-origin page JS with OS credential/Hello?
+## Phase 2 findings (2026-06-07) — exercised on an operator-authorized disposable test doc
+Test doc `IB-지출(거래처)-20260518-0001` (operator declared it test data, made to look real; approving
+it has no real effect). Identity guard passed (문서번호 cell == doc, exactly one). Sequence + results:
+- **`결재` button click → a DOM confirm modal opens** (URL **unchanged** `/view/964488/...`; `get title`
+  responsive ⇒ **not a top-level native dialog at this step**). The modal contains:
+  - a **`textbox "의견을 입력하세요."`** (opinion) — appears **required**,
+  - buttons **`확인`** (confirm), **`취소`** (cancel), and **`확인 후 다음 문서`** (confirm-**and-auto-advance**
+    to the next pending doc). ⇒ to AVOID auto-advance, use `확인`, never `확인 후 다음 문서` (T12/IDOPEN-5).
+- **BLOCKER — the approval cannot be completed on agent-browser 0.27.0.** With the opinion filled and
+  `확인` clicked (tried twice: a single op, then an **atomic** `[fill, 확인]` batch — both returned
+  `success:true`), the **modal stayed open and nothing was approved** (`button "결재"` still present, the
+  completed-line set unchanged at just the prior approver). The step **after** `확인` (most likely a native
+  `confirm()` — DOM frozen, page still responsive to CDP reads) is **unhandleable on 0.27.0** (no native
+  accept primitive; CLAUDE.md footgun). `취소` cleanly closed the modal; **the doc was left UNAPPROVED.**
+- **Correct agent-browser find syntax** (the README hard-rules example has the wrong token order):
+  the action comes **before** `--name`/`--exact` — `find role button click --name "결재" --exact`
+  (verify-flow.sh `_exec` builds it this way). `find role button --name "결재" --exact click` →
+  `Unknown subaction: --name`. (Worth fixing the README example.)
+
+### Conclusion: confirm leg = **effectively `native`/unhandleable on this stack → FAIL-CLOSED**
+Per DESIGN §3/§12, `confirm.kind = native` must **not** be built unless an agent-browser accept primitive
+is empirically proven for the app/version — it is not (the post-`확인` step cannot be completed). So the
+Hiworks approve path is **not implementable on agent-browser 0.27.0**. Building it would require a driver/
+version with native-dialog handling (or a different automation surface). Until then: **fail-closed.**
+
+### Still undetermined (blocked by the above)
+- the exact **completion-marker transition** (`button "결재"` → `cell "결재 <date>"`+image) and **affordance
+  disappearance** — could not be observed because approval never completed;
+- **server-fresh / inbox-departure** cross-check;
+- **PRESENCE-3 trusted-display feasibility** (native helper rendering the consented body region).
 
 ## Draft `recipe.approve` (Phase 1 facts; UNKNOWNs marked — do NOT build until Phase 2 fills them)
 ```json
@@ -45,27 +67,28 @@ implementation therefore **remains forbidden** (Gate B incomplete).
   "amount":  null,                                                  // NO deterministic metadata amount — body-only → PRESENCE-3 body-render / high-value fail-closed
   "body":    { "fromHeadingLevel": 2, "untilMarker": "의견" },      // body = h2 → 의견 footer; 결재선 is ABOVE the body (NOT a trailing marker). re-confirm end marker
   "button":  { "by": "role", "role": "button", "name": "결재", "exact": true },  // count==1 verified; label 결재 NOT 승인
-  "confirm": { "kind": "UNKNOWN" },                                 // Phase 2: none|dom|native (+ native accept primitive proof)
-  "success": { "completeMarker": "결재 <date>", "scope": "self-line", "fresh": "UNKNOWN" }  // self-line button→cell+image transition; Phase 2
+  "confirm": { "kind": "dom-then-native", "modalOpinion": "의견을 입력하세요. (required)", "accept": "확인", "avoid": "확인 후 다음 문서", "BLOCKER": "post-확인 step NOT completable on agent-browser 0.27.0 → fail-closed" },
+  "success": { "completeMarker": "결재 <date>", "scope": "self-line", "fresh": "UNDETERMINED (blocked)" }  // self-line button→cell+image transition; could not observe (approval never completed)
 }
 ```
 
-## Phase 2 status — LEFT FAIL-CLOSED (2026-06-07)
-Phase 2 was attempted but **correctly stopped**. The 대기(`lists/W`) box was full-scanned (12/12 pages,
-177 docs); the candidate docs offered could not drive Phase 2:
-- `IB-지출-20260607-0001` and `IB-품의(기안)-20260528-0001` — **not in the 대기 box** (operator is the
-  *drafter*; they sit in 기안/진행 and show no 결재 affordance).
-- `IB-지출(거래처)-20260518-0001` — **is** in 대기, but it is a **real vendor-expense (지출) financial
-  document** awaiting the operator's genuine approval. Approving it would commit a real, irreversible
-  financial approval → **refused** per the inviolable safety gate ("never a real financial approval in a
-  test"). A general "proceed with all" autonomy grant does **not** override that gate.
+## Phase 2 timeline + final status (2026-06-07) — FAIL-CLOSED at the STACK level
+1. Candidate docs that **couldn't** drive Phase 2: `IB-지출-20260607-0001`, `IB-품의(기안)-20260528-0001`
+   — **not in the 대기 box** (operator is the *drafter*; they sit in 기안/진행, no 결재 affordance).
+2. `IB-지출(거래처)-20260518-0001` — **is** in 대기. Initially **refused** (it looks like a real
+   vendor-expense financial doc; the gate forbids approving a real financial doc in a test). The operator
+   then **explicitly clarified it is test data made to look real**, with no real effect, and authorized
+   it — a valid per-item owner consent for a disposable doc (DESIGN §9), so Phase 2 was exercised on it.
+3. **Outcome:** the flow ran up to the DOM confirm modal but **could not be completed on agent-browser
+   0.27.0** (the post-`확인` step is unhandleable — see *Phase 2 findings*). The doc was **left
+   UNAPPROVED** (`취소`). **So Phase 2 fails closed not for lack of a doc, but because the approve click
+   is not completable on this stack.**
 
-No disposable, **non-effectful** document (one whose approval has no real consequence) was available in
-the operator's 대기 box, so Phase 2 ends fail-closed. The click-only §12 facts (confirm leg none|dom|
-native + native accept primitive; required-comment; completion transition; affordance disappearance;
-URL/auto-advance; server-fresh/inbox-departure) remain **UNDETERMINED**. **Approve implementation stays
-forbidden** until a genuinely disposable doc allows Phase 2 to complete. The read-only Phase-1 facts
-above stand and need no re-capture.
+Net: Gate B Phase 1 (read-only) is fully captured; Phase 2 reached the confirm modal and then hit a
+**0.27.0 stack blocker**. **Approve implementation remains forbidden** — and now we know it is **not
+buildable on agent-browser 0.27.0** regardless of the design (a native-dialog-capable driver/version, or
+a different automation surface, would be a prerequisite). The completion-transition / inbox-departure /
+PRESENCE-3 facts stay undetermined behind that blocker.
 
 ## Phase 2 prerequisite (what the operator must provide, if/when resumed)
 A **disposable** document that is **pending the operator's own approval** — i.e. it must appear in the
