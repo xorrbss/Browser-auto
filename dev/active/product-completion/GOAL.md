@@ -10,7 +10,14 @@ human-gated safety. Korean operator; **on-prem** model; Windows + Git Bash (and 
 
 ---
 
-## Where it is now (DONE — branch `feat/approval-automation`, NOT yet merged to `master`)
+## Where it is now (DONE — on `master`; `feat/approval-automation` + `feat/linux-docker-support` ALREADY MERGED)
+
+**Git topology (corrected 2026-06-07 — earlier notes said "unmerged"; that is stale):** work is on
+`master`. `feat/approval-automation` (eaa84b6) was merged into master (`ce7ff3a`), and
+`feat/linux-docker-support` was merged (`6487e3d`, PR #1) — so **M5's "reconcile with linux-docker" is
+already done**. M2 work (16e1b76, cf99053) is committed directly on master after the merge. Local
+`master` is **22 commits ahead of `origin/master`, 0 behind** — pushing to origin is the external ship
+step (needs user approval). Continuing commits land on `master` (matching the post-merge pattern).
 
 Commits (newest first): `9017850` file-split <500 · `433d39f` enrich fail-loud + queue daemon reaper ·
 `2e46258` NL spans records · `d3f8a8d` lib/aria.js dedup · `cabdb4e` generic goldens + recipe SCHEMA ·
@@ -28,10 +35,14 @@ Verified working:
 - **M1 generic UI verification:** DONE in this session on a brand-new non-Hiworks local system
   `m1demo`: webui register → auth state → live analyze/propose (`proposedBy:model`) → recipe save →
   sync → UI query. `bash run.sh` passed **24/24** on run `20260607-071848-18029`.
-- **Phase 2 approve:** `dev/active/phase2-guarded-approve/DESIGN.md` is now **design v3** (mandatory
-  per-item OOB trusted content approval; `echoedDocNo` is typo-guard only). `REDTEAM-v3.md` returns
-  **Gate A PASS / safe-to-implement design** with 0 critical/high. **Gate B staged capture still NOT
-  done; approval implementation remains forbidden/fail-closed.**
+- **Phase 2 approve:** `dev/active/phase2-guarded-approve/DESIGN.md` is now **design v4** (mandatory
+  per-item OOB trusted content approval; `echoedDocNo` is typo-guard only). Gate A was confirmed by
+  `REDTEAM-v3.md` and **independently re-verified by `REDTEAM-v4.md`** (first independent pass, 6
+  lenses+adjudicator) → **SAFE-TO-IMPLEMENT, 0 critical / 0 high**, 10 med + 2 low all carry-forward.
+  v4 folds the spec-level mediums into DESIGN (PRESENCE-3 body-consent gap; RECON-SWEEP-1 §2↔§4
+  contradiction; AMOUNT-SHADOW-1; FP-BODYDIGEST-TRUNC-1; TOCTOU-I6-NOREFP-1; AUTHORITY-2 wording;
+  PRESENCE-4). **Gate B staged capture still NOT done; approval implementation remains
+  forbidden/fail-closed.**
 
 Recovery note (env): agent-browser daemon wedge (os 10060) = stale `~/.agent-browser` session files;
 fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,pid,port,stream,version}`
@@ -68,7 +79,9 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   the UI [webui button + summary rendering wired; full-batch is the pagination scale step].
 
 ### M3 — Phase 2 guarded approve (the effectful feature)  [P1, SAFETY-GATED]
-- **Gate A:** **PASSED** (`dev/active/phase2-guarded-approve/REDTEAM-v3.md`). `REDTEAM-v2.md` returned
+- **Gate A:** **PASSED + independently re-confirmed** (`REDTEAM-v3.md`, then `REDTEAM-v4.md` — the first
+  independent re-verify — both SAFE-TO-IMPLEMENT, 0 critical/0 high; DESIGN is now **v4** with v4's 10
+  med folded in). `REDTEAM-v2.md` returned
   REVISE-FIRST on v2 (0 critical, **1 HIGH PRESENCE-1**, 4 medium, 8 low). DESIGN v3 closes
   PRESENCE-1 with mandatory per-item OOB trusted content approval (Windows native helper displays doc
   binding + OS credential/Windows Hello; bound to session+actor+doc_id+fingerprint+nonce_hash; plain
@@ -97,11 +110,14 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
 - `actor` identity for the audit; an audit-viewer UI; clearer analyze/sync error UX in the webui.
 
 ### M5 — Ship  [P1]
-- README: full RPA registry + 시스템 UI + recipe SCHEMA + the safety model.
-- Reconcile with **`feat/linux-docker-support`** (the branch the repo was on at session start) — decide
-  merge order / rebase.
-- PR `feat/approval-automation` → `master`, review, merge.
-- **Done when:** `master` has the full product, `run.sh` green, docs complete.
+- README: full RPA registry + 시스템 UI + recipe SCHEMA + the safety model. **IN PROGRESS** — added
+  the "RPA — register any web system (generic data collection)" section (register→인증→구조분석→동기화→
+  상세·요약→조회 table + CLI) and the "Safety model" section (no-LLM-in-gate, on-prem bodies, Phase-2
+  I1–I7 + Gate A/B status). recipe SCHEMA already in `recipes/SCHEMA.md`.
+- ~~Reconcile with `feat/linux-docker-support`~~ — **DONE** (already merged into master, PR #1 `6487e3d`).
+- ~~PR `feat/approval-automation` → `master`~~ — **DONE locally** (merged `ce7ff3a`). Remaining external
+  step: **`git push origin master`** (22 ahead) — needs user approval (publishes the work).
+- **Done when:** `master` has the full product, `run.sh` green, docs complete, pushed to origin.
 
 ---
 
@@ -125,4 +141,4 @@ M1 + M3-Gate A (re-red-team) first → M2 / M4 → M3 implementation (after both
 - webui: `server.js`, `routes-rpa.js`, `agent.js` (NL), `systems.js`, `jobs.js`, `spawn.js`,
   `public/{app,flows,systems-view,util}.js`.
 - Tests (gate): `tests/extract-approvals.test.sh`, `extract-list-unit.test.sh`, `db-unit.test.sh`.
-- Phase 2: `dev/active/phase2-guarded-approve/{DESIGN.md,REDTEAM.md,REDTEAM-v2.md,REDTEAM-v3.md}`.
+- Phase 2: `dev/active/phase2-guarded-approve/{DESIGN.md (v4),REDTEAM.md,REDTEAM-v2.md,REDTEAM-v3.md,REDTEAM-v4.md}`.
