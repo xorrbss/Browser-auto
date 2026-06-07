@@ -33,6 +33,10 @@ const auditPath = opt('--audit', 'data/approve-audit.jsonl');
 const stopFile = opt('--stop-file', 'data/approve-STOP');
 if (!recipePath || !statePath || !listUrl || !targetsFile) { console.error('usage: --recipe --state --list-url --targets-file [--live --max N] [--max-amount N]'); process.exit(2); }
 if (live && maxN <= 0) { console.error('REFUSED: --live requires a positive --max count cap (fail-closed)'); process.exit(2); }
+// Defense-in-depth (red-team scheduler WRAPPER-SCRIPT-INJECTION): the host scheduler exports
+// AQA_SCHEDULED_NO_LIVE=1, and live is HARD-REFUSED under it regardless of how args were assembled — so no
+// wrapper/indirection run through bin/scheduled-task.sh can ever drive a LIVE approve (unattended live is forbidden).
+if (live && process.env.AQA_SCHEDULED_NO_LIVE) { console.error('REFUSED: live approve is forbidden under the scheduler (AQA_SCHEDULED_NO_LIVE) — unattended LIVE is fail-closed'); process.exit(3); }
 const recipe = JSON.parse(fs.readFileSync(recipePath, 'utf8'));
 const ap = recipe.approve; if (!ap) { console.error(`recipe ${recipePath} has no "approve" block`); process.exit(2); }
 const urlGlobRe = (recipe.detail && recipe.detail.urlGlob) ? new RegExp(recipe.detail.urlGlob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*')) : /\/view\//;
