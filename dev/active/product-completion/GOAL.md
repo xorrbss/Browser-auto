@@ -91,9 +91,18 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   binding + OS credential/Windows Hello; bound to session+actor+doc_id+fingerprint+nonce_hash; plain
   WebAuthn UV alone is insufficient). v3 red-team found **0 critical / 0 high**. Gate A passing does
   **not** authorize implementation before Gate B.
-- **Gate B:** §12 of DESIGN — capture the **real approve UI on a disposable staged doc** and pin
-  `recipe.approve` (문서번호 uniqueness, native confirm dialog?, required comment?, positive completion
-  marker, does the 승인 affordance disappear?). **Until A+B: fail-closed, do not implement.**
+- **Gate B:** §12 — see `dev/active/phase2-guarded-approve/GATE-B-CAPTURE.md`.
+  **Phase 1 (read-only) DONE (2026-06-07):** captured the real Hiworks 지출결의서 approve UI without any
+  click. Key empirical facts: approve label is **"결재" NOT "승인"** (`role button --name 결재 --exact`,
+  count==1); **문서번호 unique + in the metadata region, NOT in the URL** (`/view/<internalId>/...`) → open
+  by the unique list-row cell, no urlTemplate; **NO metadata 금액** (body-only → PRESENCE-3 confirmed);
+  layout is metadata → **결재선 → body**, so DESIGN's `untilMarker:"결재선"` is wrong (결재선 precedes the
+  body); completion marker = self-line `button "결재"` → `cell "결재 <date>"`+image. Draft `recipe.approve`
+  pinned in the capture doc.
+  **Phase 2 (effectful 결재 click) PENDING** a **disposable doc in the operator's 대기(`lists/W`) box** —
+  the staged `IB-지출-20260607-0001` is in the 기안 box (operator is drafter, not approver) so it shows no
+  approve affordance. Phase 2 will pin the confirm leg (none|dom|native), required-comment, completion
+  transition, affordance disappearance, and URL behavior. **Until A+B complete: fail-closed, do not implement.**
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),
