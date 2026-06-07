@@ -18,6 +18,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseKRW, pagerDecision, matchesFormType, norm } from './guards.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -49,12 +50,12 @@ const audit = (doc_id, stage, detail) => {
 	const fd = fs.openSync(auditPath, 'a'); try { fs.writeSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 };
 const log = (...a) => console.error('[approve]', ...a);
-const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 // YYYY-MM-DD in KST — the 결재선 stamp renders KST-local dates, so TODAY must be KST not UTC, else the
 // positive marker false-negatives during KST 00:00-08:59 and mis-audits a real approval 'failed' (red-team STAMP-TZ-1).
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
 
 const results = [];
+let batchForm = null;      // the form-type heading shared by this batch — a later differing one is refused (red-team C-RECIPE-MISPIN-NO-FORMTYPE)
 let approvedCount = 0;     // CONFIRMED approvals (for the report)
 let clicksIssued = 0;      // irreversible 확인 commits ISSUED — the --max cap binds THIS (red-team CAP-COUNTS):
                            // a committed-but-uncertain doc must still consume budget, else clicks can exceed --max.
@@ -63,11 +64,19 @@ try {
 	const ctx = await browser.newContext({ storageState: statePath });
 	const page = await ctx.newPage();
 
-	// page-number <select> (numeric options); null if single-page.
+	// Resolve the page-number combobox RELIABLY (red-team PAGESELECT-* carry-forward): a windowed/ambiguous
+	// pager that under-reports the page count would make countDoc under-scan ⇒ a doc on an unscanned page
+	// reads ABSENT ⇒ false "left 대기" ⇒ false approved. The decision is pure (approve/guards.mjs,
+	// unit-tested): trust ONLY a recipe-declared combobox whose options are a single contiguous 1..N set.
+	// Returns: { sel, total } a trusted pager · null = single page · { uncertain:true } ⇒ caller FAIL-CLOSES.
 	const pageSelect = async () => {
 		const selects = page.locator('select'); const n = await selects.count();
-		for (let i = 0; i < n; i++) { const nums = (await selects.nth(i).locator('option').allTextContents()).filter(o => /^\s*\d+\s*$/.test(o)); if (nums.length >= 2) return { sel: selects.nth(i), total: nums.length }; }
-		return null;
+		const optTexts = [];
+		for (let i = 0; i < n; i++) optTexts.push(await selects.nth(i).locator('option').allTextContents());
+		const d = pagerDecision(recipe.pagination && recipe.pagination.mode, optTexts);
+		if (d.kind === 'pager') return { sel: selects.nth(d.index), total: d.total };
+		if (d.kind === 'uncertain') return { uncertain: true };
+		return null; // 'none' ⇒ single page
 	};
 	// is the 대기 list actually loaded? REQUIRE the collection accessible name when the recipe declares it
 	// (a bare "any table" matches a login/error page — red-team LISTLOADED-*). Fall back to a table only
@@ -100,6 +109,12 @@ try {
 	// Used as the POSITIVE completion marker: a NEW today-dated cell appears after my approve (red-team
 	// COMPLETION-ABSENCE-NOT-APPROVAL — replaces absence-only verify).
 	const datedCells = async (d) => { try { return (await page.getByRole('cell').allInnerTexts()).filter((t) => t.includes(d)).length; } catch { return 0; } };
+	// today-dated 결재선 cell TEXTS (each like "<role> <date> <name>") — diffing before/after the click yields
+	// the actor whose 승인 stamp was just added (red-team/M4 actor binding; fail-soft metadata, never a gate).
+	const datedCellTexts = async (d) => { try { return (await page.getByRole('cell').allInnerTexts()).map(norm).filter((t) => t.includes(d)); } catch { return []; } };
+	// form-type heading (Gate B: the detail h1 is the FORM TYPE, e.g. "지출결의서(거래처)" — stable per form,
+	// NOT the per-doc subject which is the h2). Used to keep a batch HOMOGENEOUS + optionally pin recipe.approve.formType.
+	const formTypeOf = async () => { try { return norm((await page.getByRole('heading', { level: 1 }).allInnerTexts()).join(' • ')); } catch { return ''; } };
 	// count exact 문서번호 cells across ALL pages — NEVER clicks. total:-1 means UNCERTAIN (list not loaded OR a
 	// page never settled) — callers MUST treat -1 as fail-closed (never approve / never "left inbox").
 	const countDoc = async (docId) => {
@@ -108,6 +123,7 @@ try {
 		let total = 0, foundPage = 0, prevSig = await rowsSig();
 		const c1 = await cellCount(docId); if (c1) { total += c1; foundPage = 1; }
 		const ps = await pageSelect();
+		if (ps && ps.uncertain) return { total: -1, foundPage: 0 }; // untrustworthy pager ⇒ fail-closed (can't prove all pages scanned)
 		if (ps) for (let p = 2; p <= ps.total; p++) {
 			await ps.sel.selectOption(String(p));
 			const sig = await settlePage(prevSig);
@@ -124,22 +140,12 @@ try {
 		if (total !== 1) return { ok: false, why: `${total} exact 문서번호 cells across pages (need exactly 1)` };
 		await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
 		if (!await waitListLoaded() || !await waitRows()) return { ok: false, why: 'list did not load before open' };
-		if (foundPage > 1) { const ps = await pageSelect(); if (ps) { const prev = await rowsSig(); await ps.sel.selectOption(String(foundPage)); if (await settlePage(prev) === null) return { ok: false, why: 'page did not settle before open' }; } }
+		if (foundPage > 1) { const ps = await pageSelect(); if (!ps || ps.uncertain || !ps.sel) return { ok: false, why: 'pager uncertain before open (fail-closed)' }; const prev = await rowsSig(); await ps.sel.selectOption(String(foundPage)); if (await settlePage(prev) === null) return { ok: false, why: 'page did not settle before open' }; }
 		// poll until the exact 문서번호 cell renders (rows can lag listLoaded)
 		let ready = false; for (let t = 0; t < 16 && !ready; t++) { if (await cellCount(docId) === 1) ready = true; else await page.waitForTimeout(500); }
 		if (!ready) return { ok: false, why: 'doc cell did not render on its page' };
 		await page.getByRole('cell', { name: docId, exact: true }).click();
 		return { ok: true };
-	};
-	// parseKRW(text): largest KRW value in `text`, handling "1,234,567원" / "₩1,234,567" / "5억[3000만]" /
-	// "300만". Returns -1 if no figure. Takes the MAX in the region so a total alongside line items reads
-	// the total (over-read ⇒ over-skip ⇒ fail-safe).
-	const parseKRW = (txt) => {
-		let max = -1; const add = (v) => { if (Number.isFinite(v) && v >= 0 && v > max) max = v; }; let m;
-		const reUnit = /([0-9][0-9,.]*)\s*억(?:\s*([0-9][0-9,.]*)\s*만)?/g; while ((m = reUnit.exec(txt))) add(Math.round(parseFloat((m[1] || '0').replace(/,/g, '')) * 1e8 + (m[2] ? parseFloat(m[2].replace(/,/g, '')) * 1e4 : 0)));
-		const reMan = /([0-9][0-9,.]*)\s*만\s*원?/g; while ((m = reMan.exec(txt))) add(Math.round(parseFloat(m[1].replace(/,/g, '')) * 1e4));
-		const reWon = /(?:₩\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*원?/g; while ((m = reWon.exec(txt))) add(parseInt(m[1].replace(/,/g, ''), 10));
-		return max;
 	};
 	// extractAmount(): LABEL-ANCHORED (recipe.approve.amount.label, e.g. "총 금액") so we read the amount
 	// region, not doc-numbers/dates. Returns: null = no amount locator in the recipe (caller fail-closes),
@@ -201,7 +207,19 @@ try {
 			const detailUrl = page.url(); // recorded for the positive-marker re-open + the 'clicked' audit
 			if (await cellCount(docId) !== 1) throw new Error('idLabel: detail does not have exactly one cell == doc_id'); // I4
 			if (await page.getByText(title, { exact: false }).count() === 0) throw new Error(`TITLE mismatch: expected title not on detail page`); // CRITICAL F1/T3
+			// FORM-TYPE guard (red-team C-RECIPE-MISPIN-NO-FORMTYPE): a recipe's deterministic guards (esp. the
+			// amount label) are validated for ONE form family; misapplying it across forms (a 지출 recipe on a 품의)
+			// is unsafe — most acute under allowNoValueCeiling. THREE FAIL-CLOSED checks: (1) optional explicit pin
+			// recipe.approve.formType must match the live form; (2) the form-type heading MUST be READABLE — an
+			// unreadable h1 is DOUBT and is refused (else it would bypass the homogeneity check below — red-team
+			// FORMTYPE-UNREADABLE-BYPASS); (3) ALWAYS keep a batch HOMOGENEOUS (the first form sets the baseline;
+			// a later differing one is refused — never mix forms in one auto-approve batch).
+			const liveForm = await formTypeOf();
+			if (ap.formType && !matchesFormType(liveForm, ap.formType)) { r.status = 'skipped'; r.reason = `form type mismatch (live "${liveForm || '?'}" not in expected ${JSON.stringify(ap.formType)})`; audit(docId, 'skipped', 'form-type-mismatch'); results.push(r); continue; }
+			if (!liveForm) { r.status = 'skipped'; r.reason = 'form-type heading (h1) unreadable on the detail — cannot verify the form (fail-closed)'; audit(docId, 'skipped', 'form-unreadable'); results.push(r); continue; }
+			if (batchForm === null) batchForm = liveForm; else if (batchForm !== liveForm) { r.status = 'skipped'; r.reason = `mixed-form batch: "${liveForm}" ≠ batch form "${batchForm}" — run one form type per batch`; audit(docId, 'skipped', 'mixed-form'); results.push(r); continue; }
 			const beforeStamp = await datedCells(TODAY); // today-dated 결재 cells BEFORE my approve (baseline for the +1 transition)
+			const beforeStampTexts = await datedCellTexts(TODAY); // baseline texts for the actor diff after approval
 			audit(docId, 'identity_ok', `title✓${ceiling ? ` ceiling=${ceiling}` : ''}`);
 			if (ceiling) {
 				const amt = await extractAmount();
@@ -235,12 +253,18 @@ try {
 			// POLL for MY new today-dated 결재 stamp to render (vs a single fixed-sleep read — red-team F-MARKER-WEAK-PROXY)
 			let stamped = false;
 			for (let t = 0; t < 12 && !stamped; t++) { if ((await datedCells(TODAY)) > beforeStamp) stamped = true; else await page.waitForTimeout(500); }
+			// ACTOR (M4 / DESIGN §13-Q2): the today-dated 결재선 cell that appeared since beforeStamp IS the
+			// approver line just stamped by the live login (e.g. "대표이사 2026-06-08 김택균"). Capture it HERE,
+			// while still on the detail page (countDoc navigates away next). Fail-soft metadata — never a gate.
+			const afterStampTexts = await datedCellTexts(TODAY);
+			const newStamps = afterStampTexts.filter((tx) => !beforeStampTexts.includes(tx));
+			const actor = newStamps.length === 1 ? newStamps[0] : (newStamps.length ? newStamps.join(' | ') : null);
 			const after = await countDoc(docId);
 			if (after.total === -1) throw new Error('post-approve: 대기 list uncertain — cannot confirm');
 			if (!stamped && after.total > 0) throw new Error('post-approve: no new 승인 stamp AND still in 대기 (not committed)');
 			if (!stamped) throw new Error('post-approve: doc left 대기 but NO new today 승인 stamp on its line — uncertain (fail-closed)');
 			if (after.total > 0) throw new Error('post-approve: today 승인 stamp present but doc still in 대기 — contradictory (fail-closed)');
-			r.status = 'approved'; r.reason = `승인 stamp ${TODAY} + left 대기`; approvedCount++; audit(docId, 'confirmed', `stamp ${TODAY} + left 대기`);
+			r.status = 'approved'; r.actor = actor; r.reason = `승인 stamp ${TODAY}${actor ? ` (${actor})` : ''} + left 대기`; approvedCount++; audit(docId, 'confirmed', `stamp ${TODAY}${actor ? ` | actor: ${actor}` : ''} + left 대기`);
 		} catch (e) {
 			if (r.status !== 'skipped' && r.status !== 'dry-ok') r.status = 'failed';
 			r.reason = String(e && e.message || e); audit(docId, r.status === 'skipped' ? 'skipped' : 'failed', r.reason); log(`${docId}: ${r.status} — ${r.reason}`);

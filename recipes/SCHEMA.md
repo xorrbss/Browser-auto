@@ -36,9 +36,24 @@ Both drivers, when `SUMMARY_MODEL` (+ a local/on-prem endpoint) is set, summariz
 `bin/summarize.js` into the `summary` column — the body **never leaves** the configured local endpoint.
 `upsertRecords`/`upsertApprovals` merge so this pass accumulates onto the list sync (never clobbers it).
 
-### Reserved (not built)
-- `approve` — the human-gated Phase-2 action (`dev/active/phase2-guarded-approve/`, DESIGN-ONLY,
-  safety-gated; Gate A re-red-team = REVISE-FIRST). Not implemented.
+### `approve` — the effectful auto-approve block (BUILT; driven by `approve/approve-run.mjs`)
+The owner released the per-item-human gate (memory `approve-gate-override`), so the auto-approve leaf
+clicks the real 확인 with **no human click**; the deterministic guards in this block are the SOLE safety
+and every one **fails closed**. Read `dev/active/phase2-guarded-approve/` before changing it.
+
+| Field | Purpose |
+|---|---|
+| `button` `{role,name,exact}` | the approve affordance that opens the decision modal (Hiworks: `결재`). count==1 or abort. |
+| `decision` `{role,name}` | the decision radio that MUST be asserted checked before 확인 (Hiworks: `승인`). |
+| `amount.label` | label anchoring the amount region (e.g. `"총 금액"`); the largest KRW figure in that row is the ceiling check. **Absent ⇒ a value ceiling cannot be enforced (fail-closed when one is requested).** |
+| `opinion` `{placeholder,text}` | optional 의견 to type before 확인. |
+| `confirm` `{role,name,exact}` | the modal commit button — `kind:dom`, exact `확인` (never `확인 후 다음 문서`). |
+| `formType` (string \| string[]) | **optional** form-type pin. When set, the live detail's form-type heading (Gate B: the **h1**) MUST match one of these names or the doc is SKIPPED — so a recipe tuned for one form family (its `amount.label`) can't be misapplied to another (e.g. a 지출 recipe on a 품의). Independently, a batch is **always kept homogeneous** (a later doc whose form differs is skipped) even without this pin. |
+| `success` | the positive completion signal (Hiworks: `leftInbox` + a new today-dated 승인 stamp on the doc's own line). |
+
+Pagination during the all-pages identity/completion scan is taken from `pagination.mode` and is **only
+trusted for `"combobox"`** with a single contiguous `1..N` page `<select>`; a windowed/ambiguous/
+non-1..N pager is treated as UNCERTAIN ⇒ the scan fails closed (never under-scans → never false "approved").
 
 ## Portability
 A recipe with `collection.name` + `key` + `columns` (and `key` ∈ `columns`) is valid for **both** the
