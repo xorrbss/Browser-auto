@@ -1,16 +1,17 @@
 # Phase 2 approve — driver design for the native-dialog leg (Playwright approve leaf) — v2
 
-> ⚠ **UN-SHELVED (2026-06-07) — rationale BROADENED after two tests.** The cheap agent-browser path was
-> tried and **failed**: even after selecting the `승인` radio via `@ref` + filling 의견 + `확인` (all
-> `success`), the approve **does not complete** (`GATE-B-CAPTURE.md` *Radio hypothesis — REFUTED*). So
-> **agent-browser 0.27.0 cannot complete the final submit** — cause narrowed to **(A) a native `confirm()`
-> auto-dismissed** or **(B) an `isTrusted` user-gesture requirement** the synthetic click doesn't meet
-> (operator saw no native popup → weakly (B)). **Playwright addresses BOTH** (CDP `isTrusted=true` events +
-> native-dialog accept), so this design is relevant again — but its rationale is now **"trusted-gesture +
-> dialog handling,"** not only "native-dialog accept" (so the §5 dialog handler may be a no-op if it's (B);
-> keep it as defense). The **headed-manual path (E)** remains the zero-new-dependency alternative (the
-> operator does the final click — confirmed working). Next: confirm Playwright (or (E)) positively
-> completes a staged approval before building. All v2 REVISE-FIRST fixes below still apply.
+> ⚠ **RE-SHELVED / NOT RECOMMENDED (2026-06-07) — premise resolved by the headed experiment.** The
+> decisive headed `--no-auto-dialog` test (`GATE-B-CAPTURE.md` *DEFINITIVE conclusion*) proved it is **(B):
+> Hiworks' final submit needs a trusted (`isTrusted`) real click** — agent-browser's synthetic `확인` is
+> ignored (no commit), **there is NO native dialog** (NO_AUTO_DIALOG produced no hang/popup), and the
+> operator's own `확인` click approved it. So the **§5 native-dialog handler is MOOT** and Playwright's only
+> residual value is "trusted clicks" — which a real human already provides. **Recommended instead:
+> (E)-hybrid** — the tool drives up to the modal, the **operator's own `확인` click is the per-item
+> approval** (aligns with the mandatory OOB human ceremony; a fully-automated trusted click would be *in
+> tension* with "the human approves what they saw"). **This Playwright design is therefore not the path;
+> it remains only as a contingency** (e.g. a future unattended mode the safety model does not currently
+> permit). The v2 REVISE-FIRST fixes below stand for that contingency, but the native-dialog-accept core
+> (§5) is unnecessary for Hiworks.
 
 **Status: DESIGN ONLY. Implementation forbidden.** v2 supersedes v1 after `REDTEAM-DRIVER.md` returned
 **REVISE-FIRST** (1 HIGH `PW-TRACE-COOKIE-LEAK-1` + 11 med + 7 low). The biggest correction (the

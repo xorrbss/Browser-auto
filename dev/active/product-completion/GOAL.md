@@ -108,13 +108,19 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   (supersedes the 결재-cell guess). **Then the radio hypothesis was TESTED & REFUTED** on a fresh test doc
   (`IB-품의-20260508-0001`): the `승인` radio is a native `<input>` unreachable by `find role --name`;
   clicking it via `@ref` + 의견 + `확인` (all success) **STILL did not complete** the approval. So **the
-  radio is NOT the fix and agent-browser 0.27.0 genuinely cannot complete the final submit** — cause
-  narrowed to **(A) a native confirm auto-dismissed** or **(B) an `isTrusted`-gesture requirement** the
-  synthetic click misses (operator saw no popup → weakly (B)). ⇒ a **trusted-event driver (Playwright,
-  which dispatches isTrusted + accepts native dialogs)** or the **headed-manual path (E)** is required;
-  **agent-browser alone is insufficient.** `confirm.kind = dom` for the modal, but the final submit needs
-  trusted gesture / dialog handling. **Approve implementation still forbidden** until Playwright-or-(E)
-  positively completes a staged approval + recipe.approve update + re-red-team.
+  radio is NOT the fix and agent-browser 0.27.0 genuinely cannot complete the final submit.** A decisive
+  **headed `--no-auto-dialog` experiment** (2026-06-07, on `IB-품의-20260508-0001`) then resolved it to
+  **(B): Hiworks' final submit requires a trusted (`isTrusted`) real click.** agent-browser's synthetic
+  `확인` was ignored (no commit, **NO native dialog** — no hang/popup); the **operator's own `확인` click
+  approved it** (verified: doc left the 대기 inbox). `confirm.kind = dom`; **(A) native-dialog is fully
+  refuted.** ⇒ **agent-browser cannot perform the terminal click; Playwright is NOT required (and its
+  native-dialog handler is moot)** — a trusted click comes from {Playwright/Puppeteer/CDP} OR a **real
+  human**. **RECOMMENDED PATH = (E)-hybrid (also safer):** since per-item human approval is already
+  mandatory, the **operator's own `확인` click IS the approval**; the tool drives everything up to it
+  (open by unique cell → idLabel/title/fingerprint re-verify → 결재 → select 승인 → fill 의견) and verifies
+  completion (승인-stamp self-line + 대기-departure) + audit. No new dependency, no native-dialog handling.
+  `DRIVER-PLAYWRIGHT.md` is re-shelved (contingency only). **Approve implementation still forbidden**
+  until the (E)-hybrid `recipe.approve` + `webui/routes-approve.js` wiring + a re-red-team of that flow.
 - **Driver path for the native-dialog leg — DESIGN ONLY, now v2 (`DRIVER-PLAYWRIGHT.md` + `REDTEAM-DRIVER.md`).**
   v1 designed the approve leaf on **Playwright** (the project's Docker base; first-class dialog accept).
   **Red-team → REVISE-FIRST** (1 HIGH + 11 med + 7 low): the gate-blocking **HIGH PW-TRACE-COOKIE-LEAK-1**
@@ -129,12 +135,12 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   + hardened shared extractor (CANON/REF), leaf in its OWN dir not `bin/` (LEAF-CONTAINMENT), CDP-shaped
   auth → native capture (AUTH-DUP), persistent counting dialog handler + exact anchored message (dialog
   lows/meds), scrubbed child env (ENV-PROPAGATE). **Approve implementation still forbidden.**
-  **⚠ UN-SHELVED (2026-06-07):** the cheap agent-browser **승인-radio** test FAILED (radio via @ref +
-  의견 + 확인, all success, still no completion) → agent-browser can't complete the final submit, cause
-  (A) native-confirm or (B) isTrusted-gesture. **Playwright addresses both** (CDP trusted events + dialog
-  accept), so this design is relevant again — rationale broadened to "trusted-gesture + dialog handling";
-  the §5 native-dialog handler may be a no-op if it's (B) but stays as defense. Headed-manual (E) is the
-  zero-dep alternative. Confirm Playwright-or-(E) completes a staged approval before building.
+  **⚠ RE-SHELVED / NOT THE PATH (2026-06-07):** the headed experiment resolved the cause to **(B)
+  trusted-gesture, NO native dialog** (operator's real `확인` approved; agent-browser's synthetic didn't).
+  So the §5 native-dialog handler is **moot** and Playwright's only value (trusted clicks) is already
+  provided by the human. **(E)-hybrid is recommended instead** (human's `확인` = the approval; aligns with
+  the mandatory OOB ceremony; full-auto trusted-click would be in tension with "the human approves").
+  This design stays only as a contingency (e.g. a future unattended mode the safety model doesn't permit).
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),

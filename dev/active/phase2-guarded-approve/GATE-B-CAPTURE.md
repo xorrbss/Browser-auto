@@ -117,7 +117,34 @@ returns `success` but the approval never commits, regardless of the radio.
   (E) still needs a positive completion test. **`recipe.approve.decision{radio 승인}` requires an `@ref`/
   CSS or label-text locator** (native radios aren't reachable by `find role --name`).
 
-### Still undetermined (blocked by the above)
+### DEFINITIVE conclusion (2026-06-07 headed `--no-auto-dialog` experiment) — it is (B), a trusted-gesture requirement
+Ran the decisive experiment on `IB-품의-20260508-0001` (operator test data): a **headed** daemon with
+`AGENT_BROWSER_NO_AUTO_DIALOG=1`, drove 결재 → 승인 radio(@ref) → 의견(filled, visible in the operator's
+screenshot) → and **agent-browser clicked `확인`** (`success:true`, **did not hang, no native dialog
+appeared**) → **approval did NOT commit** (modal open, 결재 button present). Then the **operator clicked
+the SAME `확인` by hand → it approved** (verified read-only: the doc **left the 대기 inbox**). Same modal,
+same filled opinion, same radio — only the *clicker* differed.
+- ⇒ **It is (B): Hiworks' final submit requires a trusted (`isTrusted`) real user click.** agent-browser's
+  synthetic click is silently ignored. **(A) native dialog is fully REFUTED** (NO_AUTO_DIALOG produced no
+  hang and no popup; operator saw none). The `confirm.kind` is **`dom`** (the modal IS the confirmation).
+- ⇒ **agent-browser 0.27.0 cannot perform the terminal approve click. Playwright is NOT required and its
+  native-dialog handler is moot** — what's needed is a *trusted* click, which any of {Playwright/Puppeteer/
+  raw CDP `Input.dispatchMouseEvent`} **or a real human click** provides.
+- ⇒ **Recommended path — (E)-hybrid, and it is SAFER not just simpler:** since DESIGN v4 already mandates a
+  per-item human OOB ceremony, let the **human's own `확인` click BE the per-item approval** (the purest
+  form of "the human approves the content they saw"). The deterministic tool drives everything up to it
+  (open by unique cell → idLabel/title/fingerprint re-verify → 결재 → select 승인 → fill the operator's
+  의견), the **operator clicks `확인`** (trusted = the approval), then the tool verifies completion
+  (승인-stamp on the self-line, today, operator name + 대기-departure) and writes the audit. **No new
+  dependency, no native-dialog handling, no dual-stack.** A fully-automated trusted-click (Playwright)
+  would actually be *in tension* with "the human performs the approval", so it is not recommended.
+
+### Still undetermined — now RESOLVED by the above
+The completion marker (승인-stamp self-line + 대기-departure), the confirm kind (dom), and the mechanism
+(trusted gesture, no dialog) are all captured. Remaining for a real build: a `recipe.approve` update +
+the (E)-hybrid wiring in `webui/routes-approve.js` + a re-red-team of that (simpler) flow.
+
+### (Historical) earlier still-undetermined list — superseded
 - the exact **completion-marker transition** (`button "결재"` → `cell "결재 <date>"`+image) and **affordance
   disappearance** — could not be observed because approval never completed;
 - **server-fresh / inbox-departure** cross-check;
