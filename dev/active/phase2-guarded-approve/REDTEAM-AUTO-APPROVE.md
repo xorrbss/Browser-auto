@@ -177,3 +177,44 @@ audit-correctness; no false-positive `approved`, no money movement). The unatten
 single shared inbox); `/api/approve/stop` inherits the Origin guard (folds into the **R1 present-Origin**
 work — #9). The positive marker's **live end-to-end validation against a real fresh approval still needs a
 disposable 대기 doc.**
+
+---
+
+## 2026-06-08 — carry-forward MEDIUMs closed + 3 adversarial re-verifies (#7–#10 batch)
+
+This batch closed the remaining v3 carry-forward MEDIUMs and the M4 small items. **Each effectful/security
+change was adversarially re-verified by a multi-agent refute workflow; confirmed high/critical fixed
+immediately.** It also resolves the two LOW carry-forwards just above: actor identity (#10) and
+`/api/approve/stop`'s Origin guard (#9a R1).
+
+**Code changes (all fail-closed):**
+- **pageSelect reliability** (PAGESELECT-*): the page count is decided by a pure, unit-tested
+  `approve/guards.mjs::pagerDecision` — trust ONLY a recipe-declared `combobox` whose options are a single
+  contiguous `1..N` set; a windowed/ambiguous/non-1..N pager ⇒ UNCERTAIN ⇒ `countDoc` total:-1 ⇒ fail-closed
+  (an under-scanned page can no longer make a doc read ABSENT ⇒ false "approved").
+- **recipe-per-form-type** (C-RECIPE-MISPIN-NO-FORMTYPE): the leaf reads the detail h1 (form type) and
+  fail-closes on (a) optional `approve.formType` mismatch, (b) an UNREADABLE h1, (c) a mixed-form batch.
+- **actor binding** (M4/§13-Q2): the live approver line (today-dated 결재선 cell diff) is bound into the
+  `confirmed` audit + result — closing the "stamp counts any cell, not the self-line" low.
+- **R1/T8 present-Origin gate + session cookie** (`webui/session.js`): POST `/api/approve/*` (run **and**
+  stop) requires a present host-matching Origin/Referer AND a server session cookie (no absent-Origin fall-through).
+- **#7 scheduler** (`bin/scheduled-task.sh`): fail-closed — refuses `--live` + exports `AQA_SCHEDULED_NO_LIVE=1`
+  so the leaf hard-refuses live even via an indirect wrapper; PID-aware lock.
+- audit viewer (`/api/approve/audit` + 결재-view panel); analyze/sync failure UX.
+
+**Adversarial re-verifies (refute workflows):**
+- **Leaf guards (4 agents)** → REVISE-FIRST, **1 HIGH** *(FORMTYPE-UNREADABLE-BYPASS — an unreadable h1
+  bypassed the homogeneity guard)*. **FIXED** (unreadable h1 ⇒ SKIP). parseKRW parity / non-throwing actor /
+  pager fail-closed / no existing guard weakened — confirmed clean.
+- **Approve CSRF/session gate (4 agents)** → **SAFE-TO-COMMIT**, 1 low (general POST guard hard-coded the
+  host vs `ALLOWED_HOSTS` — over-rejects fronted/Docker, fails closed). **FIXED** (aligned onto `ALLOWED_HOSTS`).
+  No bypass; HttpOnly/SameSite=Strict/Set-Cookie-survives-serveFile all confirmed.
+- **Scheduler (2 agents)** → "WRAPPER-SCRIPT-INJECTION" critical adjudged the accepted **I7 same-OS-exec
+  residual** but **hardened anyway** (`AQA_SCHEDULED_NO_LIVE`); **2 HIGH availability** (SIGKILL-permanent-lock,
+  stale-break TOCTOU) **FIXED** with a PID-liveness lock. `--live` gate confirmed effective (incl. case/
+  equals-form variants are money-safe via the leaf's exact `flag('--live')`).
+
+**Still operator-accompanied (this batch cannot do them):** a **live end-to-end** approval verification, a
+**Gate B amount-cell capture** (exact value ceiling vs heuristic), and agreed **auto-approve criteria**.
+Until those clear, **unattended LIVE approve stays fail-closed** (the scheduler refuses `--live`); run
+**supervised + bounded**.

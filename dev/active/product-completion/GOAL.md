@@ -197,7 +197,18 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   pager, **positive 승인-stamp completion marker** (vs absence-based), recipe-per-form-type. Highest-leverage
   hardening = 승인-stamp marker + crash reconciliation + a **Gate B amount-cell capture**. Until then: run
   **supervised + bounded** (dry-run first, small --max, value ceiling, single-user host), not unattended-at-scale.
-- After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
+  **[2026-06-08] Remaining v3 carry-forward MEDIUMs CLOSED + M4-small + #7 scheduler done** (see
+  `REDTEAM-AUTO-APPROVE.md` 2026-06-08 section). 승인-stamp marker / crash reconcile / kill-switch UI were
+  already in `908bf38`; this batch added: **reliable pageSelect** (pure `approve/guards.mjs::pagerDecision`
+  — windowed/ambiguous pager ⇒ fail-closed), **recipe-per-form-type** (h1 form match + readable + batch
+  homogeneity), **actor** binding, **R1 present-Origin + session cookie**, **audit viewer**, **analyze/sync
+  UX**, and a **fail-closed scheduler** (`bin/scheduled-task.sh` refuses `--live`). Each effectful/security
+  change was adversarially re-verified (3 refute workflows; the one confirmed high — unreadable-h1 form
+  bypass — fixed). **Remaining for unattended-at-scale = operator-accompanied:** live e2e verify + Gate B
+  amount-cell capture + auto-approve criteria.
+- The DESIGN-v3 human-gated build below is **superseded** by the owner-override full-auto path (DESIGN §14);
+  it stays as the revert target if the gate is re-imposed. After Gate A+B only, that path would implement:
+  `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),
   `fetched→approving` claim + reconciliation pass, terminal failed/interrupted→`approve_failed`,
@@ -208,13 +219,18 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
 - **Done when:** a staged doc is approved with every guard firing, and invariants I1–I7 hold under a
   fresh red-team.
 
-### M4 — Hardening / productionization  [P2]
+### M4 — Hardening / productionization  [P2]  **(small items DONE 2026-06-08)**
 - **Transport [SECURITY]:** move the on-prem model endpoint off **public-IP plain HTTP** → VPN / SSH
   tunnel / TLS. The `lib/llm.js` guard only *warns*; the real fix is infra. (Set `LLM_REQUIRE_PRIVATE=1`
-  once a private/TLS endpoint exists.)
-- Server **session cookie** (HttpOnly + SameSite=Strict) — also a Phase-2 dependency.
-- **Daemon-recovery helper:** script the `~/.agent-browser` stale-file cleanup + document in README.
-- `actor` identity for the audit; an audit-viewer UI; clearer analyze/sync error UX in the webui.
+  once a private/TLS endpoint exists.) **STILL PENDING (infra).**
+- Server **session cookie** (HttpOnly + SameSite=Strict) — **DONE** (`webui/session.js`): minted on GET /,
+  required on POST `/api/approve/*` together with the **R1 present-Origin/Referer** gate (#9a).
+- **Daemon-recovery helper:** `bin/daemon-recover.sh` (stale-file cleanup + prime). **DONE.**
+- `actor` identity for the audit — **DONE** (live approver line bound into the `confirmed` audit/result).
+- **audit-viewer UI** — **DONE** (`GET /api/approve/audit` + 🧾 panel in the 결재 view).
+- clearer **analyze/sync error UX** — **DONE** (a ✗ failed banner on a non-zero job).
+- **Scheduling (#7)** — **DONE** (`bin/scheduled-task.sh`): locked, fail-closed host-scheduler; read/sync/
+  enrich schedulable, unattended LIVE approve refused (`--live` + `AQA_SCHEDULED_NO_LIVE` both block it).
 
 ### M5 — Ship  [P1]
 - README: full RPA registry + 시스템 UI + recipe SCHEMA + the safety model. **IN PROGRESS** — added
