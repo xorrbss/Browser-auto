@@ -47,10 +47,21 @@ it has no real effect). Identity guard passed (문서번호 cell == doc, exactly
   `Unknown subaction: --name`. (Worth fixing the README example.)
 
 ### Conclusion: confirm leg = **effectively `native`/unhandleable on this stack → FAIL-CLOSED**
+Reproduced **3×** (single click; atomic `[fill,확인]` batch; a fresh clean run with an 8s settle) — the
+approval never commits and the modal never closes. Corroborating evidence: `agent-browser --help` exposes
+only **`--no-auto-dialog`** ("Disable automatic dismissal of **alert/beforeunload** dialogs") and a
+`confirm <id>` for its OWN action-gate — there is **no page-dialog *accept* primitive**. So a native
+`confirm()` at the approve step is, by default, **auto-dismissed (= Cancel)**, which is exactly the
+observed "click 확인 → nothing approved, modal stays". (The definitive `--no-auto-dialog` probe was
+deliberately NOT run: a non-dismissed native dialog wedges the session, and `timeout` cannot kill the
+native exe here — reboot-level risk for no new decision value.)
+
 Per DESIGN §3/§12, `confirm.kind = native` must **not** be built unless an agent-browser accept primitive
-is empirically proven for the app/version — it is not (the post-`확인` step cannot be completed). So the
-Hiworks approve path is **not implementable on agent-browser 0.27.0**. Building it would require a driver/
-version with native-dialog handling (or a different automation surface). Until then: **fail-closed.**
+is empirically proven — it is **not** (0.27.0 can only *dismiss* native dialogs, never *accept* them). So
+the Hiworks approve path is **not implementable on agent-browser 0.27.0**. The missing capability is a
+**native-dialog accept** primitive; building approve requires a driver/version that provides it (or a
+different automation surface). This is a TOOLING limit, independent of consent (the operator authorized
+approving the disposable test doc). Until then: **fail-closed.** The test doc was left UNAPPROVED.
 
 ### Still undetermined (blocked by the above)
 - the exact **completion-marker transition** (`button "결재"` → `cell "결재 <date>"`+image) and **affordance
