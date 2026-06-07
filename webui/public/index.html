@@ -71,6 +71,12 @@
 					<pre id="approve-log" class="joblog" hidden></pre>
 				</div>
 
+				<div class="audit-panel">
+						<div class="audit-head"><h3>🧾 승인 감사 로그</h3><button id="audit-refresh" type="button">↻ 새로고침</button></div>
+						<p class="note">자동 승인 leaf가 매 단계 append-only로 기록한 감사 추적(<code>data/approve-audit.jsonl</code>) — 무엇을 요청/클릭/승인/건너뜀/재조정했는지의 출처. 최신순.</p>
+						<div id="audit-list"><div class="hint">↻ 새로고침으로 감사 로그를 불러옵니다.</div></div>
+					</div>
+
 				<div id="approvals-list"><div class="hint">결재 목록 로딩 중…</div></div>
 				<pre id="sync-log" class="joblog" hidden></pre>
 			</section>

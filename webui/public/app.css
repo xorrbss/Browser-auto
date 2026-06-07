@@ -259,6 +259,24 @@ body[data-view="runs"] .runbar { display: flex; }
 .approval-summary { margin-top: 6px; }
 .approval-raw { margin-top: 6px; opacity: 0.8; white-space: pre-wrap; }
 
+/* ⚡ 자동 승인 시나리오 + 🧾 승인 감사 로그 */
+.approve-panel, .audit-panel { border: 1px solid var(--line, #2a2a2a); border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
+.approve-panel h3 { margin: 0 0 4px; }
+.audit-head { display: flex; align-items: center; gap: 8px; }
+.audit-head h3 { margin: 0; margin-right: auto; }
+.note.warn { color: #e0b050; }
+.approve-panel textarea, .approve-panel input { width: 100%; box-sizing: border-box; }
+.approve-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+.approve-row input[type=number] { flex: 1; min-width: 160px; }
+.approve-row label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.approve-status { margin: 6px 0; }
+.approve-tbl { width: 100%; border-collapse: collapse; font-size: 0.85em; margin-top: 6px; }
+.approve-tbl th, .approve-tbl td { border: 1px solid var(--line, #2a2a2a); padding: 3px 6px; text-align: left; vertical-align: top; }
+.approve-tbl tr.st-approved, .approve-tbl tr.st-confirmed, .approve-tbl tr.st-reconciled-approved { background: rgba(60, 160, 60, 0.12); }
+.approve-tbl tr.st-failed, .approve-tbl tr.st-reconciled-failed { background: rgba(200, 60, 60, 0.10); }
+.approve-tbl tr.st-skipped { background: rgba(150, 150, 150, 0.10); }
+.approve-tbl tr.st-clicked { background: rgba(224, 176, 80, 0.12); }
+
 /* NL command box */
 .agent-box { display: flex; gap: 8px; margin: 8px 0; }
 .agent-box input { flex: 1; }

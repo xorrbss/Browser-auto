@@ -466,6 +466,7 @@ async function runApprove() {
 		approveJob = null;
 		renderApproveResults(log.textContent, status, results);
 		loadApprovals(); // approved docs left the 대기 inbox
+		loadAudit();     // surface the new audit rows the run just appended
 	});
 }
 
@@ -483,6 +484,21 @@ function renderApproveResults(logText, status, results) {
 	results.replaceChildren(tbl);
 }
 
+// ---------- 🧾 approve audit viewer (read-only; data/approve-audit.jsonl is the source of truth) ----------
+const AUDIT_ST = { requested: '요청', identity_ok: '신원확인', amount_ok: '금액확인', dry_ok: '👁 미리보기OK', clicked: '⚠ 클릭', confirmed: '✅ 승인', failed: '✗ 실패', skipped: '⤼ 건너뜀', 'reconciled-approved': '🔁 재조정:승인', 'reconciled-failed': '🔁 재조정:실패', 'reconcile-uncertain': '🔁 재조정:불확실', 'reconcile-error': '🔁 재조정:오류' };
+
+async function loadAudit() {
+	const box = $('#audit-list');
+	box.replaceChildren(el('div', { class: 'hint' }, '감사 로그 로딩 중…'));
+	try {
+		const { audit, total } = await getJson('/api/approve/audit?limit=300');
+		if (!audit.length) { box.replaceChildren(el('div', { class: 'hint' }, '감사 로그가 비어 있습니다 (아직 자동 승인 실행 없음).')); return; }
+		const tbl = el('table', { class: 'approve-tbl' }, el('tr', {}, el('th', {}, '시각'), el('th', {}, '문서번호'), el('th', {}, '단계'), el('th', {}, '모드'), el('th', {}, '상세')));
+		for (const a of audit) tbl.append(el('tr', { class: 'st-' + (a.stage || '') }, el('td', {}, fmtTime(a.at)), el('td', {}, a.doc_id || ''), el('td', {}, AUDIT_ST[a.stage] || a.stage || ''), el('td', {}, a.live === true ? 'LIVE' : 'dry'), el('td', {}, a.detail || '')));
+		box.replaceChildren(el('div', { class: 'hint' }, `총 ${total}건 (최근 ${audit.length} 표시)`), tbl);
+	} catch (e) { box.replaceChildren(el('div', { class: 'error' }, '감사 로그 로드 실패: ' + e.message)); }
+}
+
 // ---------- view switching ----------
 
 const NAV = { runs: '#nav-runs', approvals: '#nav-approvals', systems: '#nav-systems', flows: '#nav-flows', trends: '#nav-trends', auth: '#nav-auth', jobs: '#nav-jobs' };
@@ -491,7 +507,7 @@ function loadView(view) {
 	if (view === 'flows') loadFlows();
 	else if (view === 'trends') loadTrends();
 	else if (view === 'auth') loadAuth();
-	else if (view === 'approvals') loadApprovals();
+	else if (view === 'approvals') { loadApprovals(); loadAudit(); }
 	else if (view === 'systems') loadSystems();
 	else if (view === 'jobs') loadJobs();
 	else {
@@ -513,6 +529,7 @@ $('#sync-btn').addEventListener('click', startSync);
 $('#agent-run').addEventListener('click', runAgent);
 $('#agent-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent(); });
 $('#approve-run').addEventListener('click', runApprove);
+$('#audit-refresh').addEventListener('click', loadAudit);
 // graceful kill-switch: stops the batch BEFORE the next doc (vs the hard tree-kill of 강제중지, which can
 // interrupt mid-approve). For an irreversible-money batch, prefer this.
 $('#approve-stop').addEventListener('click', async () => {

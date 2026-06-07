@@ -100,8 +100,19 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	return true;
 }
 
-// approveGet(p, url, res, { sendJson }) -> handled? Reports whether a Playwright login exists per app.
+// approveGet(p, url, res, { sendJson }) -> handled? Read-only status + the append-only audit viewer.
 export function approveGet(p, url, res, { sendJson }) {
+	// Audit viewer: the append-only JSONL trail (data/approve-audit.jsonl) the leaf fsyncs every stage to —
+	// the source of truth for what was requested/clicked/confirmed/skipped/reconciled. Newest first.
+	if (p === '/api/approve/audit') {
+		const file = path.join(PROBE_ROOT, 'data', 'approve-audit.jsonl');
+		const entries = [];
+		try { for (const line of fs.readFileSync(file, 'utf8').split('\n')) { if (!line.trim()) continue; try { entries.push(JSON.parse(line)); } catch { /* skip a torn/partial line */ } } }
+		catch { /* no audit yet */ }
+		const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 300, 1000);
+		sendJson(res, 200, { audit: entries.slice(-limit).reverse(), total: entries.length });
+		return true;
+	}
 	if (p !== '/api/approve/state') return false;
 	const app = (url.searchParams.get('app') || '').trim();
 	const ok = NAME_RE.test(app) && fs.existsSync(stateFor(app)) && fs.existsSync(recipeFor(app));

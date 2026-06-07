@@ -71,7 +71,16 @@ function sysAction(action, onEnd) {
 		.then((r) => r.json().then((j) => ({ ok: r.ok, status: r.status, j })))
 		.then(({ ok, status, j }) => {
 			if (!ok) { log.textContent = `${action} 거부됨: ${j.error || status}`; return; }
-			if (j.job) { sysJob = j.job.id; streamJob(j.job.id, log, () => { sysJob = null; loadSystems(); if (onEnd) onEnd(name); }); }
+			if (j.job) {
+				sysJob = j.job.id;
+				streamJob(j.job.id, log, (done) => {
+					sysJob = null; loadSystems();
+					// Clear failure banner on a non-zero job (was: silently leave the raw log) so the operator
+					// sees WHY the analyze/sync failed (auth expired, daemon wedge, no table found, …).
+					if (done && done.status !== 'done') { log.textContent += `\n\n✗ ${action} 실패 (${statusKo(done.status)}${done.exitCode != null ? `, 종료 ${done.exitCode}` : ''}) — 위 로그에서 원인을 확인하세요. 인증 만료면 🔑 인증, 데몬 wedge면 재시도하세요.`; return; }
+					if (onEnd) onEnd(name);
+				});
+			}
 		})
 		.catch((e) => { log.textContent = `${action} 실패: ${e.message}`; });
 }
