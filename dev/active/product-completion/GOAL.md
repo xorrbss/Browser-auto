@@ -109,14 +109,20 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   NOT buildable on agent-browser 0.27.0** (confirm leg = native/unhandleable → DESIGN fail-closed). A
   native-dialog-capable driver/version (or another surface) is a prerequisite. **Approve implementation
   remains forbidden.** Full capture incl. the correct `find` syntax in `GATE-B-CAPTURE.md`.
-- **Driver path for the native-dialog leg — DESIGN ONLY (`DRIVER-PLAYWRIGHT.md`, 2026-06-07).** Designed
-  the approve leaf on **Playwright** (already this project's Docker base; first-class `page.on('dialog',
-  d=>d.accept())`), confined to an isolated effectful leaf (`bin/approve-doc.sh` → `bin/approve-drive.mjs`);
-  read/sync/enrich + webui zero-dep + model-zero-authority all unchanged. Crux = a **one-shot,
-  recipe-pattern-validated** native-dialog accept (never a blanket auto-accept). Bonus: Playwright's
-  own video/trace fixes the red-team wedged-daemon video residual. **Still gated:** red-team this driver
-  surface + re-run Gate B Phase 2 on Playwright (capture the 완료 transition + native message pattern)
-  before any implementation.
+- **Driver path for the native-dialog leg — DESIGN ONLY, now v2 (`DRIVER-PLAYWRIGHT.md` + `REDTEAM-DRIVER.md`).**
+  v1 designed the approve leaf on **Playwright** (the project's Docker base; first-class dialog accept).
+  **Red-team → REVISE-FIRST** (1 HIGH + 11 med + 7 low): the gate-blocking **HIGH PW-TRACE-COOKIE-LEAK-1**
+  (Playwright trace captures the reused Hiworks session cookie → exfil via the no-Origin-check
+  `GET /artifacts/*` route) is fixed in v2 (no network/HAR or scrub; evidence to a non-served token-gated
+  0600 dir; flag the server.js artifact-route gap). Two strategic mediums reshaped it: **BLOCKER-ASSUMED-1**
+  ("post-확인 = native confirm()" is unproven) + **SIMPLER-PATH-1** (a cheaper existing-structure path was
+  untested). So v2 §0 reorders the gates **cheapest-first**: (1) headed capture to POSITIVELY identify the
+  post-확인 mechanism, (2) test **alternative (E) = headed agent-browser + operator manually clicks OK on
+  the one native dialog** (preferred if it works — no new dep), (3) only then Playwright (re-red-team v2 +
+  Gate B re-run). Other med fixes folded: one shared byte-pinned cross-stack fingerprint canonicalization
+  + hardened shared extractor (CANON/REF), leaf in its OWN dir not `bin/` (LEAF-CONTAINMENT), CDP-shaped
+  auth → native capture (AUTH-DUP), persistent counting dialog handler + exact anchored message (dialog
+  lows/meds), scrubbed child env (ENV-PROPAGATE). **Approve implementation still forbidden.**
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),
