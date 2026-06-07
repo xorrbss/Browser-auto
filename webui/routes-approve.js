@@ -66,13 +66,19 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	if (!docs.length) { sendJson(res, 400, { error: 'docs: a non-empty array of doc_ids is required' }); return true; }
 	if (!docs.every(validDoc)) { sendJson(res, 400, { error: 'docs: each must be a non-empty string ≤100 chars with no comma/newline' }); return true; }
 	const dryRun = bodyJson.dryRun !== false; // DEFAULT DRY-RUN — live needs an explicit dryRun:false
+	// REVIEWED batch: the operator read each doc's summary on the webui review screen and CHECKED the ones to
+	// approve, so the human is the content/amount control (the 총 금액/총 합 계 label is drafter-TYPED → unreliable
+	// for an automated ceiling). Drops the value-ceiling requirement; the count cap is the number of checked items.
+	const reviewed = bodyJson.reviewed === true;
 	let max = parseInt(bodyJson.max, 10); if (!Number.isFinite(max) || max < 0) max = 0;
 	let maxAmount = parseInt(bodyJson.maxAmount, 10); if (!Number.isFinite(maxAmount) || maxAmount < 0) maxAmount = 0;
+	if (!dryRun && reviewed && max <= 0) max = docs.length; // reviewed: the checked-item count IS the blast-radius cap
 	// LIVE requires a positive count cap (fail-closed; red-team F5/F2).
 	if (!dryRun && max <= 0) { sendJson(res, 400, { error: '실제 승인(dryRun:false)에는 최대 건수(max ≥ 1)가 필요합니다 — blast-radius 제한.' }); return true; }
-	// LIVE requires a per-doc VALUE ceiling (maxAmount) OR an explicit owner opt-out — no silent
-	// unbounded-value auto-approve (red-team v2 AMT-CEILING-EVADE / F-AMOUNT-UNBOUND).
-	if (!dryRun && maxAmount <= 0 && bodyJson.allowNoValueCeiling !== true) {
+	// TYPED (full-auto) LIVE requires a per-doc VALUE ceiling (maxAmount) OR an explicit owner opt-out — no
+	// silent unbounded-value auto-approve (red-team v2 AMT-CEILING-EVADE). REVIEWED mode is exempt: the human
+	// reviewed each summary, which is a STRONGER control than a (drafter-typed-label) amount heuristic.
+	if (!dryRun && !reviewed && maxAmount <= 0 && bodyJson.allowNoValueCeiling !== true) {
 		sendJson(res, 400, { error: '실제 승인엔 건당 최대 금액(maxAmount ≥ 1)이 필요합니다. 금액 상한 없이 진행하려면 allowNoValueCeiling:true를 명시하세요(무한 금액 자동 승인 — 소유자 책임).' });
 		return true;
 	}
@@ -90,11 +96,12 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	const args = ['--recipe', `recipes/${app}.json`, '--state', `approve/${app}.pw-state.json`, '--list-url', listUrl, '--targets-file', targetsFile];
 	if (!dryRun) args.push('--live', '--max', String(max));
 	if (maxAmount) args.push('--max-amount', String(maxAmount));
+	if (reviewed) args.push('--reviewed'); // human-reviewed batch: leaf relaxes form-homogeneity (mixed forms are the human's choice)
 
 	// An explicit new run clears any kill-switch (halt) — the leaf REFUSES to start while STOP exists, so the
 	// route owns the clear; a queued batch never self-clears (red-team KILLSWITCH-QUEUED).
 	try { fs.rmSync(stopPath(), { force: true }); } catch {}
-	const label = `${dryRun ? 'DRY approve' : 'AUTO-APPROVE'} ${app} (${docs.length}건${!dryRun ? `, max ${max}` : ''}${maxAmount ? `, ≤${maxAmount}원` : ''})`;
+	const label = `${dryRun ? 'DRY' : 'LIVE'} ${reviewed ? '검토-결재' : 'AUTO-APPROVE'} ${app} (${docs.length}건${!dryRun ? `, max ${max}` : ''}${maxAmount ? `, ≤${maxAmount}원` : ''})`;
 	const job = enqueue({ kind: 'approve', label, spawnFn: () => nodeLeaf('approve/approve-run.mjs', args) });
 	sendJson(res, 202, { job, dryRun, docs: docs.length });
 	return true;

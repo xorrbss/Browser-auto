@@ -45,8 +45,9 @@
 					<button id="sync-btn" type="button">⟳ 동기화</button>
 					<button id="sync-cancel" type="button" class="cancel-btn" hidden>✕ 취소</button>
 				</div>
-				<p class="note">그룹웨어에 로그인해 미결 결재를 스크랩하고 DB에 저장·표시합니다(P0: 읽기 전용).
-					승인 실행은 P1이며 여기서 수행하지 않습니다. 브라우저 작업은 한 번에 하나씩.</p>
+				<p class="note">그룹웨어에 로그인해 미결 결재를 스크랩·요약해 보여줍니다. 아래 목록에서 결재할 항목을
+					<b>체크</b>하고 <b>[선택 항목 결재]</b>를 누르면 한 번에 자동 결재됩니다(요약·내용을 보고 사람이 직접 선택).
+					브라우저 작업은 한 번에 하나씩.</p>
 				<div class="agent-box">
 					<input id="agent-cmd" placeholder="명령을 한국어로… 예: 관리팀 출장 관련 조회 / 최근 10건 요약 / 미결 새로고침" autocomplete="off" spellcheck="false" />
 					<button id="agent-run" type="button">▶ 실행</button>
@@ -54,7 +55,7 @@
 				<div id="agent-out" class="agent-out" hidden></div>
 
 				<div class="approve-panel">
-					<h3>⚡ 자동 승인 시나리오</h3>
+					<h3>⚡ 자동 승인 (고급 — 문서번호 직접입력)</h3>
 					<p class="note warn">⚠ <b>효과적</b>: 실제 결재를 <b>사람 확인 없이 자동 승인</b>합니다(되돌릴 수 없음). 항상 먼저 <b>미리보기(dry-run)</b>로 확인하세요. <b>동기화된 문서만</b> 가능(제목으로 내용 대조). 가드(전부 fail-closed): 유일 문서번호·제목 일치·금액 상한(선택)·결재선 승인전이 확인. 실제 승인엔 <b>최대 건수 필수</b>. Playwright 로그인 필요: <code>node approve/auth-pw.mjs "&lt;login&gt;" "dashboard.office.hiworks.com" approve/hiworks.pw-state.json</code></p>
 					<input id="approve-app" placeholder="앱 (예: hiworks)" autocomplete="off" spellcheck="false" value="hiworks" />
 					<textarea id="approve-docs" rows="3" placeholder="문서번호 — 한 줄에 하나 (동기화된 미결 문서, 예: IB-품의-20260508-0002)" spellcheck="false"></textarea>
@@ -76,6 +77,21 @@
 						<p class="note">자동 승인 leaf가 매 단계 append-only로 기록한 감사 추적(<code>data/approve-audit.jsonl</code>) — 무엇을 요청/클릭/승인/건너뜀/재조정했는지의 출처. 최신순.</p>
 						<div id="audit-list"><div class="hint">↻ 새로고침으로 감사 로그를 불러옵니다.</div></div>
 					</div>
+
+				<div class="review-bar">
+					<div class="review-head">
+						<h3>✅ 검토 후 일괄 결재</h3>
+						<label><input id="rev-all" type="checkbox" /> 전체 선택</label>
+						<label><input id="rev-dry" type="checkbox" checked /> 미리보기(dry-run)</label>
+						<button id="rev-approve" type="button">✅ 선택 항목 결재 (0)</button>
+						<button id="rev-stop" type="button" class="cancel-btn" hidden>🛑 일괄 중지</button>
+						<button id="rev-cancel" type="button" class="cancel-btn" hidden>✕ 강제중지</button>
+					</div>
+					<p class="note">아래 미결 목록에서 결재할 항목을 <b>체크</b> → <b>[선택 항목 결재]</b>. 요약·내용을 보고 직접 선택하므로 <b>사람이 금액·내용을 통제</b>합니다(혼합 양식 가능). 신원/제목/승인-라디오/완료검증 가드는 항상 적용(fail-closed). 항상 먼저 <b>미리보기(dry-run)</b>로 확인하세요.</p>
+					<div id="rev-status" class="approve-status"></div>
+					<div id="rev-results"></div>
+					<pre id="rev-log" class="joblog" hidden></pre>
+				</div>
 
 				<div id="approvals-list"><div class="hint">결재 목록 로딩 중…</div></div>
 				<pre id="sync-log" class="joblog" hidden></pre>

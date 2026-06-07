@@ -320,20 +320,21 @@ function openJob(id) {
 
 let syncJob = null;
 
-// one approval card (shared by the list and the NL command results)
-function renderApprovalCard(a) {
-	const card = el(
-		'div', { class: 'approval' },
-		el(
-			'div', { class: 'approval-head' },
-			el('span', { class: 'badge sm ' + (a.status === 'approved' ? 'pass' : 'run') }, statusKo(a.status)),
-			el('span', { class: 'approval-title' }, a.title || '(제목 없음)'),
-			el('span', { class: 'approval-id' }, a.doc_id),
-		),
+// one approval card. `selectable` adds a결재-선택 checkbox (the 결재 list passes true; NL results don't).
+function renderApprovalCard(a, selectable = false) {
+	const head = el('div', { class: 'approval-head' });
+	if (selectable && a.status !== 'approved') head.append(el('input', { type: 'checkbox', class: 'rev-chk', title: '결재 선택', dataset: { doc: a.doc_id }, onchange: updateRevCount }));
+	head.append(
+		el('span', { class: 'badge sm ' + (a.status === 'approved' ? 'pass' : 'run') }, statusKo(a.status)),
+		el('span', { class: 'approval-title' }, a.title || '(제목 없음)'),
+		el('span', { class: 'approval-id' }, a.doc_id),
+	);
+	const card = el('div', { class: 'approval' }, head,
 		el('div', { class: 'approval-meta' }, [a.drafter, a.dept, a.submitted_at, a.amount ? a.amount + '원' : null].filter(Boolean).join(' • ')),
 	);
 	if (a.summary) card.append(el('div', { class: 'approval-summary' }, a.summary));
 	else if (a.raw_text) card.append(el('div', { class: 'approval-raw' }, a.raw_text));
+	else if (selectable) card.append(el('div', { class: 'approval-raw hint' }, '요약 없음 — 제목·메타만 확인 후 체크하세요(요약하려면 동기화 후 NL "요약").'));
 	return card;
 }
 
@@ -390,10 +391,47 @@ async function loadApprovals() {
 			box.append(el('div', { class: 'hint' }, '저장된 결재가 없습니다. 위의 동기화를 실행하세요.'));
 			return;
 		}
-		for (const a of approvals) box.append(renderApprovalCard(a));
+		for (const a of approvals) box.append(renderApprovalCard(a, true));
+		updateRevCount(); // fresh cards → reset the selected-count + 전체선택 state
 	} catch (e) {
 		box.replaceChildren(el('div', { class: 'error' }, `결재 목록을 불러오지 못했습니다: ${e.message}`));
 	}
+}
+
+// ---------- ✅ 검토 후 일괄 결재 (human-reviewed batch: check cards → approve all checked at once) ----------
+// The operator reads each summary and CHECKS the items to approve → the human is the content/amount control
+// (총 금액/총 합 계 labels are drafter-typed → unreliable). reviewed:true tells the leaf to relax the
+// full-auto-only form-homogeneity guard; identity/title/승인-radio/완료검증/audit still apply per item.
+let reviewJob = null;
+const revChecks = () => [...document.querySelectorAll('#approvals-list .rev-chk')];
+function updateRevCount() {
+	const boxes = revChecks();
+	const n = boxes.filter((c) => c.checked).length;
+	const btn = $('#rev-approve'); if (btn) btn.textContent = `✅ 선택 항목 결재 (${n})`;
+	const all = $('#rev-all'); if (all) all.checked = boxes.length > 0 && boxes.every((c) => c.checked);
+}
+async function runReviewApprove() {
+	const checked = revChecks().filter((c) => c.checked).map((c) => c.dataset.doc).filter(Boolean);
+	const dryRun = $('#rev-dry').checked;
+	const status = $('#rev-status'), results = $('#rev-results'), log = $('#rev-log');
+	results.replaceChildren();
+	if (!checked.length) { status.replaceChildren(el('div', { class: 'error' }, '결재할 항목을 먼저 체크하세요.')); return; }
+	if (!dryRun && !window.confirm(`⚠ 체크한 ${checked.length}건을 실제로 자동 결재합니다(되돌릴 수 없음). 요약·내용을 확인하셨나요? 진행할까요?`)) return;
+	status.replaceChildren(el('div', { class: 'hint' }, (dryRun ? '미리보기(dry-run)' : '결재') + ` 실행 중… (${checked.length}건)`));
+	log.hidden = false;
+	let resp;
+	try {
+		const r = await fetch('/api/approve/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: 'hiworks', docs: checked, dryRun, reviewed: true }) });
+		resp = await r.json();
+	} catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
+	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '실행이 거부되었습니다.')); return; }
+	reviewJob = resp.job.id;
+	$('#rev-stop').hidden = dryRun; $('#rev-cancel').hidden = false;
+	streamJob(resp.job.id, log, () => {
+		$('#rev-stop').hidden = true; $('#rev-cancel').hidden = true; reviewJob = null;
+		renderApproveResults(log.textContent, status, results);
+		loadApprovals(); loadAudit(); // approved docs leave 대기; new audit rows
+	});
 }
 
 async function startSync() {
@@ -530,6 +568,11 @@ $('#agent-run').addEventListener('click', runAgent);
 $('#agent-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent(); });
 $('#approve-run').addEventListener('click', runApprove);
 $('#audit-refresh').addEventListener('click', loadAudit);
+// ✅ 검토 후 일괄 결재 controls
+$('#rev-approve').addEventListener('click', runReviewApprove);
+$('#rev-all').addEventListener('change', () => { const c = $('#rev-all').checked; revChecks().forEach((b) => (b.checked = c)); updateRevCount(); });
+$('#rev-stop').addEventListener('click', async () => { try { await fetch('/api/approve/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); $('#rev-status').replaceChildren(el('div', { class: 'hint' }, '🛑 중지 요청됨 — 현재 문서까지 끝내고 멈춥니다…')); } catch (e) { $('#rev-status').replaceChildren(el('div', { class: 'error' }, '중지 요청 실패: ' + e.message)); } });
+$('#rev-cancel').addEventListener('click', () => reviewJob && cancelJob(reviewJob));
 // graceful kill-switch: stops the batch BEFORE the next doc (vs the hard tree-kill of 강제중지, which can
 // interrupt mid-approve). For an irreversible-money batch, prefer this.
 $('#approve-stop').addEventListener('click', async () => {

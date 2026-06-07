@@ -27,6 +27,12 @@ const recipePath = opt('--recipe'), statePath = opt('--state'), listUrl = opt('-
 const targetsFile = opt('--targets-file');
 const live = flag('--live');                 // DEFAULT = dry-run (fail-closed); live is explicit
 const dry = !live;
+// --reviewed: a HUMAN-REVIEWED batch — the operator read each doc's summary on the webui review screen and
+// CHECKED the ones to approve, so the human is the content/amount control (amount-by-label is unreliable:
+// 총 금액/총 합 계 are drafter-TYPED, not fixed). This relaxes ONLY the full-auto-only form-homogeneity guard
+// (mixed forms are the human's deliberate selection); every form-AGNOSTIC guard stays (unique 문서번호 open,
+// urlGlob, exactly-one idLabel, title binding, 승인 radio asserted-checked, positive 완료 verify, audit, cap).
+const reviewed = flag('--reviewed');
 const maxN = parseInt(opt('--max', '0'), 10) || 0;
 const maxAmount = parseInt(opt('--max-amount', '0'), 10) || 0;
 const auditPath = opt('--audit', 'data/approve-audit.jsonl');
@@ -50,7 +56,7 @@ if (fs.existsSync(stopFile)) { console.error('[approve] kill-switch (data/approv
 
 fs.mkdirSync(path.dirname(auditPath), { recursive: true });
 const audit = (doc_id, stage, detail) => {
-	const line = JSON.stringify({ at: new Date().toISOString(), doc_id, stage, live, ...(detail ? { detail } : {}) }) + '\n';
+	const line = JSON.stringify({ at: new Date().toISOString(), doc_id, stage, live, reviewed, ...(detail ? { detail } : {}) }) + '\n';
 	const fd = fs.openSync(auditPath, 'a'); try { fs.writeSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 };
 const log = (...a) => console.error('[approve]', ...a);
@@ -220,8 +226,13 @@ try {
 			// a later differing one is refused — never mix forms in one auto-approve batch).
 			const liveForm = await formTypeOf();
 			if (ap.formType && !matchesFormType(liveForm, ap.formType)) { r.status = 'skipped'; r.reason = `form type mismatch (live "${liveForm || '?'}" not in expected ${JSON.stringify(ap.formType)})`; audit(docId, 'skipped', 'form-type-mismatch'); results.push(r); continue; }
-			if (!liveForm) { r.status = 'skipped'; r.reason = 'form-type heading (h1) unreadable on the detail — cannot verify the form (fail-closed)'; audit(docId, 'skipped', 'form-unreadable'); results.push(r); continue; }
-			if (batchForm === null) batchForm = liveForm; else if (batchForm !== liveForm) { r.status = 'skipped'; r.reason = `mixed-form batch: "${liveForm}" ≠ batch form "${batchForm}" — run one form type per batch`; audit(docId, 'skipped', 'mixed-form'); results.push(r); continue; }
+			// Homogeneity + readable-h1 are FULL-AUTO-only safety (they replace human content review for a recipe
+			// valid for ONE form). In --reviewed mode the operator read each summary and checked each item, so a
+			// mixed-form selection is DELIBERATE and the human is the form/content control — skip these two checks.
+			if (!reviewed) {
+				if (!liveForm) { r.status = 'skipped'; r.reason = 'form-type heading (h1) unreadable on the detail — cannot verify the form (fail-closed)'; audit(docId, 'skipped', 'form-unreadable'); results.push(r); continue; }
+				if (batchForm === null) batchForm = liveForm; else if (batchForm !== liveForm) { r.status = 'skipped'; r.reason = `mixed-form batch: "${liveForm}" ≠ batch form "${batchForm}" — run one form type per batch`; audit(docId, 'skipped', 'mixed-form'); results.push(r); continue; }
+			}
 			const beforeStamp = await datedCells(TODAY); // today-dated 결재 cells BEFORE my approve (baseline for the +1 transition)
 			const beforeStampTexts = await datedCellTexts(TODAY); // baseline texts for the actor diff after approval
 			audit(docId, 'identity_ok', `title✓${ceiling ? ` ceiling=${ceiling}` : ''}`);

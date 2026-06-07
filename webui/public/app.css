@@ -277,6 +277,14 @@ body[data-view="runs"] .runbar { display: flex; }
 .approve-tbl tr.st-skipped { background: rgba(150, 150, 150, 0.10); }
 .approve-tbl tr.st-clicked { background: rgba(224, 176, 80, 0.12); }
 
+/* ✅ 검토 후 일괄 결재 */
+.review-bar { border: 1px solid var(--line, #2a2a2a); border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
+.review-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.review-head h3 { margin: 0; margin-right: auto; }
+.review-head label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+#rev-approve { font-weight: 600; }
+.approval-head .rev-chk { margin-right: 4px; width: 16px; height: 16px; cursor: pointer; }
+
 /* NL command box */
 .agent-box { display: flex; gap: 8px; margin: 8px 0; }
 .agent-box input { flex: 1; }
