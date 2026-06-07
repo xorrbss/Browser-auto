@@ -151,3 +151,29 @@ the **highest-leverage hardening** is (1) a **positive 승인-stamp completion m
 verify), (2) **crash reconciliation** of `clicked`-without-`confirmed`, and (3) a **Gate B amount-cell
 capture** for a reliable value ceiling. Until those, run **supervised + bounded** (dry-run first, small
 `--max`, a value ceiling, single-user host), not unattended-at-scale.
+
+---
+
+## Hardening review — (1) marker + (2) reconcile + (3) kill-switch implemented; reviewed (4 lenses + refute) → SAFE-TO-RELY-ON (0C/0H) → reliability mediums fixed
+The 3 unattended hardenings were adversarially reviewed: **0 critical, 0 high, 10 medium, 5 low, 0 refuted —
+and NO regression to any v1/v2/v3-fixed item.** All mediums are **money-SAFE-direction** (false-negative /
+audit-correctness; no false-positive `approved`, no money movement). The unattended-load-bearing ones were fixed:
+- **TZ (STAMP-TZ-1):** `TODAY` was UTC; the 결재선 stamp renders **KST** dates, so the marker false-negatived
+  during KST 00:00–08:59 and mis-audited a real overnight approval `failed`. Now `TODAY` = Asia/Seoul date.
+  (Proven at fix time: KST 2026-06-08 ≠ UTC 2026-06-07 — the bug was active.)
+- **Kill-switch halt-ALL (KILLSWITCH-QUEUED / F-STOP-CLEAR-RACE):** the leaf used to self-clear STOP at
+  startup, so a QUEUED batch clobbered a just-pressed 일괄 중지. Now the leaf **REFUSES to start while STOP
+  exists** (no self-clear); the **/api/approve/run route owns the clear** (an explicit new run). Proven:
+  STOP→leaf refuses+exit 0; /run clears STOP→leaf proceeds.
+- **reconcile (RECONCILE-DRY-RUN-MASKS / DEPARTURE-ONLY / CORRUPT-LINE):** `lastStage` is now built from
+  **LIVE rows only** (a later dry-run can't mask a stranded `clicked`); the audit is parsed **per-line** (a
+  torn final line no longer disables recovery); and a departed doc is **cross-checked for a click-day 승인
+  stamp** at its recorded `detailUrl` — departure-without-stamp ⇒ `reconcile-uncertain` (distinguishes
+  회수/반려 from an approval), not a blind `reconciled-approved`.
+- **marker (F-MARKER-WEAK-PROXY):** the post-확인 stamp is now **polled**, not a single fixed-sleep read.
+
+**Carry-forward LOW (accepted / deferred):** the stamp counts any today-dated cell rather than the approver
+**self-line** (needs actor identity — M4 #10); audit/reconcile keyed globally by `doc_id` (fine for the
+single shared inbox); `/api/approve/stop` inherits the Origin guard (folds into the **R1 present-Origin**
+work — #9). The positive marker's **live end-to-end validation against a real fresh approval still needs a
+disposable 대기 doc.**

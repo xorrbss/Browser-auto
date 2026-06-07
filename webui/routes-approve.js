@@ -91,6 +91,9 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	if (!dryRun) args.push('--live', '--max', String(max));
 	if (maxAmount) args.push('--max-amount', String(maxAmount));
 
+	// An explicit new run clears any kill-switch (halt) — the leaf REFUSES to start while STOP exists, so the
+	// route owns the clear; a queued batch never self-clears (red-team KILLSWITCH-QUEUED).
+	try { fs.rmSync(stopPath(), { force: true }); } catch {}
 	const label = `${dryRun ? 'DRY approve' : 'AUTO-APPROVE'} ${app} (${docs.length}건${!dryRun ? `, max ${max}` : ''}${maxAmount ? `, ≤${maxAmount}원` : ''})`;
 	const job = enqueue({ kind: 'approve', label, spawnFn: () => nodeLeaf('approve/approve-run.mjs', args) });
 	sendJson(res, 202, { job, dryRun, docs: docs.length });
