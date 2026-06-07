@@ -1,6 +1,19 @@
 # Phase 2 — Guarded Approval Execution (design v4)
 
-**Status:** DESIGN ONLY (no code). v4 supersedes v3 after `REDTEAM-v4.md` (the first **independent**
+> ⚠ **THE SHIPPED CODE DIVERGES FROM THIS DESIGN (2026-06-07 owner override).** The system owner, shown the
+> irreversible-financial risk in plain terms, **explicitly released the per-item human-approval gate**
+> (memory `approve-gate-override`) and chose **full auto-approve — no human click.** So the code that ships
+> is **NOT** this out-of-band trusted-content-ceremony design. It is a **full-auto Playwright trusted-click
+> leaf** (`approve/approve-run.mjs` + `webui/routes-approve.js` + `recipes/<app>.approve`) whose
+> **deterministic guards are the SOLE safety** (the human ceremony — the load-bearing safety here — is
+> gone, so every guard fails closed). The red-team of the BUILT code is `REDTEAM-AUTO-APPROVE.md`; the
+> operator-facing summary is README *Safety model → Phase 2 — auto-approve*. **This document is retained as
+> (a) the record of the human-gated design and (b) the contingency to revert to if the owner re-imposes the
+> gate.** Where the two disagree: the BUILT code + `REDTEAM-AUTO-APPROVE.md` are authoritative for *what
+> runs*; this design is authoritative for the *human-gated model* and its invariants I1–I7. See §14.
+
+**Status:** DESIGN-OF-RECORD for the human-gated (OOB-ceremony) model — **superseded at runtime** by the
+full-auto build (see banner + §14). v4 supersedes v3 after `REDTEAM-v4.md` (the first **independent**
 re-verification of the Gate-A PASS) returned **SAFE-TO-IMPLEMENT** (0 critical / 0 high) but surfaced
 10 medium + 2 low spec-precision/completeness items. v4 folds the spec-level mediums in (PRESENCE-3
 body-consent gap; RECON-SWEEP-1 §2↔§4 contradiction; AMOUNT-SHADOW-1 unguarded amount extraction;
@@ -403,3 +416,24 @@ and if native, is an accept primitive empirically proven? Until these are captur
    assertions?
 3. High-value policy when no deterministic amount field exists: fail closed always, or require a
    §12-pinned operator-entered deterministic amount check plus body-digest consent?
+
+## 14. Built path (2026-06-07 owner override) — what actually ships vs. this design
+
+The owner released the per-item-human gate (banner; memory `approve-gate-override`). The shipped path is
+**full auto-approve via a Playwright trusted-click leaf**, NOT this OOB-ceremony design. The mapping:
+
+| This design (human-gated) | What SHIPS (full-auto) |
+|---|---|
+| I1 per-item human content-consent (OOB trusted display) | **REMOVED by the owner.** Replaced by deterministic content binding: live 문서번호 (unique cell, all pages) + idLabel + **title bound to the synced DB** + label-anchored **amount ceiling** + **form-type** match/homogeneity. No human, no OOB helper, no consent signer, no nonce/challenge. |
+| I2 no batch / one ceremony per item | **Bounded batch** instead: a positive `--max` clicks cap (counts the irreversible click), dry-run default, value ceiling, kill-switch. |
+| I3 model has zero authority | **Kept (structural).** `/api/agent` returns candidates only; the leaf is a separate deterministic route; the model is never on the click path. |
+| I4 click-time re-verify (identity + content fingerprint) | **Kept in spirit, not the fingerprint:** unique-cell open → urlGlob → exactly-one idLabel → title binding → amount ceiling → decision radio asserted-checked. (No cryptographic content fingerprint.) |
+| I5 append-only crash-tolerant audit | **Kept:** fsync'd JSONL `data/approve-audit.jsonl` + startup crash reconciliation of `clicked`-without-terminal. |
+| I6 positive commit verification | **Kept + strengthened:** a NEW today-dated 승인 stamp on the doc's own 결재선 line AND 대기 departure (either alone ⇒ fail-closed). |
+| I7 no shared host | **Kept** + a present-Origin/Referer + session-cookie gate on the route; unattended LIVE schedule **forbidden** (`bin/scheduled-task.sh` refuses `--live`). |
+
+The full-auto safety rests ENTIRELY on these deterministic guards (each fail-closed), red-teamed across
+four rounds in `REDTEAM-AUTO-APPROVE.md`. Residual conditions before **unattended-at-scale** live use: a
+live end-to-end approval verification, a **Gate B amount-cell capture** (so the ceiling is exact, not
+heuristic), and agreed auto-approve criteria. Until then: **supervised + bounded** (README *Phase 2 —
+auto-approve*). If the owner re-imposes the human gate, revert to the I1–I7 design above.

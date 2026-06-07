@@ -190,8 +190,8 @@ it (`recipes/hiworks.json`) is valid on **both** paths (see `recipes/SCHEMA.md` 
 ## 결재 (approval) sync — P0: read & display (reference implementation)
 
 A built-on-top feature that scrapes a groupware **approval inbox** into a local DB and shows it on
-the webui dashboard. P0 is **read-only** (no approval execution — that is a later, human-gated phase;
-see *Safety model* below). It reuses the existing pieces: cached auth (`setup/auth.sh`), the
+the webui dashboard. This sync path is **read-only**; approval *execution* is the separate, deterministic
+full-auto path (*Safety model → Phase 2 — auto-approve* below). It reuses the existing pieces: cached auth (`setup/auth.sh`), the
 agent-browser `.success` contract (`lib/env.sh`), and the webui serial job queue (so the browser sync
 runs one-at-a-time like any run).
 
@@ -332,35 +332,80 @@ classifying an NL command) and *summarizing*. Replay and data extraction are det
 - **Single-user, operator-controlled host.** The webui is loopback, no built-in auth; it is only safe on
   a single-user host. Do not run the effectful path on a shared/multi-user machine.
 
-### Phase 2 — guarded approval execution (DESIGN-ONLY, fail-closed)
+### Phase 2 — auto-approve execution (BUILT; full-auto, deterministic-guarded)
 
-Executing an approval (clicking 승인) is an **irreversible** action, so it is gated far more strictly
-than the read path and is **not implemented** — the path is fail-closed until two gates both pass. The
-full design and its red-teams live in `dev/active/phase2-guarded-approve/`. Non-negotiable invariants
-(I1–I7) the design must hold:
+> **Owner decision (2026-06-07).** The system owner, shown the irreversible-financial risk in plain terms,
+> **explicitly released the prior "per-item human approval only" gate** and chose **full auto-approve (no
+> human click)** for their own system. The full history + red-teams live in
+> `dev/active/phase2-guarded-approve/`; the decision is recorded in memory `approve-gate-override`. This
+> README documents the BUILT path. The human gate was the main safety, so with it removed the
+> **deterministic guards below are the SOLE safety — and therefore every one FAILS CLOSED** (skips/aborts
+> the doc on any doubt; they only ever catch errors, they never relax the approve).
 
-1. **Per-item explicit human approval of THIS document's current content** — never a blanket "approve a
-   doc_id"; consent is bound to a content fingerprint re-verified at click time.
-2. **No batch / mass auto-approve** — at most one approve in flight, one human ceremony per item.
-3. **The model has ZERO authority** — structurally off the path to any click.
-4. **Deterministic click-time re-verification** — live 문서번호 + 제목 + content fingerprint must match
-   or ABORT before any click.
-5. **Append-only, crash-tolerant audit** is the source of truth (video is best-effort evidence).
-6. **Positive commit verification** — success requires a positive per-doc 완료 transition, never a
-   negative/navigational signal.
-7. **No shared host.**
+**Architecture.** The approve action needs a *trusted* (`isTrusted`) click — Hiworks ignores agent-browser's
+synthetic 확인 (proven at Gate B), so the approve leaf is an **isolated Playwright driver**
+(`approve/approve-run.mjs`, own `approve/` dir, pinned Playwright, system Chrome via `channel:'chrome'`).
+Read/sync/enrich stay on agent-browser. **The model is structurally OFF this path** — `/api/agent` returns
+approval **candidates only** and has no route to the leaf; the effectful action is a separate deterministic
+route (`POST /api/approve/run`).
 
-Two gates, both required before any implementation:
-- **Gate A — design re-red-team safe-to-implement** (zero confirmed critical/high). Current status:
-  **PASSED and independently re-confirmed** (`REDTEAM-v3.md`, then `REDTEAM-v4.md`; the design — now v4 —
-  closes the v2 `PRESENCE-1` blocker with a mandatory per-item out-of-band trusted-content approval
-  ceremony, and v4 folds in the independent re-verify's spec items).
-- **Gate B — staged capture** of the real approve UI on a **disposable** document (§12), pinning the
-  empirical facts every guard depends on (is 문서번호 unique/outside the body? native confirm dialog?
-  required comment? exact positive completion marker? does the affordance disappear?). **NOT done.**
+**Per-doc deterministic guards (all fail-closed) before the irreversible 확인:**
+- open by the **UNIQUE exact 문서번호 cell, counted across ALL pages** (===1, abort 0/≥2) — never substring;
+- the detail URL matches the recipe `urlGlob`; **exactly one** idLabel cell == doc_id;
+- **TITLE content binding** — the synced title (from the approvals DB) must appear on the live detail (a doc
+  not in the DB is refused — can't content-verify);
+- **amount ceiling** — label-anchored (`approve.amount.label`, e.g. 총 금액), largest KRW figure ≤ ceiling,
+  **fail-closed** when no locator/figure; live requires a ceiling OR an explicit `allowNoValueCeiling` opt-out;
+- **decision radio asserted checked** (승인) before 확인;
+- **form-type guard** — the detail h1 (form type) must be readable, match an optional `approve.formType`
+  pin, and stay **homogeneous across the batch** (no mixed forms);
+- **reliable pager** — the all-pages scan only trusts a contiguous `1..N` combobox; a windowed/ambiguous
+  pager ⇒ uncertain ⇒ fail-closed (never under-scans → never a false "left 대기").
 
-Until Gate A **and** Gate B both pass, the approve path stays fail-closed and unimplemented. Tests will
-use staged/disposable docs only — **never** a real financial approval.
+**Positive completion + recovery:** success requires a **new today-dated 승인 stamp** on the doc's own
+결재선 line **AND** departure from the 대기 inbox (either alone ⇒ fail-closed). An append-only, fsync'd
+JSONL audit (`data/approve-audit.jsonl`, viewable in the 결재 view) is the source of truth; a live run
+first **reconciles** any doc stranded at `clicked` (committed but the process died) by re-checking 대기 +
+the stamp. The **live approver identity** is bound into the `confirmed` audit row.
+
+**Access control:** dry-run is the **default**; live requires explicit `--live` + a positive `--max` count
+cap + a value ceiling; the irreversible-click counter (`clicksIssued`) binds the cap; a **kill-switch**
+(`data/approve-STOP`, the webui 🛑 일괄 중지 button) halts before the next doc. The webui route is gated by a
+present same-origin **Origin/Referer + a session cookie** (`webui/session.js`); it is only safe on a
+**single-user, operator-controlled host**.
+
+**Operating posture — SUPERVISED + BOUNDED, not yet unattended-at-scale.** Run dry-run first, a small
+`--max`, a value ceiling, on a single-user host. **Unattended/scheduled LIVE approve stays FORBIDDEN
+(fail-closed; `bin/scheduled-task.sh` refuses `--live`)** until three operator-accompanied prerequisites
+clear: (1) a **live end-to-end** approval verification, (2) a **Gate-B amount-cell capture** (so the value
+ceiling is exactly pinned, not heuristic), and (3) agreed **auto-approve criteria**. Read/sync/enrich carry
+no financial risk and may be scheduled freely. Approval bodies stay **on-prem**; harden transport before
+prod. Tests use **staged/disposable docs only — never a real financial approval.**
+
+### Scheduling (unattended periodic tasks)
+
+Read/sync/enrich carry no financial risk and can run unattended on a schedule. `bin/scheduled-task.sh` is
+a thin, **fail-closed** entrypoint for the host scheduler (Windows Task Scheduler / cron): it reuses the
+existing drivers (no new engine), **serializes** ticks with a self-healing lock (so two runs never drive
+the one shared agent-browser daemon at once), tees output to `data/scheduler.log`, and **REFUSES any
+`--live`** — so an unattended **LIVE auto-approve can never run through it** (it stays forbidden until the
+three prerequisites above clear).
+
+```bash
+# Wrap any read/sync/enrich driver (repo-relative .sh or .mjs; args pass through):
+bash bin/scheduled-task.sh bin/fetch-approvals.sh --app hiworks      # 결재 list sync
+bash bin/scheduled-task.sh bin/sync-system.sh   --system hiworks      # generic RPA sync
+bash bin/scheduled-task.sh bin/enrich-system.sh --system hiworks      # detail + on-prem summary
+bash bin/scheduled-task.sh approve/approve-run.mjs … --max-amount N   # approve is DRY-RUN only (no --live)
+```
+
+- **Windows Task Scheduler:** Program `C:\Program Files\Git\bin\bash.exe`, Arguments
+  `bin/scheduled-task.sh bin/fetch-approvals.sh --app hiworks`, Start-in `C:\project\Browser-auto`.
+- **cron (Linux/Docker):** `*/30 * * * * cd /app && bash bin/scheduled-task.sh bin/sync-system.sh --system hiworks`.
+
+On a single-user host the scheduler assumes you are not also manually driving a browser job in the webui at
+the same instant (the lock serializes scheduled ticks with each other; cross-coordination with a live manual
+session is the accepted single-user-host residual).
 
 ## Authoring a test (AI or human, no API key)
 
