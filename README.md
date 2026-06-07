@@ -66,7 +66,11 @@ preserves the downloaded `browsers/`:
 bash bin/daemon-recover.sh
 ```
 
-The next `agent-browser` op starts a fresh daemon. Re-run `setup/auth.sh` if the cached session expired.
+It then **primes** a fresh daemon (a throwaway `open → navigate → get url`, retried once) so the next
+real op starts **warm and flake-free** — absorbing the one-time "Daemon version mismatch → restarting"
+(`os error 10060`) the first op after a restart can hit. The throwaway session is left open on purpose
+(a daemon with zero sessions exits); the next recovery reaps it. Set `DAEMON_RECOVER_NO_PRIME=1` to skip
+priming (e.g. a headless box with no browser). Re-run `setup/auth.sh` if the cached session expired.
 
 ## Writing a test
 

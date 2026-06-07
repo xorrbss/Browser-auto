@@ -54,4 +54,32 @@ else
 	echo "[recover] $AB_DIR does not exist — nothing to clean."
 fi
 
-echo "[recover] done. The next agent-browser op will start a fresh daemon."
+# Prime a fresh daemon so the operator's NEXT real op starts warm. agent-browser's very first op after a
+# daemon (re)start can fail once with "Daemon version mismatch -> restarting" (os error 10060) while the
+# daemon respawns -- exactly the failure this script exists to clear. Absorb it here on a THROWAWAY
+# session (open about:blank -> navigate -> get url), retrying once, so a real script never eats that flake.
+# Best-effort: a prime failure is reported but never fails recovery (the next op still starts a daemon).
+# Set DAEMON_RECOVER_NO_PRIME=1 to skip (e.g. a headless box with no browser installed).
+if [ "${DAEMON_RECOVER_NO_PRIME:-0}" = "1" ]; then
+	echo "[recover] prime skipped (DAEMON_RECOVER_NO_PRIME=1)."
+else
+	PRIME_S="recover-prime-$$"
+	primed=0
+	for attempt in 1 2; do
+		if agent-browser --session "$PRIME_S" open about:blank </dev/null >/dev/null 2>&1 \
+			&& agent-browser --session "$PRIME_S" navigate https://example.com </dev/null >/dev/null 2>&1 \
+			&& agent-browser --session "$PRIME_S" get url </dev/null >/dev/null 2>&1; then
+			primed=1
+			echo "[recover] daemon primed and warm (attempt $attempt)."
+			break
+		fi
+		echo "[recover] prime attempt $attempt failed (expected on the first op after restart); retrying..."
+	done
+	# Deliberately DO NOT close $PRIME_S: a daemon with zero open sessions exits (verified), which would
+	# discard the warmth we just established. Leaving the throwaway session open keeps the daemon alive at
+	# the current version so the operator's next real op (on its own session) starts warm and flake-free.
+	# The next `daemon-recover` (or run.sh's reaper) reaps this session; it never accumulates.
+	[ "$primed" = "1" ] || echo "[recover] WARNING: prime did not succeed; the next real op will start the daemon (may eat one first-op flake)."
+fi
+
+echo "[recover] done."
