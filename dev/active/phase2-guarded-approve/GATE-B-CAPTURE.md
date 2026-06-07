@@ -1,8 +1,9 @@
 # Phase 2 approve — Gate B staged capture (Hiworks 지출결의서)
 
 Empirical capture of the REAL Hiworks approve UI, required by DESIGN §12 before any approve
-implementation. **Phase 1 (read-only) is DONE**; **Phase 2 (the effectful 결재 click on a DISPOSABLE
-doc) is PENDING** a disposable document in the operator's 대기(승인 대기) box.
+implementation. **Phase 1 (read-only) is DONE.** **Phase 2 (the effectful 결재 click) is LEFT
+FAIL-CLOSED / NOT COMPLETED** (2026-06-07, operator decision) — see *Phase 2 status* below. Approve
+implementation therefore **remains forbidden** (Gate B incomplete).
 
 ## How this was captured
 - **Phase 1 — read-only (no click):** opened a real *pending* 지출결의서(거래처) doc's detail page with
@@ -49,7 +50,24 @@ doc) is PENDING** a disposable document in the operator's 대기(승인 대기) 
 }
 ```
 
-## Phase 2 prerequisite (what the operator must provide)
+## Phase 2 status — LEFT FAIL-CLOSED (2026-06-07)
+Phase 2 was attempted but **correctly stopped**. The 대기(`lists/W`) box was full-scanned (12/12 pages,
+177 docs); the candidate docs offered could not drive Phase 2:
+- `IB-지출-20260607-0001` and `IB-품의(기안)-20260528-0001` — **not in the 대기 box** (operator is the
+  *drafter*; they sit in 기안/진행 and show no 결재 affordance).
+- `IB-지출(거래처)-20260518-0001` — **is** in 대기, but it is a **real vendor-expense (지출) financial
+  document** awaiting the operator's genuine approval. Approving it would commit a real, irreversible
+  financial approval → **refused** per the inviolable safety gate ("never a real financial approval in a
+  test"). A general "proceed with all" autonomy grant does **not** override that gate.
+
+No disposable, **non-effectful** document (one whose approval has no real consequence) was available in
+the operator's 대기 box, so Phase 2 ends fail-closed. The click-only §12 facts (confirm leg none|dom|
+native + native accept primitive; required-comment; completion transition; affordance disappearance;
+URL/auto-advance; server-fresh/inbox-departure) remain **UNDETERMINED**. **Approve implementation stays
+forbidden** until a genuinely disposable doc allows Phase 2 to complete. The read-only Phase-1 facts
+above stand and need no re-capture.
+
+## Phase 2 prerequisite (what the operator must provide, if/when resumed)
 A **disposable** document that is **pending the operator's own approval** — i.e. it must appear in the
 **대기(승인 대기 / `lists/W`) box** with a live `button "결재"` on the operator's line. A document the
 operator merely **drafted** sits in the 기안/진행 box and shows **no** approve affordance, so it cannot

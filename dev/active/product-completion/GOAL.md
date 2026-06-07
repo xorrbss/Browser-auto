@@ -99,10 +99,13 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   layout is metadata → **결재선 → body**, so DESIGN's `untilMarker:"결재선"` is wrong (결재선 precedes the
   body); completion marker = self-line `button "결재"` → `cell "결재 <date>"`+image. Draft `recipe.approve`
   pinned in the capture doc.
-  **Phase 2 (effectful 결재 click) PENDING** a **disposable doc in the operator's 대기(`lists/W`) box** —
-  the staged `IB-지출-20260607-0001` is in the 기안 box (operator is drafter, not approver) so it shows no
-  approve affordance. Phase 2 will pin the confirm leg (none|dom|native), required-comment, completion
-  transition, affordance disappearance, and URL behavior. **Until A+B complete: fail-closed, do not implement.**
+  **Phase 2 (effectful 결재 click) LEFT FAIL-CLOSED (2026-06-07, operator decision).** No disposable,
+  non-effectful doc was available in the operator's 대기 box: the candidates offered were either
+  drafted-by-operator (not in 대기 — `IB-지출-20260607-0001`, `IB-품의(기안)-20260528-0001`) or a **real
+  financial doc** (`IB-지출(거래처)-20260518-0001` — refused per the "never a real financial approval"
+  gate). So the click-only §12 facts (confirm leg, required-comment, completion transition, affordance
+  disappearance, URL behavior) stay UNDETERMINED. **Gate B is incomplete → approve implementation
+  remains forbidden / fail-closed.** Read-only Phase-1 facts stand (`GATE-B-CAPTURE.md`).
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),
