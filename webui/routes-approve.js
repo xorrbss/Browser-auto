@@ -9,7 +9,18 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { PROBE_ROOT } from './spawn.js';
+
+// lib/db.js (CJS) for the synced approval TITLE per doc_id — the leaf binds approval to that title
+// (content guard; red-team CRITICAL F1). A doc not in the DB cannot be content-verified ⇒ refused.
+const require = createRequire(import.meta.url);
+const { openDb, closeDb, getApproval } = require('../lib/db.js');
+function titlesFor(docs) {
+	const db = openDb();
+	try { const m = {}; for (const d of docs) { const row = getApproval(db, d); m[d] = row && row.title != null ? String(row.title) : null; } return m; }
+	finally { closeDb(db); }
+}
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
@@ -45,21 +56,28 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	const docs = Array.isArray(bodyJson.docs) ? bodyJson.docs : [];
 	if (!docs.length) { sendJson(res, 400, { error: 'docs: a non-empty array of doc_ids is required' }); return true; }
 	if (!docs.every(validDoc)) { sendJson(res, 400, { error: 'docs: each must be a non-empty string ≤100 chars with no comma/newline' }); return true; }
-	const dryRun = bodyJson.dryRun !== false; // DEFAULT DRY-RUN — live approve requires an explicit dryRun:false
+	const dryRun = bodyJson.dryRun !== false; // DEFAULT DRY-RUN — live needs an explicit dryRun:false
 	let max = parseInt(bodyJson.max, 10); if (!Number.isFinite(max) || max < 0) max = 0;
+	let maxAmount = parseInt(bodyJson.maxAmount, 10); if (!Number.isFinite(maxAmount) || maxAmount < 0) maxAmount = 0;
+	// LIVE requires a positive count cap (fail-closed; red-team F5/F2).
+	if (!dryRun && max <= 0) { sendJson(res, 400, { error: '실제 승인(dryRun:false)에는 최대 건수(max ≥ 1)가 필요합니다 — blast-radius 제한.' }); return true; }
+	// CONTENT BINDING (red-team CRITICAL F1): every doc must have a synced TITLE the leaf re-verifies on
+	// the live detail. A doc not in the approvals DB cannot be content-verified ⇒ refuse.
+	const titles = titlesFor(docs);
+	const unsynced = docs.filter((d) => !titles[d]);
+	if (unsynced.length) { sendJson(res, 400, { error: `동기화되지 않은 문서(제목 확인 불가) — 먼저 동기화하세요: ${unsynced.slice(0, 5).join(', ')}${unsynced.length > 5 ? '…' : ''}` }); return true; }
+	const targets = docs.map((d) => ({ doc_id: d, title: titles[d], ...(maxAmount ? { maxAmount } : {}) }));
+	// targets -> a 0600 single-use file in data/ (gitignored); the leaf consumes + deletes it (Korean/size-safe vs argv).
+	const targetsFile = path.join(PROBE_ROOT, 'data', `.approve-targets-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+	try { fs.mkdirSync(path.dirname(targetsFile), { recursive: true }); fs.writeFileSync(targetsFile, JSON.stringify(targets), { mode: 0o600 }); }
+	catch (e) { sendJson(res, 500, { error: 'could not stage targets: ' + (e && e.message) }); return true; }
 
-	const args = [
-		'approve/approve-run.mjs',
-		'--recipe', `recipes/${app}.json`,
-		'--state', `approve/${app}.pw-state.json`,
-		'--list-url', listUrl,
-		'--docs', docs.join(','),
-	];
-	if (dryRun) args.push('--dry-run');
-	if (max) args.push('--max', String(max));
+	const args = ['--recipe', `recipes/${app}.json`, '--state', `approve/${app}.pw-state.json`, '--list-url', listUrl, '--targets-file', targetsFile];
+	if (!dryRun) args.push('--live', '--max', String(max));
+	if (maxAmount) args.push('--max-amount', String(maxAmount));
 
-	const label = `${dryRun ? 'DRY approve' : 'AUTO-APPROVE'} ${app} (${docs.length} doc${docs.length > 1 ? 's' : ''}${max ? `, max ${max}` : ''})`;
-	const job = enqueue({ kind: 'approve', label, spawnFn: () => nodeLeaf('approve/approve-run.mjs', args.slice(1)) });
+	const label = `${dryRun ? 'DRY approve' : 'AUTO-APPROVE'} ${app} (${docs.length}건${!dryRun ? `, max ${max}` : ''}${maxAmount ? `, ≤${maxAmount}원` : ''})`;
+	const job = enqueue({ kind: 'approve', label, spawnFn: () => nodeLeaf('approve/approve-run.mjs', args) });
 	sendJson(res, 202, { job, dryRun, docs: docs.length });
 	return true;
 }

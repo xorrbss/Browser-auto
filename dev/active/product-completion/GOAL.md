@@ -164,6 +164,19 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   auto-approve flow** (the new effectful surface — present-Origin gate on /api/approve, audit-as-SoT,
   amount-cap, fingerprint re-verify depth) + optional CSS polish + headless option. Live auto-approve
   requires an explicit `dryRun:false` (UI confirm dialog) — default is dry-run.
+  **[2026-06-07] P4 DONE → REVISE-FIRST → all critical/high FIXED (`REDTEAM-AUTO-APPROVE.md`).** The
+  red-team of the BUILT code found **1 CRITICAL + 8 HIGH** (all 23 confirmed): (CRIT) approval by bare
+  doc_id, no content/amount/title/value guard; (HIGH) page-1-only completion verify → false-success for
+  page 2+; absence-as-success with no list-loaded proof; substring/first-match open → wrong-doc.
+  **Fixed in `approve/approve-run.mjs` + `webui/routes-approve.js`:** open by the UNIQUE exact 문서번호
+  cell across ALL pages (count===1, abort 0/≥2) → urlGlob assert → exactly-one idLabel → **title content
+  binding** (expected title from the synced approvals DB must appear on the live detail; unsynced docs
+  refused) → optional **`--max-amount` ceiling** (body 원 figure, fail-closed) → **decision radio asserted
+  checked** before 확인 → completion verify scans **ALL pages + asserts the list loaded**. Live now
+  requires explicit `--live` + a positive `--max`. **Validated** (dry-run: requested→identity_ok(title✓)→
+  dry_ok, no race; live-without-max → 400). **Carry-forward:** R1 present-Origin gate on /api/approve
+  (medium), R4 fronted-origin + mid-doc kill-switch (low), and a **re-red-team of this revision** before
+  relying on live batches.
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),

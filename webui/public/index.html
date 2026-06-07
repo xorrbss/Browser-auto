@@ -55,12 +55,13 @@
 
 				<div class="approve-panel">
 					<h3>⚡ 자동 승인 시나리오</h3>
-					<p class="note warn">⚠ <b>효과적</b>: 실제 결재를 <b>사람 확인 없이 자동 승인</b>합니다(되돌릴 수 없음). 항상 먼저 <b>미리보기(dry-run)</b>로 흐름을 확인하세요. Playwright 로그인 필요: <code>node approve/auth-pw.mjs "&lt;login&gt;" "dashboard.office.hiworks.com" approve/hiworks.pw-state.json</code></p>
+					<p class="note warn">⚠ <b>효과적</b>: 실제 결재를 <b>사람 확인 없이 자동 승인</b>합니다(되돌릴 수 없음). 항상 먼저 <b>미리보기(dry-run)</b>로 확인하세요. <b>동기화된 문서만</b> 가능(제목으로 내용 대조). 가드(전부 fail-closed): 유일 문서번호·제목 일치·금액 상한(선택)·결재선 승인전이 확인. 실제 승인엔 <b>최대 건수 필수</b>. Playwright 로그인 필요: <code>node approve/auth-pw.mjs "&lt;login&gt;" "dashboard.office.hiworks.com" approve/hiworks.pw-state.json</code></p>
 					<input id="approve-app" placeholder="앱 (예: hiworks)" autocomplete="off" spellcheck="false" value="hiworks" />
-					<textarea id="approve-docs" rows="3" placeholder="문서번호 — 한 줄에 하나 (예: IB-품의-20260508-0002)" spellcheck="false"></textarea>
+					<textarea id="approve-docs" rows="3" placeholder="문서번호 — 한 줄에 하나 (동기화된 미결 문서, 예: IB-품의-20260508-0002)" spellcheck="false"></textarea>
 					<div class="approve-row">
 						<label><input id="approve-dry" type="checkbox" checked /> 미리보기(dry-run, 승인 안 함)</label>
-						<input id="approve-max" type="number" min="0" placeholder="최대 건수(0=제한없음)" />
+						<input id="approve-max" type="number" min="1" placeholder="최대 건수(실제 승인 시 필수)" />
+						<input id="approve-maxamt" type="number" min="0" placeholder="건당 최대 금액(원, 선택)" />
 						<button id="approve-run" type="button">▶ 실행</button>
 						<button id="approve-cancel" type="button" class="cancel-btn" hidden>✕ 중지</button>
 					</div>
