@@ -109,6 +109,14 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   NOT buildable on agent-browser 0.27.0** (confirm leg = native/unhandleable → DESIGN fail-closed). A
   native-dialog-capable driver/version (or another surface) is a prerequisite. **Approve implementation
   remains forbidden.** Full capture incl. the correct `find` syntax in `GATE-B-CAPTURE.md`.
+- **Driver path for the native-dialog leg — DESIGN ONLY (`DRIVER-PLAYWRIGHT.md`, 2026-06-07).** Designed
+  the approve leaf on **Playwright** (already this project's Docker base; first-class `page.on('dialog',
+  d=>d.accept())`), confined to an isolated effectful leaf (`bin/approve-doc.sh` → `bin/approve-drive.mjs`);
+  read/sync/enrich + webui zero-dep + model-zero-authority all unchanged. Crux = a **one-shot,
+  recipe-pattern-validated** native-dialog accept (never a blanket auto-accept). Bonus: Playwright's
+  own video/trace fixes the red-team wedged-daemon video residual. **Still gated:** red-team this driver
+  surface + re-run Gate B Phase 2 on Playwright (capture the 완료 transition + native message pattern)
+  before any implementation.
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),
