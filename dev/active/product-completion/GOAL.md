@@ -153,6 +153,17 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   `recipe.approve` (decision=승인 radio, confirm=dom, success=승인-stamp/대기-departure) → P3 scenario UI
   (input→run→results) → P4 re-red-team of the auto-approve flow. Guardrails are MAXIMAL since the human
   gate is gone (they only catch errors, never block the auto-approve).
+  **[2026-06-07] STATUS: P0–P3 DONE + validated, P4 pending.** P0 (trusted-click auto-approve proven) ·
+  P1 (`approve/approve-run.mjs` production leaf: recipe-driven batch, idLabel exactly-one guard, --dry-run,
+  --max cap, kill-switch `data/approve-STOP`, append-only fsync'd JSONL audit `data/approve-audit.jsonl`,
+  positive completion verify) · P2 (`recipes/hiworks.json` approve block) · P3 (scenario UI:
+  `webui/routes-approve.js` POST `/api/approve/run` + GET `/api/approve/state`, `spawn.js nodeLeaf`,
+  server wiring, and the "⚡ 자동 승인 시나리오" panel in the 결재 view — doc_ids + dry-run(default) +
+  max + 실행 → job log → parsed results table). **Validated end-to-end via dry-run through the webui**
+  (route 202 → leaf ran → audit requested/idLabel_ok/dry_ok → job done). **Remaining: P4 re-red-team of the
+  auto-approve flow** (the new effectful surface — present-Origin gate on /api/approve, audit-as-SoT,
+  amount-cap, fingerprint re-verify depth) + optional CSS polish + headless option. Live auto-approve
+  requires an explicit `dryRun:false` (UI confirm dialog) — default is dry-run.
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),

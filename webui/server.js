@@ -39,11 +39,12 @@ import path from 'node:path';
 import os from 'node:os';
 import { listRuns, getRun, getTrends, pruneArtifacts, ARTIFACTS_DIR } from './index.js';
 import { enqueue, jobStatus, subscribe, queueState, cancel, stop, killRunning } from './jobs.js';
-import { gitBash, recordCmd } from './spawn.js';
+import { gitBash, recordCmd, nodeLeaf } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
 import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 import { listApprovalsView } from './approvals.js';
 import { rpaPost, rpaGet } from './routes-rpa.js';
+import { approvePost, approveGet } from './routes-approve.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 // Bind address. Default 127.0.0.1 (localhost-only — the safe default for native Windows/macOS use).
@@ -333,6 +334,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 				// 결재/RPA routes (sync, NL command router, system registry) — see webui/routes-rpa.js.
+				if (approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf })) return;
 				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash })) return;
 
 			if (p === '/api/auth') {
@@ -437,6 +439,7 @@ const server = http.createServer(async (req, res) => {
 			return sendJson(res, 200, { approvals: await listApprovalsView() });
 		}
 
+		if (approveGet(p, url, res, { sendJson })) return;
 		if (rpaGet(p, url, res, { sendJson, notFound })) return;
 
 		if (p === '/api/flows') {

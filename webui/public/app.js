@@ -425,6 +425,52 @@ async function startSync() {
 	refreshQueue();
 }
 
+// ---------- ⚡ auto-approve scenario (EFFECTFUL; the leaf approves real docs, no human click) ----------
+let approveJob = null;
+const APPROVE_ST = { approved: '✅ 승인', 'dry-ok': '👁 미리보기', failed: '✗ 실패', skipped: '⤼ 건너뜀' };
+
+async function runApprove() {
+	const app = ($('#approve-app').value || 'hiworks').trim();
+	const docs = $('#approve-docs').value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+	const dryRun = $('#approve-dry').checked;
+	const max = parseInt($('#approve-max').value, 10) || 0;
+	const status = $('#approve-status'), results = $('#approve-results'), log = $('#approve-log');
+	results.replaceChildren();
+	if (!docs.length) { status.replaceChildren(el('div', { class: 'error' }, '문서번호를 한 줄에 하나씩 입력하세요.')); return; }
+	// Live (non-dry) approve is irreversible AND human-gate-free — require an explicit confirm.
+	if (!dryRun && !window.confirm(`⚠ 실제 ${docs.length}건을 사람 확인 없이 자동 승인합니다. 되돌릴 수 없습니다. 진행할까요?`)) return;
+	status.replaceChildren(el('div', { class: 'hint' }, (dryRun ? '미리보기(dry-run)' : '자동 승인') + ' 실행 중…'));
+	log.hidden = false;
+	let resp;
+	try {
+		const r = await fetch('/api/approve/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, docs, dryRun, max }) });
+		resp = await r.json();
+	} catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
+	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '실행이 거부되었습니다.')); return; }
+	approveJob = resp.job.id;
+	$('#approve-cancel').hidden = false;
+	streamJob(resp.job.id, log, () => {
+		$('#approve-cancel').hidden = true;
+		approveJob = null;
+		renderApproveResults(log.textContent, status, results);
+		loadApprovals(); // approved docs left the 대기 inbox
+	});
+}
+
+function renderApproveResults(logText, status, results) {
+	let summary = null;
+	for (const line of logText.split('\n')) {
+		const t = line.trim();
+		if (t.startsWith('{') && t.includes('"results"')) { try { summary = JSON.parse(t); } catch { /* keep scanning */ } }
+	}
+	if (!summary || !Array.isArray(summary.results)) { status.replaceChildren(el('div', { class: 'error' }, '결과 요약을 파싱하지 못했습니다 — 아래 로그를 확인하세요.')); return; }
+	const c = (s) => summary.results.filter((r) => r.status === s).length;
+	status.replaceChildren(el('div', { class: 'hint' }, `${summary.dry ? '미리보기' : '자동 승인'} 완료 — ✅승인 ${c('approved')} · 👁미리보기 ${c('dry-ok')} · ✗실패 ${c('failed')} · ⤼건너뜀 ${c('skipped')} / 총 ${summary.total}`));
+	const tbl = el('table', { class: 'approve-tbl' }, el('tr', {}, el('th', {}, '문서번호'), el('th', {}, '상태'), el('th', {}, '사유')));
+	for (const r of summary.results) tbl.append(el('tr', { class: 'st-' + r.status }, el('td', {}, r.doc_id), el('td', {}, APPROVE_ST[r.status] || r.status), el('td', {}, r.reason || '')));
+	results.replaceChildren(tbl);
+}
+
 // ---------- view switching ----------
 
 const NAV = { runs: '#nav-runs', approvals: '#nav-approvals', systems: '#nav-systems', flows: '#nav-flows', trends: '#nav-trends', auth: '#nav-auth', jobs: '#nav-jobs' };
@@ -454,6 +500,8 @@ $('#auth-btn').addEventListener('click', startAuth);
 $('#sync-btn').addEventListener('click', startSync);
 $('#agent-run').addEventListener('click', runAgent);
 $('#agent-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent(); });
+$('#approve-run').addEventListener('click', runApprove);
+$('#approve-cancel').addEventListener('click', () => approveJob && cancelJob(approveJob));
 $('#sync-cancel').addEventListener('click', () => syncJob && cancelJob(syncJob));
 $('#auth-cancel').addEventListener('click', () => authJob && cancelJob(authJob));
 $('#refresh').addEventListener('click', () => loadView(document.body.dataset.view));

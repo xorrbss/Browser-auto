@@ -48,6 +48,20 @@ export function recordCmd(name, startUrl, { app, seconds, stopFile } = {}) {
 	return gitBash('bin/probe-record.sh', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
 }
 
+// nodeLeaf(scriptRel, args, extraEnv): run a Node leaf (path relative to PROBE_ROOT) with the SAME node
+// binary running the webui, e.g. nodeLeaf('approve/approve-run.mjs', ['--recipe', ...]). Used for the
+// EFFECTFUL approve leaf (Playwright trusted-click driver) — distinct from gitBash (bash CLI). shell:false
+// + array args => no shell interprets web-form input. Same process-group / windowsHide treatment as
+// gitBash so killTree() reaps the whole node -> Chromium tree.
+export function nodeLeaf(scriptRel, args = [], extraEnv = null) {
+	return spawn(process.execPath, [scriptRel, ...args], {
+		cwd: PROBE_ROOT,
+		env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
+		windowsHide: true,
+		detached: !IS_WIN,
+	});
+}
+
 // killTree(pid): kill a process AND its whole descendant tree. child.kill() only signals the top
 // process — it does NOT reap bash -> run.sh -> agent-browser -> Chrome, which would leave a wedged
 // daemon. Windows: taskkill /T walks the tree, /F forces. POSIX: gitBash() spawned the child
