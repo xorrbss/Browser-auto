@@ -143,12 +143,44 @@ plain substring, matched across origins — then saves `fixtures/auth/myapp.stat
 0.27.0.) Tests then start with `AB_AUTH myapp open <url>` and replay unattended — the OTP
 cost is paid once.
 
-## 결재 (approval) sync — P0: read & display
+## RPA — register any web system (generic data collection)
+
+The product layer on top of the framework: a non-coder operator **registers ANY data-collection web
+system** (groupware / ERP / ticketing / a custom admin) from the webui, and the tool **fetches →
+summarizes → queries** its records. There is **no per-site code** — the only thing that differs per
+system is a declarative `recipe` (see `recipes/SCHEMA.md`). Replay/extraction is deterministic; an
+**on-prem** model is used only to *propose* a recipe (analyze) and to *summarize* bodies — never to
+drive the browser, decide an action, or touch the pass/fail gate.
+
+Data lives in `lib/db.js` (`node:sqlite`) — two generic tables: `systems` (the registry: name, label,
+login/success/target URLs, recipe) and `records` (rows keyed per system, `data` JSON + `summary` +
+`status`), at gitignored `data/approvals.db` (PII). The webui **시스템** view drives the whole
+lifecycle (each button enqueues a bash driver on the serial job queue; the web layer reimplements no
+extraction logic):
+
+| step | webui | route | driver | what it does |
+|------|-------|-------|--------|--------------|
+| 1. register | 등록 | `POST /api/systems` | — (`systems.js saveSystem`) | store name + URLs + (optional) recipe; the recipe shape is validated (`collection.name` + `columns` + a `key` ∈ `columns`) so a malformed recipe can't be saved. |
+| 2. 인증 | 인증 | `POST /api/systems/:n/auth` | `setup/auth.sh` | one-time **headed** human login/OTP → `fixtures/auth/<n>.state.json` (cached, gitignored). |
+| 3. 구조분석 | 구조분석 | `POST /api/systems/:n/analyze` | `bin/analyze-system.sh` | open target (cached auth) → snapshot → `propose-recipe.js` (detect ARIA tables/headers + on-prem model maps headers→fields, with a deterministic fallback) → `data/<n>.proposed.json`. The human **reviews/edits** the proposal in the recipe form, then saves it (step 1). |
+| 4. 동기화 | 동기화 | `POST /api/systems/:n/sync` | `bin/sync-system.sh` | cached-auth browser → target list → paginate → `extract-list.js` (arbitrary recipe fields) → `store-records.js` → `records`. |
+| 5. 상세·요약 | 상세·요약 | `POST /api/systems/:n/enrich` | `bin/enrich-system.sh` | per record lacking a summary → open detail (`recipe.detail`, `idLabel == key` guard rejects a wrong/list page) → `extract-detail.js --generic` (arbitrary fields + `raw_text` body) → on-prem `summarize.js` → merge into `records` (`COALESCE`/`json_patch`, never clobbers the list sync). Body **never leaves** the local endpoint. |
+| 6. 조회 | 조회 / NL 명령 | `GET /api/systems/:n/records?q=` · `POST /api/agent` | — | read the records; the NL command box classifies Korean text (on-prem model, **classify-only**) into a validated intent (`sync`/`summarize`/`query`) spanning **both** registered-system records and 결재. |
+
+CLI equivalents (no API key — replay is AI-free): `bin/analyze-system.sh --system <n>` ·
+`bin/sync-system.sh --system <n>` · `SUMMARY_MODEL=… bin/enrich-system.sh --system <n> [--limit N] [--key <id>]`.
+
+The **결재 (Hiworks) feature below is the reference implementation** of this generic path — it predates
+the generalization and keeps its own `fetch-approvals.sh`/`approvals` table, but a recipe written for
+it (`recipes/hiworks.json`) is valid on **both** paths (see `recipes/SCHEMA.md` *Portability*).
+
+## 결재 (approval) sync — P0: read & display (reference implementation)
 
 A built-on-top feature that scrapes a groupware **approval inbox** into a local DB and shows it on
-the webui dashboard. P0 is **read-only** (no approval execution — that is a later, human-gated phase).
-It reuses the existing pieces: cached auth (`setup/auth.sh`), the agent-browser `.success` contract
-(`lib/env.sh`), and the webui serial job queue (so the browser sync runs one-at-a-time like any run).
+the webui dashboard. P0 is **read-only** (no approval execution — that is a later, human-gated phase;
+see *Safety model* below). It reuses the existing pieces: cached auth (`setup/auth.sh`), the
+agent-browser `.success` contract (`lib/env.sh`), and the webui serial job queue (so the browser sync
+runs one-at-a-time like any run).
 
 New pieces (no new stack):
 
@@ -270,6 +302,52 @@ the model stays a classifier, effectful actions stay deterministic + human-gated
 **Summarization is intentionally out of P0**: the approval body can be confidential/PII, so sending
 it to an external LLM is a policy decision. P0 stores/displays the raw text only; a policy-gated
 `bin/summarize.js` can fill the `summary` column later.
+
+## Safety model
+
+The framework's correctness rests on a structural separation: **the AI/LLM never enters the pass/fail
+gate or any effectful (write/approve) click path** — it is confined to *authoring* (proposing a recipe,
+classifying an NL command) and *summarizing*. Replay and data extraction are deterministic.
+
+- **No LLM in the gate (structural, not convention).** Replay is `bash $0` — no API key, no model in
+  the loop. The NL command box classifies into a validated, allow-listed intent only; on any doubt or an
+  unreachable model it degrades to `clarify` (no action). `/api/agent` returns approval **candidates
+  only** — it has no path to execute one.
+- **Confidential bodies stay on-prem.** Detail bodies are summarized only via the configured
+  local/사내 endpoint (`lib/llm.js`); nothing leaves it. `lib/llm.js` *warns* on a public-IP plain-HTTP
+  endpoint; production must harden transport (VPN/SSH-tunnel/TLS) and set `LLM_REQUIRE_PRIVATE=1`.
+- **Single-user, operator-controlled host.** The webui is loopback, no built-in auth; it is only safe on
+  a single-user host. Do not run the effectful path on a shared/multi-user machine.
+
+### Phase 2 — guarded approval execution (DESIGN-ONLY, fail-closed)
+
+Executing an approval (clicking 승인) is an **irreversible** action, so it is gated far more strictly
+than the read path and is **not implemented** — the path is fail-closed until two gates both pass. The
+full design and its red-teams live in `dev/active/phase2-guarded-approve/`. Non-negotiable invariants
+(I1–I7) the design must hold:
+
+1. **Per-item explicit human approval of THIS document's current content** — never a blanket "approve a
+   doc_id"; consent is bound to a content fingerprint re-verified at click time.
+2. **No batch / mass auto-approve** — at most one approve in flight, one human ceremony per item.
+3. **The model has ZERO authority** — structurally off the path to any click.
+4. **Deterministic click-time re-verification** — live 문서번호 + 제목 + content fingerprint must match
+   or ABORT before any click.
+5. **Append-only, crash-tolerant audit** is the source of truth (video is best-effort evidence).
+6. **Positive commit verification** — success requires a positive per-doc 완료 transition, never a
+   negative/navigational signal.
+7. **No shared host.**
+
+Two gates, both required before any implementation:
+- **Gate A — design re-red-team safe-to-implement** (zero confirmed critical/high). Current status:
+  **PASSED and independently re-confirmed** (`REDTEAM-v3.md`, then `REDTEAM-v4.md`; the design — now v4 —
+  closes the v2 `PRESENCE-1` blocker with a mandatory per-item out-of-band trusted-content approval
+  ceremony, and v4 folds in the independent re-verify's spec items).
+- **Gate B — staged capture** of the real approve UI on a **disposable** document (§12), pinning the
+  empirical facts every guard depends on (is 문서번호 unique/outside the body? native confirm dialog?
+  required comment? exact positive completion marker? does the affordance disappear?). **NOT done.**
+
+Until Gate A **and** Gate B both pass, the approve path stays fail-closed and unimplemented. Tests will
+use staged/disposable docs only — **never** a real financial approval.
 
 ## Authoring a test (AI or human, no API key)
 
