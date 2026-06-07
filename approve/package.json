@@ -1,0 +1,10 @@
+{
+  "name": "agent-qa-approve",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ISOLATED effectful approve leaf (trusted-click driver). Lives in its OWN dir (NOT bin/, which is CJS) per red-team LEAF-CONTAINMENT-1. Pinned Playwright; never hoist to repo root.",
+  "dependencies": {
+    "playwright": "1.49.1"
+  }
+}

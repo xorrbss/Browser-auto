@@ -141,6 +141,18 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   provided by the human. **(E)-hybrid is recommended instead** (human's `확인` = the approval; aligns with
   the mandatory OOB ceremony; full-auto trusted-click would be in tension with "the human approves").
   This design stays only as a contingency (e.g. a future unattended mode the safety model doesn't permit).
+- **[2026-06-07] OWNER RELEASED the per-item-human gate → building FULL auto-approve** (memory
+  `approve-gate-override`; reverses the prior "no auto-approve" gate, owner's informed decision). Stack =
+  isolated `approve/` Playwright leaf (pinned 1.49.1, **system Chrome via `channel:'chrome'`** — no browser
+  download; the ms-playwright download stalled). Auth = `approve/auth-pw.mjs` headed login →
+  `approve/hiworks.pw-state.json` (gitignored; agent-browser's CDP-shaped state is NOT reused per AUTH-DUP).
+  **P0 PROVEN:** `approve/poc-approve.mjs` auto-approved disposable `IB-품의-20260429-0001`
+  (`POC_RESULT=APPROVE_COMPLETED`; Playwright trusted 확인 click committed it; doc left 대기) — confirms (B)
+  and that full auto-approve works. **Build plan:** P1 production leaf (idLabel+title+fingerprint re-verify,
+  deterministic caps, dry-run default, kill-switch, append-only audit, positive completion verify) → P2
+  `recipe.approve` (decision=승인 radio, confirm=dom, success=승인-stamp/대기-departure) → P3 scenario UI
+  (input→run→results) → P4 re-red-team of the auto-approve flow. Guardrails are MAXIMAL since the human
+  gate is gone (they only catch errors, never block the auto-approve).
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),

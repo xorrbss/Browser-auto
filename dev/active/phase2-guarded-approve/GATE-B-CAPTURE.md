@@ -144,6 +144,17 @@ The completion marker (승인-stamp self-line + 대기-departure), the confirm k
 (trusted gesture, no dialog) are all captured. Remaining for a real build: a `recipe.approve` update +
 the (E)-hybrid wiring in `webui/routes-approve.js` + a re-red-team of that (simpler) flow.
 
+### P0 PROVEN (2026-06-07): a Playwright trusted click DOES complete the approve → full auto-approve is feasible
+After the owner released the per-item-human gate (see memory `approve-gate-override`), built an isolated
+Playwright leaf (`approve/`, pinned 1.49.1, **system Chrome via `channel:'chrome'`** to avoid the browser
+download) + captured a Playwright-native storageState (`approve/auth-pw.mjs`; the CDP-shaped agent-browser
+state is not reused — AUTH-DUP-2STACK-1). `approve/poc-approve.mjs` on disposable `IB-품의-20260429-0001`:
+opened by row text → **exactly-one idLabel cell == docId** (I4 guard) → 결재 → checked the 승인 radio →
+filled 의견 → **Playwright clicked 확인 (trusted)** → **approval COMMITTED** (doc left the 대기 inbox).
+`POC_RESULT=APPROVE_COMPLETED`. This **confirms (B)** (a real/trusted click is required; agent-browser's
+synthetic click was ignored) and proves **full auto-approve works via a trusted-click driver.** Next:
+P1 production leaf (guardrails) · P2 recipe.approve · P3 scenario UI · P4 re-red-team of the auto flow.
+
 ### (Historical) earlier still-undetermined list — superseded
 - the exact **completion-marker transition** (`button "결재"` → `cell "결재 <date>"`+image) and **affordance
   disappearance** — could not be observed because approval never completed;

@@ -1,0 +1,6 @@
+node_modules/
+evidence/
+*.zip
+*.webm
+*.har
+*.pw-state.json
