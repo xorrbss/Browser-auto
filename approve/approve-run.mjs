@@ -48,7 +48,9 @@ const log = (...a) => console.error('[approve]', ...a);
 const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 
 const results = [];
-let approvedCount = 0;
+let approvedCount = 0;     // CONFIRMED approvals (for the report)
+let clicksIssued = 0;      // irreversible 확인 commits ISSUED — the --max cap binds THIS (red-team CAP-COUNTS):
+                           // a committed-but-uncertain doc must still consume budget, else clicks can exceed --max.
 const browser = await chromium.launch({ headless: false, channel: 'chrome' });
 try {
 	const ctx = await browser.newContext({ storageState: statePath });
@@ -74,6 +76,17 @@ try {
 	const waitSettled = async (prevSig) => { for (let t = 0; t < 16; t++) { const s = await rowsSig(); if (s && s !== prevSig) return s; await page.waitForTimeout(500); } return null; };
 	// rows may arrive via AJAX AFTER listLoaded() (the table name renders before its rows) — poll for data rows.
 	const waitRows = async () => { for (let t = 0; t < 16; t++) { if ((await page.getByRole('row').count()) > 1) return true; await page.waitForTimeout(500); } return false; };
+	// settlePage(prevSig): after selectOption, wait for the page to CHANGE *and then STABILIZE* — data rows
+	// present AND the row signature unchanged across two consecutive reads. waitSettled alone returns on the
+	// FIRST change, which can be a loading/spinner intermediate ⇒ an undercount (red-team APV-1 / SETTLE-
+	// HALFLOAD). Returns the stable sig, or null if it never stabilizes (UNCERTAIN ⇒ caller fail-closes).
+	const settlePage = async (prevSig) => {
+		if (await waitSettled(prevSig) === null) return null;
+		if (!await waitRows()) return null;
+		let last = await rowsSig();
+		for (let t = 0; t < 12; t++) { await page.waitForTimeout(400); const s = await rowsSig(); if (s && s === last) return s; last = s; }
+		return null; // never stabilized within budget ⇒ uncertain
+	};
 	// count exact 문서번호 cells == docId on the CURRENT page
 	const cellCount = (docId) => page.getByRole('cell', { name: docId, exact: true }).count();
 	// count exact 문서번호 cells across ALL pages — NEVER clicks. total:-1 means UNCERTAIN (list not loaded OR a
@@ -86,8 +99,8 @@ try {
 		const ps = await pageSelect();
 		if (ps) for (let p = 2; p <= ps.total; p++) {
 			await ps.sel.selectOption(String(p));
-			const sig = await waitSettled(prevSig);
-			if (sig === null || !await listLoaded()) return { total: -1, foundPage: 0 }; // page didn't settle ⇒ uncertain
+			const sig = await settlePage(prevSig);
+			if (sig === null || !await listLoaded()) return { total: -1, foundPage: 0 }; // page didn't STABLY render ⇒ uncertain
 			prevSig = sig;
 			const c = await cellCount(docId); if (c) { total += c; if (!foundPage) foundPage = p; }
 		}
@@ -100,7 +113,7 @@ try {
 		if (total !== 1) return { ok: false, why: `${total} exact 문서번호 cells across pages (need exactly 1)` };
 		await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
 		if (!await waitListLoaded() || !await waitRows()) return { ok: false, why: 'list did not load before open' };
-		if (foundPage > 1) { const ps = await pageSelect(); if (ps) { const prev = await rowsSig(); await ps.sel.selectOption(String(foundPage)); if (await waitSettled(prev) === null) return { ok: false, why: 'page did not settle before open' }; } }
+		if (foundPage > 1) { const ps = await pageSelect(); if (ps) { const prev = await rowsSig(); await ps.sel.selectOption(String(foundPage)); if (await settlePage(prev) === null) return { ok: false, why: 'page did not settle before open' }; } }
 		// poll until the exact 문서번호 cell renders (rows can lag listLoaded)
 		let ready = false; for (let t = 0; t < 16 && !ready; t++) { if (await cellCount(docId) === 1) ready = true; else await page.waitForTimeout(500); }
 		if (!ready) return { ok: false, why: 'doc cell did not render on its page' };
@@ -132,7 +145,7 @@ try {
 		const docId = norm(t.doc_id), title = norm(t.title);
 		const ceiling = (parseInt(t.maxAmount, 10) || 0) || maxAmount;
 		const r = { doc_id: docId, status: 'failed', reason: null };
-		if (maxN && approvedCount >= maxN) { r.status = 'skipped'; r.reason = `--max ${maxN} reached`; audit(docId, 'skipped', 'cap'); results.push(r); continue; }
+		if (maxN && clicksIssued >= maxN) { r.status = 'skipped'; r.reason = `--max ${maxN} reached (clicks issued)`; audit(docId, 'skipped', 'cap'); results.push(r); continue; }
 		if (fs.existsSync(stopFile)) { r.status = 'skipped'; r.reason = 'kill-switch'; audit(docId, 'skipped', 'kill-switch'); results.push(r); log('KILL-SWITCH — stopping.'); break; }
 		audit(docId, 'requested');
 		try {
@@ -168,6 +181,7 @@ try {
 			if (ap.opinion && ap.opinion.placeholder) { const op = page.getByPlaceholder(ap.opinion.placeholder).first(); if (await op.count() > 0) await op.fill(ap.opinion.text || '자동 승인'); }
 			if (dry) { r.status = 'dry-ok'; r.reason = 'all guards passed; stopped before 확인 (dry-run)'; audit(docId, 'dry_ok'); results.push(r); continue; }
 			audit(docId, 'clicked');
+			clicksIssued++; // consume the cap AT the irreversible commit (before the click), not after the verify
 			await page.getByRole('button', { name: ap.confirm.name, exact: !!ap.confirm.exact }).click();
 			await page.waitForTimeout(3500);
 			// POSITIVE completion verify: list loaded + doc absent across ALL pages

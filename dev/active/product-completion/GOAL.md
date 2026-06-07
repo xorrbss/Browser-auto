@@ -187,6 +187,16 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   parseKRW closes the 원-less-total evasion). Residual: amount label-anchor best-effort (a **Gate B
   amount-cell capture** makes the ceiling fully reliable), R1 present-Origin carry-forward, 3rd re-red-team
   advisable before unattended live.
+  **[2026-06-08] P4 v3 re-red-team (ultracode: 8 lenses + refute-verify) → REVISE-FIRST (0C, 4H→2 roots) →
+  fixed.** v1/v2 closures VERIFIED (identity, double-approve, listLoaded, amount-mechanism, confirm-exact).
+  Fixed: (A) `countDoc` pages 2+ undercount on a half-rendered page → new `settlePage()` (change THEN stable
+  render: waitRows + signature stable across 2 reads; non-stable ⇒ total:-1 fail-closed); (B) `--max`
+  counted confirmed approvals not clicks → new `clicksIssued` cap incremented AT the irreversible 확인 click
+  (committed-but-uncertain now consumes budget). Validated (dry-run settlePage no regression). **Carry-forward
+  (med):** crash-reconciliation of `clicked`-without-`confirmed`, kill-switch→UI wiring, pageSelect windowed
+  pager, **positive 승인-stamp completion marker** (vs absence-based), recipe-per-form-type. Highest-leverage
+  hardening = 승인-stamp marker + crash reconciliation + a **Gate B amount-cell capture**. Until then: run
+  **supervised + bounded** (dry-run first, small --max, value ceiling, single-user host), not unattended-at-scale.
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),

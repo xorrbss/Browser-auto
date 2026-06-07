@@ -97,3 +97,57 @@ title binding → `requested→identity_ok(title✓)→dry_ok`, no race; `live w
 - Lows: title substring (defense-in-depth; identity is pinned by the unique cell), title TOCTOU (sync-time
   snapshot), targets-file orphan on a pre-read crash, decision-radio unanchored regex, mid-doc kill-switch.
 - A **third re-red-team** of this revision remains advisable before unattended live batches.
+
+---
+
+## v3 — 3rd re-red-team (ultracode: 8 lenses + adversarial refute-verify + adjudicate) → REVISE-FIRST → fixed
+58 findings; refuter-checked each high/critical. **0 critical, 4 HIGH (→ 2 root causes), 12 medium, 40 low,
+1 refuted.** (2 of 8 lenses rate-limited — identity/title + crash-reconcile — partially covered by others.)
+**VERIFIED-CLOSED from v1/v2:** wrong-doc identity, double-approve (serial queue + post-commit absence),
+`listLoaded` requires collection.name, the amount fail-closed *mechanism* + live value-ceiling gate, and
+`확인` exact (blocks `확인 후 다음 문서`). 1 REFUTED: completion polarity (the 승인 radio IS asserted checked,
+so the leaf can't submit 반려/협의 — downgraded high→low).
+
+**The 4 HIGH (2 root causes) — fixed in `approve/approve-run.mjs`:**
+- **A. Completion settle race RELOCATED, not eliminated** (APV-1, SETTLE-HALFLOAD-UNDERCOUNT): `countDoc`
+  pages 2+ read `cellCount` after `waitSettled` (the FIRST row-set change — a loading/spinner intermediate)
+  with NO data-render poll, unlike page 1 / `openDoc`; a half-rendered page undercounts ⇒ `total===0` ⇒
+  false `approved`+`confirmed` (money-SAFE direction — under-reports, can't over-approve — but it's the sole
+  post-commit oracle and v2 over-claimed the fix). **FIX:** new `settlePage()` — after the change, require
+  data rows (`waitRows`) AND a **signature stable across two reads**; non-stable ⇒ `total:-1` (uncertain ⇒
+  fail-closed). Applied to `countDoc` pages 2+ and `openDoc`.
+- **B. `--max` counted CONFIRMED approvals, not irreversible clicks** (CAP-COUNTS-CONFIRMED-NOT-CLICKS,
+  MAXCAP-…): `approvedCount++` ran only AFTER the post-approve verify, so a doc whose `확인` committed but
+  whose verify returned `total:-1` was reported `failed`, consumed no budget, and the loop kept clicking ⇒
+  real irreversible commits could exceed `--max` (the primary blast-radius control failed OPEN). **FIX:** a
+  separate `clicksIssued` counter is incremented **at the irreversible click** (before it) and the cap gate
+  binds `clicksIssued` — a committed-but-uncertain doc now consumes budget. (`approvedCount` stays for the report.)
+
+**Validated:** dry-run via webui on a synced doc after the fix → `requested→identity_ok(title✓)→dry_ok`,
+settlePage open path no regression. (Cap-on-clicks is live-only; verified by code review — counter moved to
+the click site.)
+
+**Carry-forward MEDIUM (not blocking the high scope; worth doing):**
+- **Crash/SIGKILL between the 확인 commit and the `confirmed` audit ⇒ committed-but-recorded-`clicked`, no
+  reconciliation** (F-CRASH-CONFIRM-RECONCILE et al.) — a startup pass should re-resolve `clicked`-without-
+  terminal by re-opening the doc and checking the 승인-stamp.
+- **Kill-switch unwired to the UI** (F-KILLSWITCH-UNWIRED) — only a hard SIGKILL stops a running batch; wire
+  `data/approve-STOP` to a webui "중지" button.
+- **`pageSelect` assumes option-count == page-count / picks the first numeric `<select>`** (PAGESELECT-*) —
+  a windowed pager would under-scan ⇒ completion undercount; pin the page-control per recipe.
+- **Completion is absence-from-대기, not the positive 승인-stamp self-line marker** (COMPLETION-ABSENCE-NOT-
+  APPROVAL) — Gate B identified the positive stamp; implementing it is the most robust completion oracle.
+- **Single recipe applied across form types** under `allowNoValueCeiling` (C-RECIPE-MISPIN-NO-FORMTYPE).
+
+**Carry-forward LOW / accepted:** the amount `.first()`+`ancestor-tr[1]` under-read on a multi-total form
+(the one fail-OPEN-on-money residual — best-effort pending a **Gate B amount-cell capture**); R1 absent-Origin
+CSRF; targets-file orphan/PII + Windows-0600-no-op; decision-radio unanchored regex; title page-wide substring;
+error-path PII; headed-window interactability; storageState mid-batch expiry; `allowNoValueCeiling` (owner's
+explicit choice); OS-user I7.
+
+**Honest status:** three rounds in, the highs are now narrow + money-SAFE-direction (a settle race that
+under-reports; a cap that counts the wrong event) and were fixed. The remaining residuals are structural —
+the **highest-leverage hardening** is (1) a **positive 승인-stamp completion marker** (replaces absence-based
+verify), (2) **crash reconciliation** of `clicked`-without-`confirmed`, and (3) a **Gate B amount-cell
+capture** for a reliable value ceiling. Until those, run **supervised + bounded** (dry-run first, small
+`--max`, a value ceiling, single-user host), not unattended-at-scale.
