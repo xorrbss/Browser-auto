@@ -438,14 +438,22 @@ async function runApprove() {
 	const status = $('#approve-status'), results = $('#approve-results'), log = $('#approve-log');
 	results.replaceChildren();
 	if (!docs.length) { status.replaceChildren(el('div', { class: 'error' }, '문서번호를 한 줄에 하나씩 입력하세요.')); return; }
-	// Live (non-dry) approve is irreversible AND human-gate-free — require an explicit count cap + confirm.
-	if (!dryRun && max < 1) { status.replaceChildren(el('div', { class: 'error' }, '실제 승인에는 최대 건수(≥1)가 필요합니다.')); return; }
-	if (!dryRun && !window.confirm(`⚠ 실제 ${docs.length}건을 사람 확인 없이 자동 승인합니다(최대 ${max}건${maxAmount ? `, 건당 ≤${maxAmount}원` : ''}). 되돌릴 수 없습니다. 진행할까요?`)) return;
+	// Live (non-dry) approve is irreversible AND human-gate-free — require an explicit count cap, a value
+	// ceiling (or an explicit no-ceiling opt-out), and a confirm.
+	let allowNoValueCeiling = false;
+	if (!dryRun) {
+		if (max < 1) { status.replaceChildren(el('div', { class: 'error' }, '실제 승인에는 최대 건수(≥1)가 필요합니다.')); return; }
+		if (maxAmount < 1) {
+			if (!window.confirm(`⚠⚠ 금액 상한 없이 자동 승인합니다 — 금액에 관계없이(고액 포함) 승인됩니다. 정말 진행하시겠습니까? (권장: 건당 최대 금액을 설정하세요)`)) return;
+			allowNoValueCeiling = true;
+		}
+		if (!window.confirm(`⚠ 실제 ${docs.length}건을 사람 확인 없이 자동 승인합니다(최대 ${max}건${maxAmount ? `, 건당 ≤${maxAmount}원` : ', 금액 상한 없음'}). 되돌릴 수 없습니다. 진행할까요?`)) return;
+	}
 	status.replaceChildren(el('div', { class: 'hint' }, (dryRun ? '미리보기(dry-run)' : '자동 승인') + ' 실행 중…'));
 	log.hidden = false;
 	let resp;
 	try {
-		const r = await fetch('/api/approve/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, docs, dryRun, max, maxAmount }) });
+		const r = await fetch('/api/approve/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, docs, dryRun, max, maxAmount, allowNoValueCeiling }) });
 		resp = await r.json();
 	} catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
 	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '실행이 거부되었습니다.')); return; }

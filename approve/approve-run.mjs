@@ -60,40 +60,72 @@ try {
 		for (let i = 0; i < n; i++) { const nums = (await selects.nth(i).locator('option').allTextContents()).filter(o => /^\s*\d+\s*$/.test(o)); if (nums.length >= 2) return { sel: selects.nth(i), total: nums.length }; }
 		return null;
 	};
-	// is the 대기 list actually loaded? (collection accessible name OR a table present — NOT a login redirect)
+	// is the 대기 list actually loaded? REQUIRE the collection accessible name when the recipe declares it
+	// (a bare "any table" matches a login/error page — red-team LISTLOADED-*). Fall back to a table only
+	// when no collection.name is configured.
 	const listLoaded = async () => {
-		const byName = recipe.collection && recipe.collection.name ? await page.getByText(recipe.collection.name, { exact: false }).count() : 0;
-		return byName > 0 || (await page.getByRole('table').count()) > 0;
+		if (recipe.collection && recipe.collection.name) return (await page.getByText(recipe.collection.name, { exact: false }).count()) > 0;
+		return (await page.getByRole('table').count()) > 0;
 	};
+	const waitListLoaded = async () => { for (let t = 0; t < 16; t++) { if (await listLoaded()) return true; await page.waitForTimeout(500); } return false; };
+	// row-set signature, to detect a combobox AJAX page change deterministically (vs a fixed sleep — red-team SETTLE-1).
+	const rowsSig = async () => { try { return (await page.getByRole('row').allInnerTexts()).join(''); } catch { return ''; } };
+	// after selectOption(p): poll until the row set CHANGES from prevSig (the page actually loaded). null ⇒ never settled (UNCERTAIN).
+	const waitSettled = async (prevSig) => { for (let t = 0; t < 16; t++) { const s = await rowsSig(); if (s && s !== prevSig) return s; await page.waitForTimeout(500); } return null; };
+	// rows may arrive via AJAX AFTER listLoaded() (the table name renders before its rows) — poll for data rows.
+	const waitRows = async () => { for (let t = 0; t < 16; t++) { if ((await page.getByRole('row').count()) > 1) return true; await page.waitForTimeout(500); } return false; };
 	// count exact 문서번호 cells == docId on the CURRENT page
 	const cellCount = (docId) => page.getByRole('cell', { name: docId, exact: true }).count();
-	// count exact 문서번호 cells across ALL pages — NEVER clicks (so no navigation race). {total, foundPage}
+	// count exact 문서번호 cells across ALL pages — NEVER clicks. total:-1 means UNCERTAIN (list not loaded OR a
+	// page never settled) — callers MUST treat -1 as fail-closed (never approve / never "left inbox").
 	const countDoc = async (docId) => {
-		await page.goto(listUrl, { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(2000);
-		if (!await listLoaded()) return { total: -1, foundPage: 0 };
-		let total = 0, foundPage = 0;
+		await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
+		if (!await waitListLoaded() || !await waitRows()) return { total: -1, foundPage: 0 };
+		let total = 0, foundPage = 0, prevSig = await rowsSig();
 		const c1 = await cellCount(docId); if (c1) { total += c1; foundPage = 1; }
 		const ps = await pageSelect();
-		if (ps) for (let p = 2; p <= ps.total; p++) { await ps.sel.selectOption(String(p)); await page.waitForTimeout(1500); const c = await cellCount(docId); if (c) { total += c; if (!foundPage) foundPage = p; } }
+		if (ps) for (let p = 2; p <= ps.total; p++) {
+			await ps.sel.selectOption(String(p));
+			const sig = await waitSettled(prevSig);
+			if (sig === null || !await listLoaded()) return { total: -1, foundPage: 0 }; // page didn't settle ⇒ uncertain
+			prevSig = sig;
+			const c = await cellCount(docId); if (c) { total += c; if (!foundPage) foundPage = p; }
+		}
 		return { total, foundPage };
 	};
 	// open the UNIQUE doc: count across all pages (abort 0/≥2 — DESIGN T1), then go to its page and click its cell.
 	const openDoc = async (docId) => {
 		const { total, foundPage } = await countDoc(docId);
-		if (total === -1) return { ok: false, why: '대기 list did not load (session/redirect?)' };
+		if (total === -1) return { ok: false, why: '대기 list did not load / a page did not settle (uncertain)' };
 		if (total !== 1) return { ok: false, why: `${total} exact 문서번호 cells across pages (need exactly 1)` };
-		await page.goto(listUrl, { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(1500);
-		if (foundPage > 1) { const ps = await pageSelect(); if (ps) { await ps.sel.selectOption(String(foundPage)); await page.waitForTimeout(1500); } }
-		if (await cellCount(docId) !== 1) return { ok: false, why: 'doc cell not on its page at click time' };
+		await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
+		if (!await waitListLoaded() || !await waitRows()) return { ok: false, why: 'list did not load before open' };
+		if (foundPage > 1) { const ps = await pageSelect(); if (ps) { const prev = await rowsSig(); await ps.sel.selectOption(String(foundPage)); if (await waitSettled(prev) === null) return { ok: false, why: 'page did not settle before open' }; } }
+		// poll until the exact 문서번호 cell renders (rows can lag listLoaded)
+		let ready = false; for (let t = 0; t < 16 && !ready; t++) { if (await cellCount(docId) === 1) ready = true; else await page.waitForTimeout(500); }
+		if (!ready) return { ok: false, why: 'doc cell did not render on its page' };
 		await page.getByRole('cell', { name: docId, exact: true }).click();
 		return { ok: true };
 	};
-	// extract the largest "...원" amount from the detail body (deterministic; fail-closed when absent)
-	const bodyAmount = async () => {
-		const txt = await page.locator('body').innerText().catch(() => '');
-		let max = -1; const re = /([0-9][0-9,]{2,})\s*원/g; let m;
-		while ((m = re.exec(txt))) { const v = parseInt(m[1].replace(/,/g, ''), 10); if (Number.isFinite(v) && v > max) max = v; }
-		return max; // -1 if none
+	// parseKRW(text): largest KRW value in `text`, handling "1,234,567원" / "₩1,234,567" / "5억[3000만]" /
+	// "300만". Returns -1 if no figure. Takes the MAX in the region so a total alongside line items reads
+	// the total (over-read ⇒ over-skip ⇒ fail-safe).
+	const parseKRW = (txt) => {
+		let max = -1; const add = (v) => { if (Number.isFinite(v) && v >= 0 && v > max) max = v; }; let m;
+		const reUnit = /([0-9][0-9,.]*)\s*억(?:\s*([0-9][0-9,.]*)\s*만)?/g; while ((m = reUnit.exec(txt))) add(Math.round(parseFloat((m[1] || '0').replace(/,/g, '')) * 1e8 + (m[2] ? parseFloat(m[2].replace(/,/g, '')) * 1e4 : 0)));
+		const reMan = /([0-9][0-9,.]*)\s*만\s*원?/g; while ((m = reMan.exec(txt))) add(Math.round(parseFloat(m[1].replace(/,/g, '')) * 1e4));
+		const reWon = /(?:₩\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*원?/g; while ((m = reWon.exec(txt))) add(parseInt(m[1].replace(/,/g, ''), 10));
+		return max;
+	};
+	// extractAmount(): LABEL-ANCHORED (recipe.approve.amount.label, e.g. "총 금액") so we read the amount
+	// region, not doc-numbers/dates. Returns: null = no amount locator in the recipe (caller fail-closes),
+	// -1 = locator/figure not found, else the won value. (red-team AMT-CEILING-EVADE: anchor + fail-closed)
+	const extractAmount = async () => {
+		if (!(ap.amount && ap.amount.label)) return null;
+		const lab = page.getByText(ap.amount.label, { exact: false }).first();
+		if (await lab.count() === 0) return -1;
+		const region = (await lab.locator('xpath=ancestor-or-self::tr[1]').innerText().catch(() => '')) || (await lab.locator('xpath=..').innerText().catch(() => ''));
+		return parseKRW(region);
 	};
 
 	for (const t of targets) {
@@ -114,7 +146,13 @@ try {
 			if (await cellCount(docId) !== 1) throw new Error('idLabel: detail does not have exactly one cell == doc_id'); // I4
 			if (await page.getByText(title, { exact: false }).count() === 0) throw new Error(`TITLE mismatch: expected title not on detail page`); // CRITICAL F1/T3
 			audit(docId, 'identity_ok', `title✓${ceiling ? ` ceiling=${ceiling}` : ''}`);
-			if (ceiling) { const amt = await bodyAmount(); if (amt < 0) { r.status = 'skipped'; r.reason = 'amount not found (fail-closed under ceiling)'; audit(docId, 'skipped', 'no-amount'); results.push(r); continue; } if (amt > ceiling) { r.status = 'skipped'; r.reason = `amount ${amt} > ceiling ${ceiling}`; audit(docId, 'skipped', `amount>${ceiling}`); results.push(r); continue; } audit(docId, 'amount_ok', String(amt)); }
+			if (ceiling) {
+				const amt = await extractAmount();
+				if (amt === null) { r.status = 'skipped'; r.reason = 'recipe has no amount locator (approve.amount.label) — cannot enforce ceiling (fail-closed)'; audit(docId, 'skipped', 'no-amount-locator'); results.push(r); continue; }
+				if (amt < 0) { r.status = 'skipped'; r.reason = 'amount not parseable at the 금액 label (fail-closed)'; audit(docId, 'skipped', 'amount-unparseable'); results.push(r); continue; }
+				if (amt > ceiling) { r.status = 'skipped'; r.reason = `amount ${amt} > ceiling ${ceiling}`; audit(docId, 'skipped', `amount>${ceiling}`); results.push(r); continue; }
+				audit(docId, 'amount_ok', String(amt));
+			}
 			// open modal
 			const btn = page.getByRole('button', { name: ap.button.name, exact: !!ap.button.exact });
 			if (await btn.count() !== 1) throw new Error(`approve button "${ap.button.name}": ${await btn.count()} (need 1)`);

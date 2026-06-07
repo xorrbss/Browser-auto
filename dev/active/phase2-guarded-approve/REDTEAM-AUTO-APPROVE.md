@@ -59,3 +59,41 @@ is the next gate before relying on it for live batches.
 
 _Workflow: 5 lenses + adjudicator (6 agents); against the real code. REVISE-FIRST on 1 critical + 8 high;
 all critical/high fixed in this revision, 1 medium + 2 low carried forward._
+
+---
+
+## v2 — re-red-team of the FIXED revision (verdict: REVISE-FIRST → fixed again)
+A second pass on the post-fix code: **0 CRITICAL, 11 HIGH (→ 2 root causes), 4 medium, 8 low** (23, all
+confirmed). Prior status: the 3 wrong-doc highs + the F1 *identity/title* prong are CLOSED; the page-1
+false-success highs were structurally closed BUT the fix **relocated** the race; and F1's *amount* prong
+was still open. The 11 highs collapse to:
+- **Amount ceiling evadable / amount unbound** (AMT-CEILING-EVADE, AMOUNT-CEILING-EVASION-NO-WON, F-AMOUNT-
+  UNBOUND, TITLE-PRESENCE-NOT-CONTENT, AMT-1): the old `max-of /…원/` under-read a real total printed
+  without 원 (a smaller line-item 원 became the max ⇒ over-ceiling approve); the ceiling was optional.
+  **FIX:** amount is now **label-anchored** (`recipe.approve.amount.label`="총 금액"): read the label's row
+  and parse KRW (`parseKRW` handles `원`/`₩`/`억`/`만`, takes the region max). **FAIL-CLOSED**: no amount
+  locator, or no parseable figure at the label ⇒ SKIP. The route now **requires a value ceiling
+  (`maxAmount`) for live, OR an explicit `allowNoValueCeiling:true`** owner opt-out (no silent
+  unbounded-value approve); the UI demands a second confirm for the no-ceiling path. (Verified: parseKRW
+  reads "총 금액 100,000,000"→1e8, "₩50,000,000 수수료 500원"→5e7, "5억원"→5e8, no-amount→-1.)
+- **Completion slow-page race** (VERIFY-SLOWPAGE-FALSE-APPROVED, COMPLETION-UNDERCOUNT-FIXED-TIMEOUT,
+  F-COMPLETE-RACE, SETTLE-1): the fixed `waitForTimeout(1500)` per page let a slow page 2+ read 0 ⇒
+  undercount ⇒ false `approved`+`confirmed`. **FIX:** every fixed post-`selectOption` sleep is replaced by
+  a **positive page-change settle** (`waitSettled`: poll until the row-set signature changes) + a per-page
+  `listLoaded` re-assert + a `waitRows` row-render poll; **a page that never settles ⇒ `countDoc` returns
+  `total:-1` (UNCERTAIN) ⇒ completion fail-closed (never "left inbox"/approved)**.
+- **MEDIUM listLoaded weak** (LISTLOADED-*): bare "any table" trusted a redirect/error page. **FIX:**
+  `listLoaded` now **requires the `collection.name`** marker when the recipe declares it (table fallback
+  only when none configured).
+
+**Validated** (dry-run via webui on a synced doc, after the fix): settle-based scan + row-render poll +
+title binding → `requested→identity_ok(title✓)→dry_ok`, no race; `live without maxAmount & no opt-out → 400`.
+
+**Carry-forward / residual after v2:**
+- **Amount label-anchor is best-effort** — Gate B did not pin the exact 총 금액 cell value-adjacency, so the
+  label-region parse is heuristic (fail-closed on miss). A **Gate B amount-cell capture** would make the
+  ceiling fully reliable; until then, `allowNoValueCeiling` is the owner's explicit unbounded-value choice.
+- **R1 present-Origin gate** on `/api/approve/*` (medium) — still carry-forward (DESIGN T8).
+- Lows: title substring (defense-in-depth; identity is pinned by the unique cell), title TOCTOU (sync-time
+  snapshot), targets-file orphan on a pre-read crash, decision-radio unanchored regex, mid-doc kill-switch.
+- A **third re-red-team** of this revision remains advisable before unattended live batches.

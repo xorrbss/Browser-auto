@@ -177,6 +177,16 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   dry_ok, no race; live-without-max → 400). **Carry-forward:** R1 present-Origin gate on /api/approve
   (medium), R4 fronted-origin + mid-doc kill-switch (low), and a **re-red-team of this revision** before
   relying on live batches.
+  **[2026-06-08] P4 v2 re-red-team → REVISE-FIRST (0C, 11H→2 root causes) → fixed again** (`REDTEAM-AUTO-APPROVE.md`
+  v2 section). (a) **amount**: label-anchored (`recipe.approve.amount.label`="총 금액") + `parseKRW`
+  (원/₩/억/만, region max), **fail-closed** when no locator/figure; route requires a `maxAmount` ceiling
+  for live OR an explicit `allowNoValueCeiling:true` opt-out (no silent unbounded-value approve). (b)
+  **completion race**: fixed per-page sleeps → positive `waitSettled` page-change poll + per-page
+  `listLoaded` + `waitRows`; a non-settling page ⇒ `countDoc total:-1` ⇒ fail-closed. (c) `listLoaded`
+  requires `collection.name`. Validated (dry-run identity_ok(title✓)→dry_ok no race; live w/o ceiling→400;
+  parseKRW closes the 원-less-total evasion). Residual: amount label-anchor best-effort (a **Gate B
+  amount-cell capture** makes the ceiling fully reliable), R1 present-Origin carry-forward, 3rd re-red-team
+  advisable before unattended live.
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),

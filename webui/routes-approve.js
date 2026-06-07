@@ -61,6 +61,12 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	let maxAmount = parseInt(bodyJson.maxAmount, 10); if (!Number.isFinite(maxAmount) || maxAmount < 0) maxAmount = 0;
 	// LIVE requires a positive count cap (fail-closed; red-team F5/F2).
 	if (!dryRun && max <= 0) { sendJson(res, 400, { error: '실제 승인(dryRun:false)에는 최대 건수(max ≥ 1)가 필요합니다 — blast-radius 제한.' }); return true; }
+	// LIVE requires a per-doc VALUE ceiling (maxAmount) OR an explicit owner opt-out — no silent
+	// unbounded-value auto-approve (red-team v2 AMT-CEILING-EVADE / F-AMOUNT-UNBOUND).
+	if (!dryRun && maxAmount <= 0 && bodyJson.allowNoValueCeiling !== true) {
+		sendJson(res, 400, { error: '실제 승인엔 건당 최대 금액(maxAmount ≥ 1)이 필요합니다. 금액 상한 없이 진행하려면 allowNoValueCeiling:true를 명시하세요(무한 금액 자동 승인 — 소유자 책임).' });
+		return true;
+	}
 	// CONTENT BINDING (red-team CRITICAL F1): every doc must have a synced TITLE the leaf re-verifies on
 	// the live detail. A doc not in the approvals DB cannot be content-verified ⇒ refuse.
 	const titles = titlesFor(docs);

@@ -23,6 +23,7 @@
     "idLabelExactlyOne": true,
     "button":   { "role": "button", "name": "결재", "exact": true },
     "decision": { "role": "radio",  "name": "승인" },
+    "amount":   { "label": "총 금액" },
     "opinion":  { "placeholder": "의견을 입력하세요.", "text": "자동 승인" },
     "confirm":  { "role": "button", "name": "확인", "exact": true },
     "success":  "leftInbox",
