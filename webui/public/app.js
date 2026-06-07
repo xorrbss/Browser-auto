@@ -459,8 +459,10 @@ async function runApprove() {
 	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '실행이 거부되었습니다.')); return; }
 	approveJob = resp.job.id;
 	$('#approve-cancel').hidden = false;
+	$('#approve-stop').hidden = dryRun; // graceful kill-switch is meaningful only for a live batch
 	streamJob(resp.job.id, log, () => {
 		$('#approve-cancel').hidden = true;
+		$('#approve-stop').hidden = true;
 		approveJob = null;
 		renderApproveResults(log.textContent, status, results);
 		loadApprovals(); // approved docs left the 대기 inbox
@@ -511,6 +513,12 @@ $('#sync-btn').addEventListener('click', startSync);
 $('#agent-run').addEventListener('click', runAgent);
 $('#agent-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent(); });
 $('#approve-run').addEventListener('click', runApprove);
+// graceful kill-switch: stops the batch BEFORE the next doc (vs the hard tree-kill of 강제중지, which can
+// interrupt mid-approve). For an irreversible-money batch, prefer this.
+$('#approve-stop').addEventListener('click', async () => {
+	try { await fetch('/api/approve/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); $('#approve-status').replaceChildren(el('div', { class: 'hint' }, '🛑 중지 요청됨 — 현재 문서까지 끝내고 멈춥니다…')); }
+	catch (e) { $('#approve-status').replaceChildren(el('div', { class: 'error' }, '중지 요청 실패: ' + e.message)); }
+});
 $('#approve-cancel').addEventListener('click', () => approveJob && cancelJob(approveJob));
 $('#sync-cancel').addEventListener('click', () => syncJob && cancelJob(syncJob));
 $('#auth-cancel').addEventListener('click', () => authJob && cancelJob(authJob));

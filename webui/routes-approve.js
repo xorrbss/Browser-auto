@@ -40,8 +40,17 @@ function listUrlFor(app) {
 // hard constraint is: no comma / newline, non-empty, bounded length. (Hiworks ids contain Korean/()/-.)
 const validDoc = (d) => typeof d === 'string' && d.length > 0 && d.length <= 100 && !/[,\n\r]/.test(d);
 
+const stopPath = () => path.join(PROBE_ROOT, 'data', 'approve-STOP');
+
 // approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) -> handled?
 export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
+	// KILL-SWITCH: write data/approve-STOP — a running approve leaf stops BEFORE its next doc (red-team
+	// F-KILLSWITCH-UNWIRED). Each new run clears it at the leaf's startup, so this only halts the live batch.
+	if (p === '/api/approve/stop') {
+		try { fs.mkdirSync(path.dirname(stopPath()), { recursive: true }); fs.writeFileSync(stopPath(), String(new Date().toISOString())); sendJson(res, 200, { ok: true, stopped: true }); }
+		catch (e) { sendJson(res, 500, { error: 'could not write kill-switch: ' + (e && e.message) }); }
+		return true;
+	}
 	if (p !== '/api/approve/run') return false;
 	const app = String(bodyJson.app || '').trim();
 	if (!NAME_RE.test(app)) { sendJson(res, 400, { error: 'invalid app name' }); return true; }

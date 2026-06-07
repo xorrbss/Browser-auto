@@ -38,6 +38,9 @@ const urlGlobRe = (recipe.detail && recipe.detail.urlGlob) ? new RegExp(recipe.d
 let targets = JSON.parse(fs.readFileSync(targetsFile, 'utf8'));
 try { fs.rmSync(targetsFile, { force: true }); } catch {} // single-use: consume the (possibly-sensitive) targets file
 if (!Array.isArray(targets) || !targets.length) { console.error('targets-file must be a non-empty JSON array'); process.exit(2); }
+// Clear any stale kill-switch at the START of this run so a prior batch's STOP doesn't block this one; a
+// STOP written DURING this run (via the webui 중지 button) is then seen by the per-doc check below.
+try { fs.rmSync(stopFile, { force: true }); } catch {}
 
 fs.mkdirSync(path.dirname(auditPath), { recursive: true });
 const audit = (doc_id, stage, detail) => {
@@ -46,6 +49,7 @@ const audit = (doc_id, stage, detail) => {
 };
 const log = (...a) => console.error('[approve]', ...a);
 const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+const TODAY = new Date().toISOString().slice(0, 10); // YYYY-MM-DD — a 결재선 decision stamp is dated this on approval
 
 const results = [];
 let approvedCount = 0;     // CONFIRMED approvals (for the report)
@@ -89,6 +93,10 @@ try {
 	};
 	// count exact 문서번호 cells == docId on the CURRENT page
 	const cellCount = (docId) => page.getByRole('cell', { name: docId, exact: true }).count();
+	// count detail-page cells whose text contains a date string (a 결재선 decision is dated YYYY-MM-DD).
+	// Used as the POSITIVE completion marker: a NEW today-dated cell appears after my approve (red-team
+	// COMPLETION-ABSENCE-NOT-APPROVAL — replaces absence-only verify).
+	const datedCells = async (d) => { try { return (await page.getByRole('cell').allInnerTexts()).filter((t) => t.includes(d)).length; } catch { return 0; } };
 	// count exact 문서번호 cells across ALL pages — NEVER clicks. total:-1 means UNCERTAIN (list not loaded OR a
 	// page never settled) — callers MUST treat -1 as fail-closed (never approve / never "left inbox").
 	const countDoc = async (docId) => {
@@ -141,6 +149,28 @@ try {
 		return parseKRW(region);
 	};
 
+	// CRASH RECONCILIATION (red-team F-CRASH-CONFIRM-RECONCILE): a doc whose audit's LAST stage is 'clicked'
+	// (committed the 확인 but the process died before a terminal stage) is resolved by the reliable
+	// departure signal — re-scan 대기; absent ⇒ reconciled-approved, present ⇒ reconciled-failed, uncertain ⇒
+	// flagged for manual review. Append-only; never silently. (No-op when there are no stranded 'clicked' rows.)
+	const reconcile = async () => {
+		let entries = [];
+		try { entries = fs.readFileSync(auditPath, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return; }
+		const lastStage = {}; for (const e of entries) lastStage[e.doc_id] = e.stage;
+		const stranded = Object.keys(lastStage).filter((d) => lastStage[d] === 'clicked');
+		if (!stranded.length) return;
+		log(`RECONCILE: ${stranded.length} doc(s) stranded at 'clicked' — resolving by 대기 departure…`);
+		for (const d of stranded) {
+			try {
+				const c = await countDoc(d);
+				if (c.total === -1) { audit(d, 'reconcile-uncertain', '대기 list not loaded'); log(`  RECONCILE ${d}: UNCERTAIN (manual check)`); }
+				else if (c.total === 0) { audit(d, 'reconciled-approved', 'left 대기 — 확인 had committed before the crash'); log(`  RECONCILE ${d}: APPROVED (left 대기)`); }
+				else { audit(d, 'reconciled-failed', 'still in 대기 — 확인 did not commit'); log(`  RECONCILE ${d}: NOT approved (still in 대기)`); }
+			} catch (e) { audit(d, 'reconcile-error', String(e && e.message || e)); log(`  RECONCILE ${d}: error ${e && e.message}`); }
+		}
+	};
+	if (live) await reconcile(); // dry runs never 'clicked', so nothing to reconcile
+
 	for (const t of targets) {
 		const docId = norm(t.doc_id), title = norm(t.title);
 		const ceiling = (parseInt(t.maxAmount, 10) || 0) || maxAmount;
@@ -156,8 +186,10 @@ try {
 			if (!o.ok) throw new Error('open: ' + o.why);
 			await page.waitForTimeout(2000);
 			if (!urlGlobRe.test(page.url())) throw new Error(`click did not open a detail page (url ${page.url()})`); // DOCID-3
+			const detailUrl = page.url(); // recorded for the positive-marker re-open + the 'clicked' audit
 			if (await cellCount(docId) !== 1) throw new Error('idLabel: detail does not have exactly one cell == doc_id'); // I4
 			if (await page.getByText(title, { exact: false }).count() === 0) throw new Error(`TITLE mismatch: expected title not on detail page`); // CRITICAL F1/T3
+			const beforeStamp = await datedCells(TODAY); // today-dated 결재 cells BEFORE my approve (baseline for the +1 transition)
 			audit(docId, 'identity_ok', `title✓${ceiling ? ` ceiling=${ceiling}` : ''}`);
 			if (ceiling) {
 				const amt = await extractAmount();
@@ -180,15 +212,21 @@ try {
 			}
 			if (ap.opinion && ap.opinion.placeholder) { const op = page.getByPlaceholder(ap.opinion.placeholder).first(); if (await op.count() > 0) await op.fill(ap.opinion.text || '자동 승인'); }
 			if (dry) { r.status = 'dry-ok'; r.reason = 'all guards passed; stopped before 확인 (dry-run)'; audit(docId, 'dry_ok'); results.push(r); continue; }
-			audit(docId, 'clicked');
+			audit(docId, 'clicked', detailUrl);
 			clicksIssued++; // consume the cap AT the irreversible commit (before the click), not after the verify
 			await page.getByRole('button', { name: ap.confirm.name, exact: !!ap.confirm.exact }).click();
 			await page.waitForTimeout(3500);
-			// POSITIVE completion verify: list loaded + doc absent across ALL pages
+			// POSITIVE completion verify (red-team COMPLETION-ABSENCE-NOT-APPROVAL): require BOTH a NEW today-dated
+			// 결재 stamp on the doc (server-fresh re-open; absent-before/present-after) AND departure from the 대기
+			// inbox. Either alone is insufficient; any disagreement ⇒ fail-closed (reconciliation re-resolves later).
+			await page.goto(detailUrl, { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(2500);
+			const stamped = (await datedCells(TODAY)) > beforeStamp;
 			const after = await countDoc(docId);
-			if (after.total === -1) throw new Error('post-approve: 대기 list did not load — cannot confirm (uncertain)');
-			if (after.total > 0) throw new Error('post-approve: doc still in 대기 (not committed)');
-			r.status = 'approved'; r.reason = 'left 대기 (all pages, list verified loaded)'; approvedCount++; audit(docId, 'confirmed', 'left 대기 all-pages');
+			if (after.total === -1) throw new Error('post-approve: 대기 list uncertain — cannot confirm');
+			if (!stamped && after.total > 0) throw new Error('post-approve: no new 승인 stamp AND still in 대기 (not committed)');
+			if (!stamped) throw new Error('post-approve: doc left 대기 but NO new today 승인 stamp on its line — uncertain (fail-closed)');
+			if (after.total > 0) throw new Error('post-approve: today 승인 stamp present but doc still in 대기 — contradictory (fail-closed)');
+			r.status = 'approved'; r.reason = `승인 stamp ${TODAY} + left 대기`; approvedCount++; audit(docId, 'confirmed', `stamp ${TODAY} + left 대기`);
 		} catch (e) {
 			if (r.status !== 'skipped' && r.status !== 'dry-ok') r.status = 'failed';
 			r.reason = String(e && e.message || e); audit(docId, r.status === 'skipped' ? 'skipped' : 'failed', r.reason); log(`${docId}: ${r.status} — ${r.reason}`);
