@@ -45,6 +45,7 @@ import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 import { listApprovalsView } from './approvals.js';
 import { rpaPost, rpaGet } from './routes-rpa.js';
 import { approvePost, approveGet } from './routes-approve.js';
+import { issueSessionIfNeeded, approveGate } from './session.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 // Bind address. Default 127.0.0.1 (localhost-only — the safe default for native Windows/macOS use).
@@ -232,10 +233,17 @@ const server = http.createServer(async (req, res) => {
 				} catch {
 					return sendJson(res, 403, { error: 'bad origin' });
 				}
-				if (oh !== `${HOST}:${PORT}` && oh !== `localhost:${PORT}`) {
+				// Match the SAME allowlist as the Host-header guard (above) and the approve gate, so a
+				// fronted/Docker deploy (WEBUI_HOST=0.0.0.0 / WEBUI_ALLOWED_HOSTS) accepts its real Origin
+				// instead of 403'ing legit browsers before approveGate can run (red-team gate-review low).
+				if (!ALLOWED_HOSTS.has(oh.toLowerCase())) {
 					return sendJson(res, 403, { error: 'cross-origin POST refused' });
 				}
 			}
+			// The EFFECTFUL auto-approve route clicks a REAL 확인 with no human, so it is gated STRICTER
+			// than the general guard above: a PRESENT host-matching Origin/Referer (no absent-fall-through —
+			// red-team R1/T8) AND a valid server session cookie (DESIGN §5). See webui/session.js.
+			if (p.startsWith('/api/approve/') && approveGate(req, res, ALLOWED_HOSTS, sendJson)) return;
 			if (p === '/api/run') {
 				let body;
 				try {
@@ -404,6 +412,7 @@ const server = http.createServer(async (req, res) => {
 		}
 
 		if (p === '/' || p === '/index.html') {
+			issueSessionIfNeeded(req, res); // mint the approve session cookie (HttpOnly; SameSite=Strict) — see session.js
 			return serveFile(req, res, path.join(PUBLIC_DIR, 'index.html'));
 		}
 
