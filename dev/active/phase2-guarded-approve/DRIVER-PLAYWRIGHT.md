@@ -1,5 +1,12 @@
 # Phase 2 approve — driver design for the native-dialog leg (Playwright approve leaf) — v2
 
+> ⚠ **SHELVED (2026-06-07) — premise likely refuted.** §0.1 was executed (headed operator run, see
+> `GATE-B-CAPTURE.md` *Phase 2 HEADED verification*): the post-`확인` step is **NOT a native dialog** — the
+> approve completes directly from the DOM modal; the real miss was an **unselected `승인` radio**. So the
+> native-dialog-accept rationale for Playwright no longer holds. **Do the cheap agent-browser radio-test
+> first** (open → 결재 → select 승인 radio → 의견 → 확인 → verify 승인-stamp + 대기 departure). This whole
+> Playwright design stays only as a **contingency** if that test still cannot complete on agent-browser.
+
 **Status: DESIGN ONLY. Implementation forbidden.** v2 supersedes v1 after `REDTEAM-DRIVER.md` returned
 **REVISE-FIRST** (1 HIGH `PW-TRACE-COOKIE-LEAK-1` + 11 med + 7 low). The biggest correction (the
 red-team grounded it in KISS/YAGNI/기존-구조/확장-전-검토): **do NOT adopt Playwright until two cheaper

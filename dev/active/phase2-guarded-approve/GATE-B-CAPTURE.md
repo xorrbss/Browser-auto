@@ -1,10 +1,13 @@
 # Phase 2 approve — Gate B staged capture (Hiworks 지출결의서)
 
 Empirical capture of the REAL Hiworks approve UI, required by DESIGN §12 before any approve
-implementation. **Phase 1 (read-only) is DONE.** **Phase 2 (the effectful 결재 click) was EXERCISED on
-an operator-authorized disposable test doc (2026-06-07) and revealed a FAIL-CLOSED BLOCKER**: the approve
-cannot be completed on agent-browser 0.27.0. The test doc was **left UNAPPROVED**. Approve implementation
-therefore **remains forbidden** on this stack — see *Phase 2 findings* below.
+implementation. **Phase 1 (read-only) is DONE.** **Phase 2 update (2026-06-07, HEADED verification): the
+earlier "agent-browser 0.27.0 cannot complete the approve = native-dialog blocker" conclusion is
+RETRACTED as a likely misdiagnosis** — see *Phase 2 HEADED verification* below. A headed operator run on
+the disposable test doc showed the post-`확인` step is **NOT a separate native dialog**; the approve
+completes directly from the DOM modal, which has a **승인/협의/반려 radio my agent-browser drive never
+selected** (the likely real cause of non-completion). ⇒ **Playwright is probably UNNECESSARY** (pending a
+radio-confirmation test on the existing stack). The test doc IS now approved (operator, headed).
 
 ## How this was captured
 - **Phase 1 — read-only (no click):** opened a real *pending* 지출결의서(거래처) doc's detail page with
@@ -62,6 +65,37 @@ the Hiworks approve path is **not implementable on agent-browser 0.27.0**. The m
 **native-dialog accept** primitive; building approve requires a driver/version that provides it (or a
 different automation surface). This is a TOOLING limit, independent of consent (the operator authorized
 approving the disposable test doc). Until then: **fail-closed.** The test doc was left UNAPPROVED.
+
+> ⚠ **SUPERSEDED 2026-06-07 by the HEADED verification below.** The "native confirm / not implementable on
+> 0.27.0" conclusion in this section was a **misdiagnosis** (red-team `BLOCKER-ASSUMED-1`). A headed
+> operator run showed **no native dialog** after `확인`; the real miss was an unselected `승인` radio. See
+> *Phase 2 HEADED verification*.
+
+## Phase 2 HEADED verification (2026-06-07) — SUPERSEDES the native-dialog conclusion above
+A **headed operator run** on the disposable test doc (`IB-지출(거래처)-20260518-0001`, operator-confirmed
+test data) positively identified the post-`확인` mechanism via screenshots — confirming the red-team's
+`BLOCKER-ASSUMED-1`:
+- **The 결재 modal has a `승인 / 협의 / 반려` RADIO group** (action choice; 승인 = approve), the prompt
+  **"승인하시겠습니까?"** *inside the DOM modal*, an opinion textarea (default "승인 합니다"), and buttons
+  `취소 / 확인 / 확인 후 다음 문서`. **There is NO separate native browser dialog after `확인`** — the
+  operator (explicitly asked to watch for a native popup) reported none; clicking `확인` **completed the
+  approval directly**.
+- **Completion marker (corrected):** the approver's line shows a **승인 stamp (도장 image) + date + name**
+  (verified: 대표이사 **김택균 / 2026-06-07 / 승인**, newly added). **AND** the doc **left the 대기 inbox**
+  (verified read-only: `STILL_IN_대기 = false`). Both are positive I6 signals — supersedes the earlier
+  guess "button 결재 → cell 결재 <date>".
+- **Revised diagnosis of the agent-browser non-completion:** NOT a native dialog. The drive filled the
+  opinion + clicked `확인` but **never selected the `승인` radio** (and may also face a controlled-input/
+  synthetic-gesture issue). The unselected radio is the parsimonious cause.
+- **Implication — Playwright is probably UNNECESSARY** (`DRIVER-PLAYWRIGHT.md` loses its native-dialog
+  premise). agent-browser already does every DOM step; the only missing one is the radio. **Next: a FRESH
+  disposable-doc test** — agent-browser: open → 결재 → **select 승인 radio** → fill 의견 → 확인 → verify the
+  승인-stamp transition + inbox-departure. If it completes, the approve path is buildable on the EXISTING
+  stack (no new dependency).
+- **`recipe.approve` corrections:** add `decision: { by:"role", role:"radio", name:"승인", exact:true }`
+  (select before `확인`); `confirm.kind` is **`dom`** (the modal IS the confirmation), NOT native;
+  `success` = 승인-stamp on the approver's self-line (date == today, name == operator) OR departure from
+  the 대기 inbox on a fresh fetch.
 
 ### Still undetermined (blocked by the above)
 - the exact **completion-marker transition** (`button "결재"` → `cell "결재 <date>"`+image) and **affordance

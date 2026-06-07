@@ -96,19 +96,19 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   click. Key empirical facts: approve label is **"결재" NOT "승인"** (`role button --name 결재 --exact`,
   count==1); **문서번호 unique + in the metadata region, NOT in the URL** (`/view/<internalId>/...`) → open
   by the unique list-row cell, no urlTemplate; **NO metadata 금액** (body-only → PRESENCE-3 confirmed);
-  layout is metadata → **결재선 → body**, so DESIGN's `untilMarker:"결재선"` is wrong (결재선 precedes the
-  body); completion marker = self-line `button "결재"` → `cell "결재 <date>"`+image. Draft `recipe.approve`
-  pinned in the capture doc.
-  **Phase 2 (effectful 결재 click) EXERCISED then FAIL-CLOSED at the STACK level (2026-06-07).** After two
-  candidates that weren't in 대기 (operator-drafted) and one real financial doc (initially refused), the
-  operator clarified `IB-지출(거래처)-20260518-0001` is **test data made to look real** and authorized it,
-  so Phase 2 was run on it. Result: 결재 → a **DOM confirm modal** (의견 required + buttons `확인`/`취소`/
-  `확인 후 다음 문서`[auto-advance]), but **clicking `확인` does NOT complete the approval on agent-browser
-  0.27.0** (the post-`확인` step — likely a native `confirm()` — is unhandleable; tried single + atomic
-  batch, both success but modal stayed open). Doc **left UNAPPROVED** (`취소`). ⇒ **the Hiworks approve is
-  NOT buildable on agent-browser 0.27.0** (confirm leg = native/unhandleable → DESIGN fail-closed). A
-  native-dialog-capable driver/version (or another surface) is a prerequisite. **Approve implementation
-  remains forbidden.** Full capture incl. the correct `find` syntax in `GATE-B-CAPTURE.md`.
+  layout is metadata → **결재선 → body**. Draft `recipe.approve` pinned in the capture doc.
+  **Phase 2 — HEADED verification (2026-06-07) RETRACTS the earlier "native-dialog blocker".** First an
+  agent-browser drive of `IB-지출(거래처)-20260518-0001` (operator-confirmed test data) appeared to stall
+  at `확인` → I wrongly inferred an unhandleable native `confirm()`. A **headed operator run** then showed
+  the truth (red-team `BLOCKER-ASSUMED-1` was right): the 결재 modal has a **`승인/협의/반려` radio** + the
+  in-DOM prompt "승인하시겠습니까?" + 의견; **clicking `확인` completes directly — NO native dialog.** The
+  real miss was that my drive **never selected the `승인` radio**. The operator completed the approval
+  headed (대표이사 김택균 / 2026-06-07 / **승인 stamp**); read-only AFTER confirms the doc **left the 대기
+  inbox** (positive I6). ⇒ **completion marker = 승인-stamp(self-line, today, operator) + 대기-departure**
+  (supersedes the 결재-cell guess); **`confirm.kind = dom` (not native); Playwright is probably
+  UNNECESSARY.** Next cheap step: agent-browser test on a FRESH disposable doc with the **승인-radio**
+  step → if it completes, approve is buildable on the EXISTING stack. **Approve implementation still
+  forbidden** until that confirm + a recipe.approve update + re-red-team.
 - **Driver path for the native-dialog leg — DESIGN ONLY, now v2 (`DRIVER-PLAYWRIGHT.md` + `REDTEAM-DRIVER.md`).**
   v1 designed the approve leaf on **Playwright** (the project's Docker base; first-class dialog accept).
   **Red-team → REVISE-FIRST** (1 HIGH + 11 med + 7 low): the gate-blocking **HIGH PW-TRACE-COOKIE-LEAK-1**
@@ -123,6 +123,9 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   + hardened shared extractor (CANON/REF), leaf in its OWN dir not `bin/` (LEAF-CONTAINMENT), CDP-shaped
   auth → native capture (AUTH-DUP), persistent counting dialog handler + exact anchored message (dialog
   lows/meds), scrubbed child env (ENV-PROPAGATE). **Approve implementation still forbidden.**
+  **⚠ SHELVED (2026-06-07):** the headed verification above ran §0.1 and found the post-`확인` step is
+  **NOT a native dialog** → Playwright's whole rationale is gone. This driver design stays only as a
+  contingency if the cheap agent-browser **승인-radio** test still cannot complete the approve.
 - After Gate A+B only, implement per DESIGN v3: `bin/approve-doc.sh`, `webui/routes-approve.js`
   (session cookie, present Origin gate, mandatory OOB trusted content approval, content-fingerprint
   re-verify, isolated asymmetric consent signer), append-only `approval_audit` (`synchronous=FULL`),
