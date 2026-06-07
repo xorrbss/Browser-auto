@@ -72,9 +72,13 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
 - Footguns fixed live: `--exact` breaks the doc-id click (rendered inside a cell → substring); a chained
   `find…click` exits NON-ZERO on not-found → `|| true` guard so an off-page/transient doc skips (not
   aborts the batch). Added `--key` targeting.
-- **Remaining (scale step):** enrich **pagination** — summarize ALL 177 across the 12-page list (today
-  `find text` only reaches the current page; off-page docs are gracefully skipped). A heavy batch
-  (177 × browser-open + on-prem inference); run via CLI/the webui button when wanted.
+- **Enrich pagination — DONE (code + mechanism live-verified, 2026-06-07):** `enrich-system.sh` now
+  scans ALL list pages (combobox `@ref` per page, mirroring `sync-system.sh`), so a record on any of the
+  12 pages is reachable, not just page 1. Verified with ZERO model egress (hiworks = 12 pages; select
+  page 2 changes the key set). **Remaining = the full summarize RUN itself** (177 × browser-open +
+  on-prem inference): a deliberate heavy batch, and because the bodies are confidential it is
+  **transport-gated** — run only against a private/TLS endpoint (`LLM_REQUIRE_PRIVATE=1`); the current
+  endpoint is public-IP plain HTTP (M4 infra). Detail-only enrich (no `SUMMARY_MODEL`) has no egress.
 - **Done when:** a registered system's records carry dept/body/summary [✓ proven]; a digest works from
   the UI [webui button + summary rendering wired; full-batch is the pagination scale step].
 
