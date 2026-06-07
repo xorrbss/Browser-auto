@@ -96,6 +96,25 @@ source "$PROBE_ROOT/lib/assert.sh"   # wait_url (gate the click→detail navigat
 echo "[enrich-system] launching browser with cached '$SYSTEM' session…"
 AB_AUTH "$SYSTEM" open </dev/null >/dev/null
 
+# Pagination context (so enrich reaches docs on ANY list page, not just page 1). Mirror sync-system.sh:
+# the total page count = the number of page-number <option>s, and page 1's key signature lets a combobox
+# page change be detected as "settled". extract-list.js yields the per-page keys from a list snapshot.
+LIST_READY="$(jq -r '.ready.text // empty' "$RECIPE")"
+PAGINATE="$(jq -r '.pagination.mode // empty' "$RECIPE")"
+EX_LIST="$PROBE_ROOT/bin/extract-list.js"
+_list_keysig() { printf '%s' "$1" | node "$EX_LIST" "$RECIPE" 2>/dev/null | jq -r '[.[].key]|sort|join(",")' 2>/dev/null || true; }
+AB_JSON navigate "$TARGET" </dev/null >/dev/null 2>&1 || true
+[ -z "$LIST_READY" ] || AB_JSON wait --text "$LIST_READY" --timeout 15000 </dev/null >/dev/null 2>&1 || true
+P1SNAP="$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)"
+SIG1="$(_list_keysig "$P1SNAP")"
+TOTAL=1
+if [ "$PAGINATE" = "combobox" ]; then
+	TOTAL="$(printf '%s' "$P1SNAP" | jq '[.refs[]|select(.role=="option" and (((.name//"")|test("^[0-9]+$"))))]|length' 2>/dev/null || echo 1)"
+	[ "$TOTAL" -ge 1 ] 2>/dev/null || TOTAL=1
+	[ "$TOTAL" -gt 100 ] && TOTAL=100
+fi
+echo "[enrich-system] list has $TOTAL page(s)."
+
 i=0
 for key in "${DOCS[@]}"; do
 	echo "[enrich-system] ($((i+1))/${#DOCS[@]}) $key"
@@ -106,10 +125,29 @@ for key in "${DOCS[@]}"; do
 	# `|| true`: a chained `find … click` returns a NON-ZERO exit when the element isn't found (e.g. the
 	# doc is on another list page) — without it, set -e would ABORT the whole batch instead of skipping
 	# this one doc. The .success check below turns a not-found / transient daemon error into a skip.
+	# Re-navigate to page 1 (we may be on a previous doc's detail page), then SCAN list pages until the
+	# click lands — a target doc can be on any page. Page forward via the combobox @ref (read FRESH per
+	# page, never stored), settling when the key set differs from page 1 (mirrors sync-system.sh).
 	AB_JSON navigate "$TARGET" </dev/null >/dev/null 2>&1 || true
-	cj="$(AB_JSON find text "$key" click </dev/null || true)"
-	if [ "$(printf '%s' "$cj" | jq -r '.success' 2>/dev/null)" != "true" ]; then
-		echo "  ⚠ not on the current list page / click failed ($(printf '%s' "$cj" | jq -r '.error // "?"' 2>/dev/null)) — skipping" >&2; continue
+	[ -z "$LIST_READY" ] || AB_JSON wait --text "$LIST_READY" --timeout 12000 </dev/null >/dev/null 2>&1 || true
+	clicked=0
+	for ((p=1; p<=TOTAL; p++)); do
+		if [ "$p" -gt 1 ]; then
+			cur="$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)"
+			ref="$(printf '%s' "$cur" | jq -r '.refs|to_entries[]|select(.value.role=="combobox")|.key' 2>/dev/null | head -1 || true)"
+			[ -n "$ref" ] || break
+			AB select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
+			for _t in $(seq 1 12); do
+				ids="$(_list_keysig "$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)")"
+				[ -n "$ids" ] && [ "$ids" != "$SIG1" ] && break
+				sleep 0.5
+			done
+		fi
+		cj="$(AB_JSON find text "$key" click </dev/null || true)"
+		[ "$(printf '%s' "$cj" | jq -r '.success' 2>/dev/null)" = "true" ] && { clicked=1; break; }
+	done
+	if [ "$clicked" != 1 ]; then
+		echo "  ⚠ not found on any of $TOTAL list page(s) / click failed — skipping" >&2; continue
 	fi
 	# Reliability gate: the click must NAVIGATE to a detail URL — else skip (never snapshot the list).
 	if [ -n "$DETAIL_URLGLOB" ] && ! wait_url "$DETAIL_URLGLOB" 12; then

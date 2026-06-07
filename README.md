@@ -174,6 +174,15 @@ extraction logic):
 CLI equivalents (no API key — replay is AI-free): `bin/analyze-system.sh --system <n>` ·
 `bin/sync-system.sh --system <n>` · `SUMMARY_MODEL=… bin/enrich-system.sh --system <n> [--limit N] [--key <id>]`.
 
+**Pagination & the full batch.** Both `sync-system.sh` and `enrich-system.sh` drive a
+`pagination.mode == "combobox"` list across **every** page (the page-number `<select>` via its
+transient `@ref`, read fresh per page — never stored), so enrich reaches a record on **any** page, not
+just the first. Running detail+summary over a large inbox is a deliberate **heavy batch** (each record =
+a browser open + an on-prem inference). Because the bodies are confidential, run the full summarize
+batch only against a **private/TLS** model endpoint — set `LLM_REQUIRE_PRIVATE=1` so `summarize.js`
+refuses a public-host/plain-HTTP endpoint (see *Safety model*). Detail-only enrich (no `SUMMARY_MODEL`)
+sends nothing to the model.
+
 The **결재 (Hiworks) feature below is the reference implementation** of this generic path — it predates
 the generalization and keeps its own `fetch-approvals.sh`/`approvals` table, but a recipe written for
 it (`recipes/hiworks.json`) is valid on **both** paths (see `recipes/SCHEMA.md` *Portability*).
