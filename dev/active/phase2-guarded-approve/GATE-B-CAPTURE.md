@@ -97,6 +97,26 @@ test data) positively identified the post-`확인` mechanism via screenshots —
   `success` = 승인-stamp on the approver's self-line (date == today, name == operator) OR departure from
   the 대기 inbox on a fresh fetch.
 
+### Radio hypothesis — TESTED & REFUTED (2026-06-07); agent-browser still cannot complete the submit
+Follow-up agent-browser run on a fresh disposable test doc (`IB-품의-20260508-0001`, operator-confirmed
+test data): the modal's `승인` is a **native `<input type=radio>`** (name " 승인" w/ leading space) and
+`find role radio --name 승인` returns **"Element not found"** (the CLAUDE.md native-input locator footgun).
+Clicking it **via its transient `@ref`** (`success:true`) + filling 의견 + clicking `확인` (`success:true`)
+**STILL did not complete** the approval (modal stayed open, 결재 button present, no today stamp). So **the
+승인 radio is NOT the blocker.** Net (honest re-correction of the "Playwright probably unnecessary" note
+above): **agent-browser 0.27.0 genuinely cannot complete the Hiworks final approve submit** — every step
+returns `success` but the approval never commits, regardless of the radio.
+- **Remaining candidate causes (narrowed):** (A) a native `confirm()` after `확인` that agent-browser
+  auto-dismisses (= Cancel), or (B) Hiworks' submit requires a **trusted (`isTrusted`) user gesture** that
+  agent-browser's synthetic click does not provide. The operator reported **no native popup**, weakly
+  favoring (B).
+- **Implication (revised back):** a driver that emits **trusted events** (Playwright dispatches
+  `isTrusted=true` via CDP **and** can accept native dialogs) — or the **headed-manual path (E)** where the
+  operator does the final click — is required. `DRIVER-PLAYWRIGHT.md` is **un-shelved**, its rationale
+  broadened from "native-dialog accept" to **"trusted-gesture + dialog handling."** Either Playwright or
+  (E) still needs a positive completion test. **`recipe.approve.decision{radio 승인}` requires an `@ref`/
+  CSS or label-text locator** (native radios aren't reachable by `find role --name`).
+
 ### Still undetermined (blocked by the above)
 - the exact **completion-marker transition** (`button "결재"` → `cell "결재 <date>"`+image) and **affordance
   disappearance** — could not be observed because approval never completed;

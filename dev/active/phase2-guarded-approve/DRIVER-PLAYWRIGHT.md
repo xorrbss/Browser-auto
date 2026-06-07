@@ -1,11 +1,16 @@
 # Phase 2 approve — driver design for the native-dialog leg (Playwright approve leaf) — v2
 
-> ⚠ **SHELVED (2026-06-07) — premise likely refuted.** §0.1 was executed (headed operator run, see
-> `GATE-B-CAPTURE.md` *Phase 2 HEADED verification*): the post-`확인` step is **NOT a native dialog** — the
-> approve completes directly from the DOM modal; the real miss was an **unselected `승인` radio**. So the
-> native-dialog-accept rationale for Playwright no longer holds. **Do the cheap agent-browser radio-test
-> first** (open → 결재 → select 승인 radio → 의견 → 확인 → verify 승인-stamp + 대기 departure). This whole
-> Playwright design stays only as a **contingency** if that test still cannot complete on agent-browser.
+> ⚠ **UN-SHELVED (2026-06-07) — rationale BROADENED after two tests.** The cheap agent-browser path was
+> tried and **failed**: even after selecting the `승인` radio via `@ref` + filling 의견 + `확인` (all
+> `success`), the approve **does not complete** (`GATE-B-CAPTURE.md` *Radio hypothesis — REFUTED*). So
+> **agent-browser 0.27.0 cannot complete the final submit** — cause narrowed to **(A) a native `confirm()`
+> auto-dismissed** or **(B) an `isTrusted` user-gesture requirement** the synthetic click doesn't meet
+> (operator saw no native popup → weakly (B)). **Playwright addresses BOTH** (CDP `isTrusted=true` events +
+> native-dialog accept), so this design is relevant again — but its rationale is now **"trusted-gesture +
+> dialog handling,"** not only "native-dialog accept" (so the §5 dialog handler may be a no-op if it's (B);
+> keep it as defense). The **headed-manual path (E)** remains the zero-new-dependency alternative (the
+> operator does the final click — confirmed working). Next: confirm Playwright (or (E)) positively
+> completes a staged approval before building. All v2 REVISE-FIRST fixes below still apply.
 
 **Status: DESIGN ONLY. Implementation forbidden.** v2 supersedes v1 after `REDTEAM-DRIVER.md` returned
 **REVISE-FIRST** (1 HIGH `PW-TRACE-COOKIE-LEAK-1` + 11 med + 7 low). The biggest correction (the
