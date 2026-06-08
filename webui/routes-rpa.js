@@ -36,6 +36,15 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash }) 
 		}
 		if (intent.action === 'query') { sendJson(res, 200, { intent, approvals: runQuery(intent.filter || {}), systems: runRecordsQuery(intent.filter || {}) }); return true; }
 		if (intent.action === 'approve') { sendJson(res, 200, { intent, approvals: runQuery(intent.filter || {}), note: '승인 후보입니다. 실제 승인 실행은 아직 비활성(2단계, 항목별 사람 확인 후).' }); return true; }
+		// review = PREPARE the human checkbox-review surface: optionally summarize (read/on-prem), then the UI
+		// shows the 결재 checkbox review. NEVER approves — the model has NO path to the approve route; the human
+		// checks the items and clicks 선택 항목 결재 (that separate route is the only approve execution).
+		if (intent.action === 'review') {
+			const resp = { intent, surface: 'approvals-review' };
+			if (intent.summarize) resp.job = enqueue({ kind: 'summarize', label: '요약 (검토-결재 준비)', spawnFn: () => gitBash('bin/enrich-approvals.sh', []) });
+			sendJson(res, 200, resp);
+			return true;
+		}
 		sendJson(res, 200, { intent });
 		return true;
 	}

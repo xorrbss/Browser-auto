@@ -369,6 +369,15 @@ async function runAgent() {
 		if (data.job) streamJob(data.job.id, log, () => loadApprovals());
 		return;
 	}
+	// review = the composite "prepare to approve" intent: (optionally) summarize, THEN surface the 결재
+	// checkbox review so the user checks + clicks 선택 항목 결재. The model only classified — it never approves.
+	if (intent.action === 'review') {
+		out.append(el('div', { class: 'note' }, '검토-결재 준비 — 아래 목록에서 결재할 항목을 체크하고 [✅ 선택 항목 결재]를 누르세요(사람이 직접 선택).'));
+		const after = () => { loadApprovals(); const rb = document.querySelector('.review-bar'); if (rb) rb.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+		if (data.job) { const log = el('pre', { class: 'joblog' }); out.append(log); streamJob(data.job.id, log, after); }
+		else after();
+		return;
+	}
 	if (intent.action === 'query' || intent.action === 'approve') {
 		if (data.note) out.append(el('div', { class: 'note' }, data.note));
 		const rows = data.approvals || [];

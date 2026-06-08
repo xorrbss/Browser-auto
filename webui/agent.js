@@ -32,7 +32,7 @@ const { openDb, closeDb, queryApprovals, listSystems, queryRecords } = require('
 	} catch { /* no config — env or defaults apply */ }
 })();
 
-const ACTIONS = new Set(['sync', 'summarize', 'query', 'approve', 'clarify']);
+const ACTIONS = new Set(['sync', 'summarize', 'query', 'approve', 'review', 'clarify']);
 const FILTER_KEYS = new Set(['dept', 'drafter', 'dateFrom', 'dateTo', 'keyword', 'limit']);
 
 const SYSTEM =
@@ -43,8 +43,10 @@ const SYSTEM =
 	'- {"action":"summarize","limit":<정수?>}          // 아직 요약 안 된 문서를 요약한다\n' +
 	'- {"action":"query","filter":{...}}              // 조회/검색. filter 키만 사용: dept, drafter, dateFrom("YYYY-MM-DD"), dateTo, keyword\n' +
 	'- {"action":"approve","filter":{...}}            // 승인 "후보"를 조회한다(절대 실행이 아니다)\n' +
+	'- {"action":"review","summarize":<true|false>}   // 결재할 항목을 검토·승인하도록 체크박스 화면을 "준비"한다(summarize=요약 포함 여부). 실행이 아니라 준비다 — 사람이 체크 후 직접 결재.\n' +
 	'- {"action":"clarify","question":"<한국어 질문>"}  // 위로 분류 불가하거나 모호할 때\n' +
-	'규칙: 너는 분류만 한다. 승인 같은 효력 행위를 결정·실행하지 않는다(approve는 후보 조회일 뿐). ' +
+	'규칙: 너는 분류만 한다. 승인 같은 효력 행위를 결정·실행하지 않는다(approve는 후보 조회, review는 화면 준비일 뿐). ' +
+	'"요약해서 체크/검토/결재 준비/결재하게 보여줘"처럼 결재를 위한 검토 화면을 원하면 action:"review"(요약 언급 시 summarize:true). ' +
 	'금액 조건은 숫자 비교가 불가하니 filter.keyword 에 넣어라(예: "100만원"). ' +
 	'조회 시 부서/기안자 외에 핵심 검색어가 있으면 filter.keyword 에도 함께 넣어라(예: "관리팀 출장" → {"dept":"관리팀","keyword":"출장"}). ' +
 	'날짜는 "YYYY-MM-DD" 로만 쓰고, 연도가 없으면 반드시 아래에 주어진 현재 날짜의 연도를 사용하라(추측 금지). ' +
@@ -76,6 +78,12 @@ export async function classifyIntent(text) {
 	if (obj.action === 'summarize') {
 		const n = parseInt(obj.limit, 10);
 		if (Number.isFinite(n) && n > 0) out.limit = Math.min(n, 50);
+	}
+	// review = PREPARE the human checkbox-review surface (optionally summarize first). It carries NO filter
+	// (a model-narrowed review could mask un-shown docs) and NO authority to approve — the human checks +
+	// clicks 선택 항목 결재. summarize defaults true when the command mentions 요약.
+	if (obj.action === 'review') {
+		out.summarize = obj.summarize === true || /요약/.test(cmd);
 	}
 	if (obj.action === 'query' || obj.action === 'approve') {
 		const f = {};

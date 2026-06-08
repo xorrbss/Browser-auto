@@ -303,9 +303,13 @@ the browser, never decides/executes an approval, never touches the pass/fail gat
 - `webui/agent.js` — `classifyIntent` (model reply is UNTRUSTED: JSON-extract → strict allowlist/type
   validation → degrade to **clarify** on any doubt; never a default action, NEVER approve) + `runQuery`.
 - `POST /api/agent {text}` — routes: `sync`→fetch-approvals (queue), `summarize`→enrich (queue),
-  `query`/`approve`→read-only `db.queryApprovals` rows. `approve` returns **candidates only** —
-  execution is the human-gated Phase 2, never triggered from here. amount has no numeric filter
-  (TEXT column) → the model maps it to a keyword.
+  `query`/`approve`→read-only `db.queryApprovals` rows, `review`→**prepare the checkbox review surface**
+  (optionally summarize, then the UI shows the 결재 list with checkboxes so the human checks + clicks
+  선택 항목 결재). `approve` returns **candidates only** and `review` only *prepares* — **neither executes**
+  an approval (the model has no path to `/api/approve/run`; that route fires only on the human's click).
+  So one sentence like "결재 요약해서 검토-결재 띄워줘" chains summarize → the review screen, with the human
+  still making every approve decision. amount has no numeric filter (TEXT column) → the model maps it to a
+  keyword. The model↔approve isolation is pinned by `tests/agent-isolation-unit.test.sh` (run.sh gate).
 
 If the on-prem model is unreachable, every command safely degrades to `clarify` (no action taken).
 **Not built here (by design / per the safety review): an open live agent that improvises browser
