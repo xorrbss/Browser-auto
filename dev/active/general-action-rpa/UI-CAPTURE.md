@@ -108,9 +108,16 @@ its own capture, not a forced click on the wrong layout.
   in the 결재 tab (app/doc/action/title/optional-block → per-guard stages from the audit), `tests/capture-unit.test.sh`.
   Live-verified: a 지출 dry-run shows `✓ requested → ✓ identity_ok → ✓ dry_ok`; a mismatched form surfaces its
   failing guard (e.g. `✗ failed — idLabel …`) right in the UI. Suite 30/30.
-- **Phase 1b (RECORD, next, operator-accompanied):** the headed recorder integration (`POST /capture/record` →
-  `probe-record.sh`) + the flow → `actions.<form>` block auto-assembly + the 10-field checklist form. Needs a
-  human at the browser to verify.
+- **Phase 1b (RECORD → block assembly) — ✅ BUILT (2026-06-08):** `assembleActionBlock(flow, facts)` (pure, in
+  `webui/capture.js`) turns a RECORDED approve flow (button 결재 / decision 승인 / opinion — extracted from the
+  flow) + an operator checklist (confirm 확인 / formType / amount label / success — `facts`) into a
+  `recipe.actions.<form>` block, **`enabled:false`** (fail-closed), refusing if a required part is missing.
+  `POST /api/approve/capture/assemble {app, flowName, facts}` reads `flows/<flowName>.flow.json` → returns the
+  block; the 🔧 capture card's "📥 녹화 플로우 → 블록 조립" fills the block textarea → the operator reviews →
+  dry-runs (1a). The RECORD itself REUSES the existing 플로우-tab recorder (the operator records the approve
+  journey on a disposable doc, stopping before 확인) — no duplicate record path. Unit-tested + live-verified the
+  full chain (recorded flow → assembled block → dry-run → `✓ identity_ok → ✓ dry_ok`). Still NO recipe write /
+  enable (Phase 2). The headed recording needs a human at the browser (operator-accompanied).
 - **Phase 2 (live-verify + enable, ~1wk, gated):** `POST /verify` (live on a fresh disposable doc) + the
   checklist + atomic `POST /enable`. Gate: live-verify completion confirmed + operator sign-off. MVP must **not**
   re-architect the leaf (the reference `approve` action stays byte-identical; regression-pinned).

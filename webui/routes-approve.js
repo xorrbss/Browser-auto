@@ -21,7 +21,7 @@ import { PROBE_ROOT } from './spawn.js';
 const require = createRequire(import.meta.url);
 const { openDb, closeDb, getApproval, getSystem, getRecord } = require('../lib/db.js');
 import { resolveAction } from '../approve/guards.mjs'; // pure action selector (general-action-rpa Step B) — shared with the leaf
-import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews } from './capture.js'; // UI approve-capture (Gate-B) Phase 1a — DRY-RUN test only
+import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews, assembleActionBlock } from './capture.js'; // UI approve-capture (Gate-B) Phase 1a/1b
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
@@ -82,6 +82,25 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	if (p === '/api/approve/stop') {
 		try { fs.mkdirSync(path.dirname(stopPath()), { recursive: true }); fs.writeFileSync(stopPath(), String(new Date().toISOString())); sendJson(res, 200, { ok: true, stopped: true }); }
 		catch (e) { sendJson(res, 500, { error: 'could not write kill-switch: ' + (e && e.message) }); }
+		return true;
+	}
+	// CAPTURE ASSEMBLE (Gate-B UI, Phase 1b): turn a RECORDED approve flow (flows/<flowName>.flow.json, recorded
+	// via the 플로우 tab on a disposable doc) + operator checklist `facts` into a recipe.actions.<form> block
+	// (enabled:false, fail-closed). PURE assembly (no model); returns the block for the operator to review +
+	// dry-run-test (Phase 1a). Does NOT write the recipe (that is Phase 2 / enable).
+	if (p === '/api/approve/capture/assemble') {
+		const app = String(bodyJson.app || '').trim();
+		if (!NAME_RE.test(app)) { sendJson(res, 400, { error: 'invalid app name' }); return true; }
+		const flowName = String(bodyJson.flowName || '').trim();
+		if (!NAME_RE.test(flowName)) { sendJson(res, 400, { error: 'invalid flow name (use [A-Za-z0-9_-])' }); return true; }
+		const flowPath = path.join(PROBE_ROOT, 'flows', `${flowName}.flow.json`);
+		let flow;
+		try { flow = JSON.parse(fs.readFileSync(flowPath, 'utf8')); } catch { sendJson(res, 400, { error: `no/unreadable flow flows/${flowName}.flow.json — record it on a disposable doc in the 플로우 tab first` }); return true; }
+		const f = bodyJson.facts && typeof bodyJson.facts === 'object' ? bodyJson.facts : {};
+		const facts = { confirmName: f.confirmName, openBy: f.openBy, formType: f.formType, amountLabel: f.amountLabel, opinionText: f.opinionText, success: f.success, titleField: f.titleField, idLabelExactlyOne: f.idLabelExactlyOne };
+		const r = assembleActionBlock(flow, facts);
+		if (!r.ok) { sendJson(res, 400, { error: r.error, missing: r.missing }); return true; }
+		sendJson(res, 200, { block: r.block });
 		return true;
 	}
 	// CAPTURE DRY-RUN (Gate-B UI, Phase 1a): test an action's locators on a disposable doc and show per-guard

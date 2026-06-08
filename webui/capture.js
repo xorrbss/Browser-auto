@@ -22,6 +22,44 @@ export function buildPreviewRecipe(recipeObj, action, block) {
 	return { ...base, actions };
 }
 
+// assembleActionBlock(flow, facts): PURE — turn a RECORDED approve flow.json (the operator's journey on a
+// disposable doc) + operator-confirmed checklist `facts` into a recipe.actions.<form> block (Gate-B Phase 1b).
+// The model is NOT involved — the operator authored the recording and confirms the facts. Extracted FROM the
+// flow: the 결재 button (the last button-click before the decision radio — the affordance that opens the modal),
+// the 승인 decision radio, the 의견 opinion fill (optional). From `facts` (the operator stops BEFORE 확인, so it
+// is pinned here): confirmName (확인), openBy, formType, amountLabel, success, titleField. The block is
+// **enabled:false** — FAIL-CLOSED until a dry-run + live-verify + an explicit operator enable (Phase 2). Returns
+// { ok, block } or { ok:false, error, missing } when a REQUIRED part (button/decision/confirm) is absent.
+export function assembleActionBlock(flow, facts = {}) {
+	const steps = flow && Array.isArray(flow.steps) ? flow.steps.map((s, i) => ({ ...s, _i: i })) : [];
+	const isRole = (s, role, action) => s.kind === 'find' && s.by === 'role' && s.value === role && (!action || s.action === action);
+	const decision = steps.find((s) => isRole(s, 'radio')); // 승인 radio (check or click)
+	let button = null; // the LAST button-click BEFORE the decision (opens the decision modal)
+	for (const s of steps) { if (isRole(s, 'button', 'click') && (!decision || s._i < decision._i)) button = s; }
+	const opinion = steps.find((s) => s.kind === 'find' && s.action === 'fill' && s.by === 'placeholder');
+	const confirmName = String(facts.confirmName || '').trim();
+	const missing = [];
+	if (!button) missing.push('button (결재 — a button click before the decision radio)');
+	if (!decision) missing.push('decision (승인 — a radio in the recorded flow)');
+	if (!confirmName) missing.push('confirm (확인 — set it in the checklist; capture stops before clicking it)');
+	if (missing.length) return { ok: false, error: '플로우에서 필수 항목을 찾지 못했습니다: ' + missing.join('; '), missing };
+	const block = {
+		enabled: false, // FAIL-CLOSED until dry-run + live-verify + operator enable (Phase 2)
+		openBy: facts.openBy || 'rowText',
+		idLabelExactlyOne: facts.idLabelExactlyOne !== false,
+		button: { role: 'button', name: button.name || '', exact: true },
+		decision: { role: 'radio', name: decision.name || '' },
+		...(opinion ? { opinion: { placeholder: opinion.value, text: facts.opinionText || '자동 승인' } } : {}),
+		confirm: { role: 'button', name: confirmName, exact: true },
+		...(facts.amountLabel ? { amount: { label: String(facts.amountLabel) } } : {}),
+		...(facts.formType ? { formType: facts.formType } : {}),
+		success: facts.success || 'leftInbox',
+		...(facts.titleField ? { titleField: String(facts.titleField) } : {}),
+		_capturedVia: 'webui-capture (Gate-B Phase 1b) — review + dry-run + live-verify before enable',
+	};
+	return { ok: true, block };
+}
+
 // listCaptureFlows(probeRoot, app): the captured approve flows for an app (flows/approve-<app>-*.flow.json),
 // newest first. Read-only; used by the capture panel to show what has been recorded (Phase 1b consumes them).
 export function listCaptureFlows(probeRoot, app) {

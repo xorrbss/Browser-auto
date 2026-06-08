@@ -573,6 +573,22 @@ function renderCaptureGuards(stages, status, guards, log) {
 	}
 	guards.append(list, log);
 }
+async function runCaptureAssemble() {
+	const app = ($('#cap-app').value || 'hiworks').trim();
+	const flowName = $('#cap-flowname').value.trim();
+	const status = $('#cap-status');
+	if (!flowName) { status.replaceChildren(el('div', { class: 'error' }, '녹화 플로우 이름을 입력하세요 (플로우 탭에서 먼저 녹화).')); return; }
+	const facts = { confirmName: ($('#cap-confirm').value || '확인').trim(), success: 'leftInbox' };
+	const ft = $('#cap-formtype').value.trim(); if (ft) facts.formType = [ft];
+	const amt = $('#cap-amtlabel').value.trim(); if (amt) facts.amountLabel = amt;
+	let resp;
+	try { const r = await fetch('/api/approve/capture/assemble', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, flowName, facts }) }); resp = await r.json(); }
+	catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
+	if (!resp.block) { status.replaceChildren(el('div', { class: 'error' }, (resp.error || '조립 실패') + (resp.missing ? ' (' + resp.missing.join('; ') + ')' : ''))); return; }
+	$('#cap-block').value = JSON.stringify(resp.block, null, 2);
+	$('#cap-action').value = 'approve_capture';
+	status.replaceChildren(el('div', { class: 'hint' }, '✅ 블록 조립 완료 — 아래 블록을 검토하고 ▶ dry-run 미리보기로 테스트하세요 (enabled:false, 아직 저장 안 함).'));
+}
 async function loadCaptureFlows() {
 	const app = ($('#cap-app').value || 'hiworks').trim();
 	const box = $('#cap-flowlist');
@@ -629,6 +645,7 @@ $('#agent-run').addEventListener('click', runAgent);
 $('#agent-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent(); });
 $('#approve-run').addEventListener('click', runApprove);
 $('#cap-dry').addEventListener('click', runCaptureDryRun);
+$('#cap-assemble').addEventListener('click', runCaptureAssemble);
 $('#cap-flows').addEventListener('click', loadCaptureFlows);
 $('#audit-refresh').addEventListener('click', loadAudit);
 // ✅ 검토 후 일괄 결재 controls

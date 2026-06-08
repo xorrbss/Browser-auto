@@ -86,6 +86,19 @@
 						<input id="cap-doc" placeholder="폐기용 문서번호 (예: IB-…)" autocomplete="off" spellcheck="false" />
 						<input id="cap-action" placeholder="action (기본 approve)" autocomplete="off" spellcheck="false" value="approve" />
 					</div>
+					<details class="cap-assemble">
+						<summary>📥 녹화 플로우 → action 블록 조립 (Phase 1b)</summary>
+						<p class="note">먼저 <b>플로우 탭</b>에서 폐기용 문서로 결재 동작을 녹화하세요([열기→결재→승인→의견], <b>확인 전 정지</b>). 그 플로우 이름과 아래 항목을 입력하면 <code>actions.&lt;form&gt;</code> 블록을 만들어 아래 블록 칸을 채웁니다(검토 후 dry-run; <code>enabled:false</code>로 저장 안 함).</p>
+						<div class="cap-row">
+							<input id="cap-flowname" placeholder="녹화 플로우 이름 (예: approve-hiworks-합의)" autocomplete="off" spellcheck="false" />
+							<input id="cap-confirm" placeholder="확인 버튼 이름 (기본 확인)" autocomplete="off" spellcheck="false" value="확인" />
+						</div>
+						<div class="cap-row">
+							<input id="cap-formtype" placeholder="양식명 (예: 합의 / 지출결의서(거래처)) — 선택" autocomplete="off" spellcheck="false" />
+							<input id="cap-amtlabel" placeholder="금액 라벨 (예: 총 금액) — 선택" autocomplete="off" spellcheck="false" />
+							<button id="cap-assemble" type="button">📥 블록 조립</button>
+						</div>
+					</details>
 					<input id="cap-title" placeholder="문서 제목 (미동기화 폐기용 문서면 직접 입력 — 콘텐츠 바인딩 가드)" autocomplete="off" spellcheck="false" />
 					<textarea id="cap-block" rows="4" placeholder="(선택) action 블록 JSON을 붙여넣어 테스트 — 비우면 레시피의 기존 action을 테스트" spellcheck="false"></textarea>
 					<div class="cap-row">

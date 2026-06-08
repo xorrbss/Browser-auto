@@ -8,7 +8,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ( cd "$DIR" && node --input-type=module -e '
-import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews } from "./webui/capture.js";
+import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews, assembleActionBlock } from "./webui/capture.js";
 import { resolveAction } from "./approve/guards.mjs";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const assert = (c, m) => { if (!c) { console.error("  ✗ capture: " + m); process.exit(1); } };
@@ -46,5 +46,27 @@ sweepOldPreviews(tmp, 600000);
 assert(!fs.existsSync(oldF), "stale preview swept");
 assert(fs.existsSync(newF), "fresh preview kept");
 fs.rmSync(tmp, { recursive: true, force: true });
-console.log("  ✓ capture: buildPreviewRecipe + listCaptureFlows + sweepOldPreviews OK");
+// --- assembleActionBlock (Phase 1b): recorded flow + checklist → actions.<form> block, fail-closed ---
+const flow = { name: "approve-hiworks-1", steps: [
+  { kind: "find", by: "role", value: "row", name: "IB-지출(거래처)-…", action: "click" },
+  { kind: "find", by: "role", value: "button", name: "결재", action: "click" },
+  { kind: "find", by: "role", value: "radio", name: "승인", action: "check" },
+  { kind: "find", by: "placeholder", value: "의견을 입력하세요.", action: "fill", text: "{{input_1}}" },
+] };
+const facts = { confirmName: "확인", formType: ["지출결의서(거래처)"], amountLabel: "총 금액", success: "leftInbox" };
+const ab = assembleActionBlock(flow, facts);
+assert(ab.ok === true, "valid flow + facts ⇒ ok");
+assert(ab.block.button.name === "결재" && ab.block.button.exact === true, "결재 button extracted");
+assert(ab.block.decision.name === "승인", "승인 decision radio extracted");
+assert(ab.block.opinion.placeholder === "의견을 입력하세요.", "의견 opinion fill extracted");
+assert(ab.block.confirm.name === "확인", "확인 confirm pinned from facts");
+assert(ab.block.enabled === false, "assembled block is FAIL-CLOSED (enabled:false)");
+assert(ab.block.amount.label === "총 금액" && JSON.stringify(ab.block.formType) === JSON.stringify(["지출결의서(거래처)"]), "amount/formType facts carried");
+assert(assembleActionBlock({ steps: [{ kind: "find", by: "role", value: "button", name: "결재", action: "click" }] }, facts).ok === false, "no decision radio ⇒ refused");
+assert(assembleActionBlock(flow, {}).ok === false, "no confirmName ⇒ refused (capture stops before 확인)");
+// the assembled block RESOLVES for a dry-run (chain into buildPreviewRecipe → resolveAction)
+const prev = buildPreviewRecipe({ actions: {} }, "approve_지출", ab.block);
+assert(resolveAction(prev, "approve_지출").ok === true, "assembled block resolves for the dry-run test");
+
+console.log("  ✓ capture: buildPreviewRecipe + listCaptureFlows + sweepOldPreviews + assembleActionBlock OK");
 ' )
