@@ -146,9 +146,13 @@ anomalies/reconcile-uncertain · anything the operator hasn't soaked in shadow. 
 - Reviewed-mode "adequate review" expectations + UI signals (Q6).
 
 ## 11. Implementation roadmap (ONLY after §9 + sign-off — not now)
-- **Step 1 (cheap, safe, no live):** add `policyId` to the audit + a `data/policies/` loader + the
-  **deterministic eligibility evaluator** wired to **SHADOW** (evaluate + audit, never click). This is
-  buildable + testable browser-free now and is useful immediately (triage). It does NOT enable any live click.
+- **Step 1 (cheap, safe, no live) — ✅ BUILT (2026-06-08):** the **deterministic eligibility evaluator** wired
+  to **SHADOW** (evaluate + audit, never click). `lib/policy.js` (pure `evaluatePolicy`/`validatePolicy`,
+  fail-closed; live-only criteria ⇒ `requires-live`; heuristic amount ⇒ `would-skip`) + `bin/shadow-eval.js`
+  (CLI: query synced `fetched` approvals → evaluate → audit `data/policy-shadow.jsonl` with a cap PREVIEW;
+  **NEVER** a browser/click/approve; REFUSES any non-`shadow` phase, exit 3) + `tests/policy-eval-unit.test.sh`
+  + `policy.example.json`. Read-only ⇒ schedulable via `bin/scheduled-task.sh`. NO LLM on the path. The
+  per-`approve-audit.jsonl` `policyId`/`eligibility`-stage tagging stays for when the leaf consumes a policy (Step 3).
 - **Step 2:** `policy-ticks.jsonl` + the Policy Health card + anomaly monitor/alert + session-freshness probe.
 - **Step 3 (gated):** sampled-live + monitoring; then bounded unattended via the scheduler — each behind the
   §9 prerequisites + an owner sign-off, re-red-teamed before live.

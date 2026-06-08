@@ -228,6 +228,12 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   graduation (SHADOW evaluate+audit-only → SAMPLED 5% live → BOUNDED unattended), each operator-signed.
   **Still DESIGN-ONLY + fail-closed**; the safe immediately-buildable slice = SHADOW eligibility + the
   human-reviewed click. Unattended live stays forbidden until live-e2e + Gate-B + a signed policy.
+  **[2026-06-08] Unattended SHADOW evaluator BUILT** (the criteria framework's Step 1, safe slice) →
+  `lib/policy.js` (pure deterministic `evaluatePolicy`, fail-closed; live-only criteria→`requires-live`;
+  heuristic amount→`would-skip`) + `bin/shadow-eval.js` (CLI: query synced approvals → evaluate → audit
+  `data/policy-shadow.jsonl` + cap preview; **NEVER** browser/click/approve; refuses non-`shadow` phase) +
+  `tests/policy-eval-unit.test.sh` + `policy.example.json`. Read-only, schedulable via `scheduled-task.sh`,
+  NO LLM. The operator soaks the shadow audit; live phases (sampled/unattended) stay gated on §9 + sign-off.
 - The DESIGN-v3 human-gated build below is **superseded** by the owner-override full-auto path (DESIGN §14);
   it stays as the revert target if the gate is re-imposed. After Gate A+B only, that path would implement:
   `bin/approve-doc.sh`, `webui/routes-approve.js`

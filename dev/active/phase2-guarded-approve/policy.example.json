@@ -1,0 +1,12 @@
+{
+  "id": "hiworks-recurring-shadow-v1",
+  "app": "hiworks",
+  "phase": "shadow",
+  "eligibility": {
+    "docIdGlobs": ["IB-품의-*", "IB-지출(거래처)-*"],
+    "deptPattern": "재무|경영",
+    "maxDocAgeDays": 30,
+    "requireContentMarkers": ["정기"]
+  },
+  "caps": { "maxPerTick": 10, "maxPerDay": 50 }
+}
