@@ -20,6 +20,7 @@ import { PROBE_ROOT } from './spawn.js';
 // list-URL + title SOURCE, never in the leaf's guards.
 const require = createRequire(import.meta.url);
 const { openDb, closeDb, getApproval, getSystem, getRecord } = require('../lib/db.js');
+import { resolveAction } from '../approve/guards.mjs'; // pure action selector (general-action-rpa Step B) — shared with the leaf
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
@@ -85,14 +86,18 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	if (p !== '/api/approve/run') return false;
 	const app = String(bodyJson.app || '').trim();
 	if (!NAME_RE.test(app)) { sendJson(res, 400, { error: 'invalid app name' }); return true; }
+	// which effectful action (default 'approve' — the reference action; Step B). A disabled/uncaptured action
+	// is refused below by resolveAction (fail-closed). The model never picks an arbitrary action here.
+	const action = String(bodyJson.action || 'approve').trim();
+	if (!NAME_RE.test(action)) { sendJson(res, 400, { error: 'invalid action name' }); return true; }
 	if (!fs.existsSync(recipeFor(app))) { sendJson(res, 400, { error: `no recipe recipes/${app}.json — onboard this system's approve recipe first` }); return true; }
 	// The recipe must have an approve block (else the leaf refuses) — fail fast with a clear message.
 	let recipeObj;
 	try { recipeObj = JSON.parse(fs.readFileSync(recipeFor(app), 'utf8')); }
 	catch { sendJson(res, 400, { error: `recipe ${app} unreadable` }); return true; }
-	const approveBlock = (recipeObj.actions && recipeObj.actions.approve) || recipeObj.approve; // canonical actions.approve, legacy approve fallback
-	if (!approveBlock) { sendJson(res, 400, { error: `recipe ${app} has no "actions.approve" (or legacy "approve") block — capture this system's approve UI (Gate-B) first` }); return true; }
-	const titleField = approveBlock.titleField || 'title'; // generic systems: the records field used for the content-binding title
+	const av = resolveAction(recipeObj, action); // canonical actions.<action> | legacy approve; fail-closed on missing/disabled
+	if (!av.ok) { sendJson(res, 400, { error: `recipe ${app}: ${av.reason}` }); return true; }
+	const titleField = av.action.titleField || 'title'; // generic systems: the records field used for the content-binding title
 	if (!fs.existsSync(stateFor(app))) { sendJson(res, 400, { error: `no Playwright login for '${app}' — run: node approve/auth-pw.mjs … approve/${app}.pw-state.json` }); return true; }
 	const listUrl = listUrlFor(app);
 	if (!listUrl) { sendJson(res, 400, { error: 'no 대기 list URL (set GW_INBOX_URL in data/approvals.config)' }); return true; }
@@ -132,11 +137,12 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	if (!dryRun) args.push('--live', '--max', String(max));
 	if (maxAmount) args.push('--max-amount', String(maxAmount));
 	if (reviewed) args.push('--reviewed'); // human-reviewed batch: leaf relaxes form-homogeneity (mixed forms are the human's choice)
+	if (action !== 'approve') args.push('--action', action); // approve = the default; only non-approve actions pass --action (approve invocation byte-identical)
 
 	// An explicit new run clears any kill-switch (halt) — the leaf REFUSES to start while STOP exists, so the
 	// route owns the clear; a queued batch never self-clears (red-team KILLSWITCH-QUEUED).
 	try { fs.rmSync(stopPath(), { force: true }); } catch {}
-	const label = `${dryRun ? 'DRY' : 'LIVE'} ${reviewed ? '검토-결재' : 'AUTO-APPROVE'} ${app} (${docs.length}건${!dryRun ? `, max ${max}` : ''}${maxAmount ? `, ≤${maxAmount}원` : ''})`;
+	const label = `${dryRun ? 'DRY' : 'LIVE'} ${reviewed ? '검토' : 'AUTO'}-${action} ${app} (${docs.length}건${!dryRun ? `, max ${max}` : ''}${maxAmount ? `, ≤${maxAmount}원` : ''})`;
 	const job = enqueue({ kind: 'approve', label, spawnFn: () => nodeLeaf('approve/approve-run.mjs', args) });
 	sendJson(res, 202, { job, dryRun, docs: docs.length });
 	return true;

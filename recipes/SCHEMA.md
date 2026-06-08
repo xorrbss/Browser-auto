@@ -39,7 +39,11 @@ Both drivers, when `SUMMARY_MODEL` (+ a local/on-prem endpoint) is set, summariz
 ### `actions.approve` — the effectful auto-approve block (BUILT; driven by `approve/approve-run.mjs`)
 **Canonical location: `actions.approve`** (the general-action-rpa form — `actions` is a map so a system can
 declare more effectful actions later; see `dev/active/general-action-rpa/DESIGN.md`). The legacy top-level
-`approve` key is still read as a 1:1 fallback. The owner released the per-item-human gate (memory
+`approve` key is still read as a 1:1 fallback. `actions` may hold MORE actions (e.g. `reject`); each is
+selected by the route/leaf via a pure `resolveAction(recipe, action)` (the request's `action`, default
+`"approve"`) and is **fail-closed**: an absent action, or one with `"enabled": false` (declared but not yet
+per-system **captured** — a Gate-B placeholder, e.g. hiworks's `actions.reject`), is REFUSED (400). The owner
+released the per-item-human gate (memory
 `approve-gate-override`), so the auto-approve leaf clicks the real 확인 with **no human click**; the
 deterministic guards in this block are the SOLE safety and every one **fails closed**. Read
 `dev/active/phase2-guarded-approve/` before changing it.

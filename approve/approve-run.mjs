@@ -18,7 +18,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseKRW, pagerDecision, matchesFormType, norm, amountVerdict, completionVerdict } from './guards.mjs';
+import { parseKRW, pagerDecision, matchesFormType, norm, amountVerdict, completionVerdict, resolveAction } from './guards.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -33,6 +33,9 @@ const dry = !live;
 // (mixed forms are the human's deliberate selection); every form-AGNOSTIC guard stays (unique 문서번호 open,
 // urlGlob, exactly-one idLabel, title binding, 승인 radio asserted-checked, positive 완료 verify, audit, cap).
 const reviewed = flag('--reviewed');
+// --action (default 'approve'): which recipe.actions.<name> to perform (general-action-rpa Step B). approve
+// is the reference action (byte-identical default). A disabled/uncaptured action is refused by resolveAction.
+const action = opt('--action', 'approve');
 const maxN = parseInt(opt('--max', '0'), 10) || 0;
 const maxAmount = parseInt(opt('--max-amount', '0'), 10) || 0;
 const auditPath = opt('--audit', 'data/approve-audit.jsonl');
@@ -44,8 +47,9 @@ if (live && maxN <= 0) { console.error('REFUSED: --live requires a positive --ma
 // wrapper/indirection run through bin/scheduled-task.sh can ever drive a LIVE approve (unattended live is forbidden).
 if (live && process.env.AQA_SCHEDULED_NO_LIVE) { console.error('REFUSED: live approve is forbidden under the scheduler (AQA_SCHEDULED_NO_LIVE) — unattended LIVE is fail-closed'); process.exit(3); }
 const recipe = JSON.parse(fs.readFileSync(recipePath, 'utf8'));
-// CANONICAL form is recipe.actions.approve (general-action-rpa Step A); legacy recipe.approve is the 1:1 fallback.
-const ap = (recipe.actions && recipe.actions.approve) || recipe.approve; if (!ap) { console.error(`recipe ${recipePath} has no "actions.approve" (or legacy "approve") block`); process.exit(2); }
+// Resolve the action block (recipe.actions.<action> | legacy approve); fail-closed on missing/disabled (Step B).
+const _av = resolveAction(recipe, action); if (!_av.ok) { console.error(`REFUSED: ${_av.reason}`); process.exit(2); }
+const ap = _av.action;
 const urlGlobRe = (recipe.detail && recipe.detail.urlGlob) ? new RegExp(recipe.detail.urlGlob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*')) : /\/view\//;
 let targets = JSON.parse(fs.readFileSync(targetsFile, 'utf8'));
 try { fs.rmSync(targetsFile, { force: true }); } catch {} // single-use: consume the (possibly-sensitive) targets file
@@ -57,7 +61,7 @@ if (fs.existsSync(stopFile)) { console.error('[approve] kill-switch (data/approv
 
 fs.mkdirSync(path.dirname(auditPath), { recursive: true });
 const audit = (doc_id, stage, detail) => {
-	const line = JSON.stringify({ at: new Date().toISOString(), doc_id, stage, live, reviewed, ...(detail ? { detail } : {}) }) + '\n';
+	const line = JSON.stringify({ at: new Date().toISOString(), doc_id, stage, action, live, reviewed, ...(detail ? { detail } : {}) }) + '\n';
 	const fd = fs.openSync(auditPath, 'a'); try { fs.writeSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 };
 const log = (...a) => console.error('[approve]', ...a);

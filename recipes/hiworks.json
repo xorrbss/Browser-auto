@@ -29,6 +29,15 @@
       "confirm":  { "role": "button", "name": "확인", "exact": true },
       "success":  "leftInbox",
       "_capturedBy": "Gate B (GATE-B-CAPTURE.md): doc_id NOT in URL -> open by row text; modal is dom (NOT native); 승인 is a native radio (use regex name); 확인 NOT '확인 후 다음 문서'; completion = leave 대기 inbox. Requires a TRUSTED click -> Playwright leaf (approve/approve-run.mjs)."
+    },
+    "reject": {
+      "enabled": false,
+      "_needsCapture": "DISABLED / fail-closed (general-action-rpa Step B placeholder). The 반려 flow is NOT yet captured: the 결재 modal has a 승인/협의/반려 radio, but 반려's required-opinion, the completion marker (반려-stamp vs 승인-stamp), and the box behaviour are UNVERIFIED. Capture on a disposable staged doc (per-action Gate-B), pin the verified facts, then set enabled:true.",
+      "button":   { "role": "button", "name": "결재", "exact": true },
+      "decision": { "role": "radio",  "name": "반려" },
+      "opinion":  { "placeholder": "의견을 입력하세요.", "text": "반려 사유 확인 필요" },
+      "confirm":  { "role": "button", "name": "확인", "exact": true },
+      "success":  "leftInbox"
     }
   }
 }

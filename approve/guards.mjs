@@ -61,6 +61,17 @@ export function matchesFormType(liveForm, want) {
 
 export const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 
+// resolveAction(recipe, action): the FAIL-CLOSED action selector (general-action-rpa Step B). Returns the
+// action block for `action` from recipe.actions[action] (canonical), or the legacy top-level recipe.approve
+// when action==='approve'. An action that is absent, or explicitly `enabled:false` (declared but not yet
+// captured per-system), is REFUSED — the model never picks an arbitrary action; only a captured+enabled one runs.
+export function resolveAction(recipe, action) {
+	const a = (recipe && recipe.actions && recipe.actions[action]) || (action === 'approve' && recipe ? recipe.approve : null);
+	if (!a) return { ok: false, reason: `no action "${action}" — recipe has no actions.${action}${action === 'approve' ? ' (or legacy approve)' : ''} block` };
+	if (a.enabled === false) return { ok: false, reason: `action "${action}" is disabled (enabled:false) — capture its UI per system (Gate-B) and enable it first` };
+	return { ok: true, action: a };
+}
+
 // amountVerdict(amt, ceiling): the FAIL-CLOSED amount-ceiling decision (pure; the page-coupled extractAmount
 // stays in the leaf). `amt`: null = no amount locator in the recipe, -1 = locator/figure not found, else the
 // parsed 원 value. Returns { eligible, reason, audit } — eligible only when a figure ≤ ceiling was read.

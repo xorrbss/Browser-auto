@@ -10,7 +10,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ( cd "$DIR" && node --input-type=module -e '
-import { parseKRW, pagerDecision, matchesFormType, amountVerdict, completionVerdict } from "./approve/guards.mjs";
+import { parseKRW, pagerDecision, matchesFormType, amountVerdict, completionVerdict, resolveAction } from "./approve/guards.mjs";
 const assert = (c, m) => { if (!c) { console.error("  ✗ approve-guards: " + m); process.exit(1); } };
 const eq = (a, b, m) => assert(JSON.stringify(a) === JSON.stringify(b), m + " (got " + JSON.stringify(a) + ")");
 
@@ -62,6 +62,16 @@ eq(completionVerdict(true, 1).ok, false, "stamp but still present ⇒ contradict
 eq(completionVerdict(false, 1).ok, false, "no stamp + still present ⇒ fail-closed");
 eq(completionVerdict(true, -1).ok, false, "uncertain list ⇒ fail-closed");
 eq(completionVerdict(false, -1).ok, false, "uncertain list ⇒ fail-closed");
+
+// --- resolveAction: canonical actions.<name> + legacy fallback, FAIL-CLOSED on missing/disabled (Step B) ---
+assert(resolveAction({ actions: { approve: { button: 1 } } }, "approve").ok === true, "actions.approve resolves");
+assert(resolveAction({ actions: { approve: { button: 1 } } }, "approve").action.button === 1, "returns the action block");
+assert(resolveAction({ approve: { button: 1 } }, "approve").ok === true, "legacy top-level approve resolves (fallback)");
+assert(resolveAction({ actions: { reject: { enabled: false } } }, "reject").ok === false, "enabled:false ⇒ refused (uncaptured)");
+assert(resolveAction({ actions: { x: { enabled: true } } }, "x").ok === true, "enabled:true explicit ⇒ ok");
+assert(resolveAction({ actions: { approve: {} } }, "submit").ok === false, "unknown action ⇒ refused");
+assert(resolveAction({}, "reject").ok === false, "no actions + non-approve ⇒ refused (no legacy)");
+assert(resolveAction({}, "approve").ok === false, "no actions + no legacy approve ⇒ refused");
 
 console.log("  ✓ approve-guards: all checks passed");
 ' )
