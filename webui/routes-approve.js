@@ -90,8 +90,9 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	let recipeObj;
 	try { recipeObj = JSON.parse(fs.readFileSync(recipeFor(app), 'utf8')); }
 	catch { sendJson(res, 400, { error: `recipe ${app} unreadable` }); return true; }
-	if (!recipeObj.approve) { sendJson(res, 400, { error: `recipe ${app} has no "approve" block — capture this system's approve UI (Gate-B) first` }); return true; }
-	const titleField = recipeObj.approve.titleField || 'title'; // generic systems: the records field used for the content-binding title
+	const approveBlock = (recipeObj.actions && recipeObj.actions.approve) || recipeObj.approve; // canonical actions.approve, legacy approve fallback
+	if (!approveBlock) { sendJson(res, 400, { error: `recipe ${app} has no "actions.approve" (or legacy "approve") block — capture this system's approve UI (Gate-B) first` }); return true; }
+	const titleField = approveBlock.titleField || 'title'; // generic systems: the records field used for the content-binding title
 	if (!fs.existsSync(stateFor(app))) { sendJson(res, 400, { error: `no Playwright login for '${app}' — run: node approve/auth-pw.mjs … approve/${app}.pw-state.json` }); return true; }
 	const listUrl = listUrlFor(app);
 	if (!listUrl) { sendJson(res, 400, { error: 'no 대기 list URL (set GW_INBOX_URL in data/approvals.config)' }); return true; }
@@ -158,7 +159,7 @@ export function approveGet(p, url, res, { sendJson }) {
 	const app = (url.searchParams.get('app') || '').trim();
 	const ok = NAME_RE.test(app) && fs.existsSync(stateFor(app)) && fs.existsSync(recipeFor(app));
 	let hasApprove = false;
-	try { hasApprove = ok && !!JSON.parse(fs.readFileSync(recipeFor(app), 'utf8')).approve; } catch {}
+	try { const rc = JSON.parse(fs.readFileSync(recipeFor(app), 'utf8')); hasApprove = ok && !!((rc.actions && rc.actions.approve) || rc.approve); } catch {}
 	sendJson(res, 200, { app, loggedIn: NAME_RE.test(app) && fs.existsSync(stateFor(app)), hasApproveRecipe: hasApprove, listUrl: !!listUrlFor(app) });
 	return true;
 }

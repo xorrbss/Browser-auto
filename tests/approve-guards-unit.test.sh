@@ -10,7 +10,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ( cd "$DIR" && node --input-type=module -e '
-import { parseKRW, pagerDecision, matchesFormType } from "./approve/guards.mjs";
+import { parseKRW, pagerDecision, matchesFormType, amountVerdict, completionVerdict } from "./approve/guards.mjs";
 const assert = (c, m) => { if (!c) { console.error("  ✗ approve-guards: " + m); process.exit(1); } };
 const eq = (a, b, m) => assert(JSON.stringify(a) === JSON.stringify(b), m + " (got " + JSON.stringify(a) + ")");
 
@@ -46,6 +46,22 @@ assert(matchesFormType("지출결의서(거래처) 요약", "지출결의서(거
 assert(matchesFormType("지출결의서(거래처)", ["품의", "지출결의서(거래처)"]) === true, "array member match");
 assert(matchesFormType("품의서", ["지출결의서"]) === false, "wrong form ⇒ false");
 assert(matchesFormType("", "지출결의서") === false, "empty live form ⇒ false");
+
+// --- amountVerdict: fail-closed ceiling decision (extracted from the leaf, Step A) ---
+eq(amountVerdict(null, 1000), { eligible: false, reason: "recipe has no amount locator (approve.amount.label) — cannot enforce ceiling (fail-closed)", audit: "no-amount-locator" }, "no amount locator ⇒ ineligible");
+eq(amountVerdict(-1, 1000), { eligible: false, reason: "amount not parseable at the 금액 label (fail-closed)", audit: "amount-unparseable" }, "unparseable ⇒ ineligible");
+eq(amountVerdict(2000, 1000).eligible, false, "over ceiling ⇒ ineligible");
+assert(amountVerdict(2000, 1000).audit === "amount>1000", "over-ceiling audit detail");
+eq(amountVerdict(500, 1000), { eligible: true, reason: "", audit: "500" }, "under ceiling ⇒ eligible");
+eq(amountVerdict(1000, 1000).eligible, true, "== ceiling is OK (not >)");
+
+// --- completionVerdict: approved ONLY when stamped AND absent; else fail-closed ---
+eq(completionVerdict(true, 0), { ok: true, reason: "" }, "stamped + left 대기 ⇒ approved");
+eq(completionVerdict(false, 0).ok, false, "left but no stamp ⇒ fail-closed");
+eq(completionVerdict(true, 1).ok, false, "stamp but still present ⇒ contradictory fail-closed");
+eq(completionVerdict(false, 1).ok, false, "no stamp + still present ⇒ fail-closed");
+eq(completionVerdict(true, -1).ok, false, "uncertain list ⇒ fail-closed");
+eq(completionVerdict(false, -1).ok, false, "uncertain list ⇒ fail-closed");
 
 console.log("  ✓ approve-guards: all checks passed");
 ' )

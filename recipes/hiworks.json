@@ -18,15 +18,17 @@
     "fields": { "dept": "기안 부서" },
     "bodyFromHeadingLevel": 1
   },
-  "approve": {
-    "openBy": "rowText",
-    "idLabelExactlyOne": true,
-    "button":   { "role": "button", "name": "결재", "exact": true },
-    "decision": { "role": "radio",  "name": "승인" },
-    "amount":   { "label": "총 금액" },
-    "opinion":  { "placeholder": "의견을 입력하세요.", "text": "자동 승인" },
-    "confirm":  { "role": "button", "name": "확인", "exact": true },
-    "success":  "leftInbox",
-    "_capturedBy": "Gate B (GATE-B-CAPTURE.md): doc_id NOT in URL -> open by row text; modal is dom (NOT native); 승인 is a native radio (use regex name); 확인 NOT '확인 후 다음 문서'; completion = leave 대기 inbox. Requires a TRUSTED click -> Playwright leaf (approve/approve-run.mjs)."
+  "actions": {
+    "approve": {
+      "openBy": "rowText",
+      "idLabelExactlyOne": true,
+      "button":   { "role": "button", "name": "결재", "exact": true },
+      "decision": { "role": "radio",  "name": "승인" },
+      "amount":   { "label": "총 금액" },
+      "opinion":  { "placeholder": "의견을 입력하세요.", "text": "자동 승인" },
+      "confirm":  { "role": "button", "name": "확인", "exact": true },
+      "success":  "leftInbox",
+      "_capturedBy": "Gate B (GATE-B-CAPTURE.md): doc_id NOT in URL -> open by row text; modal is dom (NOT native); 승인 is a native radio (use regex name); 확인 NOT '확인 후 다음 문서'; completion = leave 대기 inbox. Requires a TRUSTED click -> Playwright leaf (approve/approve-run.mjs)."
+    }
   }
 }

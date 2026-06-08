@@ -36,10 +36,13 @@ Both drivers, when `SUMMARY_MODEL` (+ a local/on-prem endpoint) is set, summariz
 `bin/summarize.js` into the `summary` column — the body **never leaves** the configured local endpoint.
 `upsertRecords`/`upsertApprovals` merge so this pass accumulates onto the list sync (never clobbers it).
 
-### `approve` — the effectful auto-approve block (BUILT; driven by `approve/approve-run.mjs`)
-The owner released the per-item-human gate (memory `approve-gate-override`), so the auto-approve leaf
-clicks the real 확인 with **no human click**; the deterministic guards in this block are the SOLE safety
-and every one **fails closed**. Read `dev/active/phase2-guarded-approve/` before changing it.
+### `actions.approve` — the effectful auto-approve block (BUILT; driven by `approve/approve-run.mjs`)
+**Canonical location: `actions.approve`** (the general-action-rpa form — `actions` is a map so a system can
+declare more effectful actions later; see `dev/active/general-action-rpa/DESIGN.md`). The legacy top-level
+`approve` key is still read as a 1:1 fallback. The owner released the per-item-human gate (memory
+`approve-gate-override`), so the auto-approve leaf clicks the real 확인 with **no human click**; the
+deterministic guards in this block are the SOLE safety and every one **fails closed**. Read
+`dev/active/phase2-guarded-approve/` before changing it.
 
 | Field | Purpose |
 |---|---|

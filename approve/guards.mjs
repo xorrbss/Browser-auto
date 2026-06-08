@@ -60,3 +60,24 @@ export function matchesFormType(liveForm, want) {
 }
 
 export const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+
+// amountVerdict(amt, ceiling): the FAIL-CLOSED amount-ceiling decision (pure; the page-coupled extractAmount
+// stays in the leaf). `amt`: null = no amount locator in the recipe, -1 = locator/figure not found, else the
+// parsed 원 value. Returns { eligible, reason, audit } — eligible only when a figure ≤ ceiling was read.
+export function amountVerdict(amt, ceiling) {
+	if (amt === null) return { eligible: false, reason: 'recipe has no amount locator (approve.amount.label) — cannot enforce ceiling (fail-closed)', audit: 'no-amount-locator' };
+	if (amt < 0) return { eligible: false, reason: 'amount not parseable at the 금액 label (fail-closed)', audit: 'amount-unparseable' };
+	if (amt > ceiling) return { eligible: false, reason: `amount ${amt} > ceiling ${ceiling}`, audit: `amount>${ceiling}` };
+	return { eligible: true, reason: '', audit: String(amt) };
+}
+
+// completionVerdict(stamped, afterTotal): the POSITIVE completion decision (pure). `stamped` = a NEW today
+// 승인 stamp appeared on the doc's own line; `afterTotal` = countDoc across all pages (-1 uncertain, 0 absent,
+// >0 still present). Approved ONLY when stamped AND absent; every other combination ⇒ fail-closed with a reason.
+export function completionVerdict(stamped, afterTotal) {
+	if (afterTotal === -1) return { ok: false, reason: 'post-approve: 대기 list uncertain — cannot confirm' };
+	if (!stamped && afterTotal > 0) return { ok: false, reason: 'post-approve: no new 승인 stamp AND still in 대기 (not committed)' };
+	if (!stamped) return { ok: false, reason: 'post-approve: doc left 대기 but NO new today 승인 stamp on its line — uncertain (fail-closed)' };
+	if (afterTotal > 0) return { ok: false, reason: 'post-approve: today 승인 stamp present but doc still in 대기 — contradictory (fail-closed)' };
+	return { ok: true, reason: '' };
+}

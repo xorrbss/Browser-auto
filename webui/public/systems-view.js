@@ -122,7 +122,7 @@ function updateSysRevCount() {
 	const btn = $('#sys-rev-approve'); if (btn) btn.textContent = `✅ 선택 항목 결재 (${n})`;
 	const all = $('#sys-rev-all'); if (all) all.checked = boxes.length > 0 && boxes.every((c) => c.checked);
 }
-// is this system approvable? needs recipe.approve + a Playwright login + a list URL. Fail-closed: the button
+// is this system approvable? needs recipe.actions.approve (or legacy approve) + a Playwright login + a list URL. Fail-closed: the button
 // is disabled with a clear "what's missing" note until all three exist (a NEW system needs its approve UI
 // captured into recipes/<name>.json + a login — the operator-accompanied per-system gate).
 async function loadSysApproveState(name) {

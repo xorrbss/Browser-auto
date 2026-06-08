@@ -18,7 +18,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseKRW, pagerDecision, matchesFormType, norm } from './guards.mjs';
+import { parseKRW, pagerDecision, matchesFormType, norm, amountVerdict, completionVerdict } from './guards.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -44,7 +44,8 @@ if (live && maxN <= 0) { console.error('REFUSED: --live requires a positive --ma
 // wrapper/indirection run through bin/scheduled-task.sh can ever drive a LIVE approve (unattended live is forbidden).
 if (live && process.env.AQA_SCHEDULED_NO_LIVE) { console.error('REFUSED: live approve is forbidden under the scheduler (AQA_SCHEDULED_NO_LIVE) — unattended LIVE is fail-closed'); process.exit(3); }
 const recipe = JSON.parse(fs.readFileSync(recipePath, 'utf8'));
-const ap = recipe.approve; if (!ap) { console.error(`recipe ${recipePath} has no "approve" block`); process.exit(2); }
+// CANONICAL form is recipe.actions.approve (general-action-rpa Step A); legacy recipe.approve is the 1:1 fallback.
+const ap = (recipe.actions && recipe.actions.approve) || recipe.approve; if (!ap) { console.error(`recipe ${recipePath} has no "actions.approve" (or legacy "approve") block`); process.exit(2); }
 const urlGlobRe = (recipe.detail && recipe.detail.urlGlob) ? new RegExp(recipe.detail.urlGlob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*')) : /\/view\//;
 let targets = JSON.parse(fs.readFileSync(targetsFile, 'utf8'));
 try { fs.rmSync(targetsFile, { force: true }); } catch {} // single-use: consume the (possibly-sensitive) targets file
@@ -237,11 +238,9 @@ try {
 			const beforeStampTexts = await datedCellTexts(TODAY); // baseline texts for the actor diff after approval
 			audit(docId, 'identity_ok', `title✓${ceiling ? ` ceiling=${ceiling}` : ''}`);
 			if (ceiling) {
-				const amt = await extractAmount();
-				if (amt === null) { r.status = 'skipped'; r.reason = 'recipe has no amount locator (approve.amount.label) — cannot enforce ceiling (fail-closed)'; audit(docId, 'skipped', 'no-amount-locator'); results.push(r); continue; }
-				if (amt < 0) { r.status = 'skipped'; r.reason = 'amount not parseable at the 금액 label (fail-closed)'; audit(docId, 'skipped', 'amount-unparseable'); results.push(r); continue; }
-				if (amt > ceiling) { r.status = 'skipped'; r.reason = `amount ${amt} > ceiling ${ceiling}`; audit(docId, 'skipped', `amount>${ceiling}`); results.push(r); continue; }
-				audit(docId, 'amount_ok', String(amt));
+				const v = amountVerdict(await extractAmount(), ceiling);
+				if (!v.eligible) { r.status = 'skipped'; r.reason = v.reason; audit(docId, 'skipped', v.audit); results.push(r); continue; }
+				audit(docId, 'amount_ok', v.audit);
 			}
 			// open modal
 			const btn = page.getByRole('button', { name: ap.button.name, exact: !!ap.button.exact });
@@ -275,10 +274,8 @@ try {
 			const newStamps = afterStampTexts.filter((tx) => !beforeStampTexts.includes(tx));
 			const actor = newStamps.length === 1 ? newStamps[0] : (newStamps.length ? newStamps.join(' | ') : null);
 			const after = await countDoc(docId);
-			if (after.total === -1) throw new Error('post-approve: 대기 list uncertain — cannot confirm');
-			if (!stamped && after.total > 0) throw new Error('post-approve: no new 승인 stamp AND still in 대기 (not committed)');
-			if (!stamped) throw new Error('post-approve: doc left 대기 but NO new today 승인 stamp on its line — uncertain (fail-closed)');
-			if (after.total > 0) throw new Error('post-approve: today 승인 stamp present but doc still in 대기 — contradictory (fail-closed)');
+			const cv = completionVerdict(stamped, after.total);
+			if (!cv.ok) throw new Error(cv.reason);
 			r.status = 'approved'; r.actor = actor; r.reason = `승인 stamp ${TODAY}${actor ? ` (${actor})` : ''} + left 대기`; approvedCount++; audit(docId, 'confirmed', `stamp ${TODAY}${actor ? ` | actor: ${actor}` : ''} + left 대기`);
 		} catch (e) {
 			if (r.status !== 'skipped' && r.status !== 'dry-ok') r.status = 'failed';
