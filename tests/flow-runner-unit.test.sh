@@ -43,6 +43,7 @@ function mockPage(calls, countVal = 1) {
     getByText: (v) => { calls.push("text:" + v); return loc(); },
     getByLabel: (v) => loc(), getByPlaceholder: (v) => { calls.push("ph:" + v); return loc(); },
     getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(),
+    frameLocator: (sel) => { calls.push("frameLocator:" + sel); const scope = { getByRole: (r, o) => { calls.push("role:" + r + ":" + (o ? o.name : "")); return loc(); }, getByText: (v) => loc(), getByLabel: (v) => loc(), getByPlaceholder: (v) => loc(), getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(), nth: (i) => scope }; return scope; },
     waitForURL: async (g) => calls.push("waitURL:" + g), waitForLoadState: async (s) => calls.push("waitLoad:" + s),
     keyboard: { press: async (k) => calls.push("press:" + k) }, mouse: { wheel: async (x, y) => calls.push("wheel:" + x + "," + y) },
   };
@@ -89,5 +90,17 @@ function mockPage(calls, countVal = 1) {
   assert(ok, "hover (non-effectful) does NOT require uniqueness");
 }
 
-console.log("  ✓ flow-runner: validate + dispatch + irreversible gate + fail-closed uniqueness all pass");
+// --- iframe steps (same-origin recording): a `frame` scopes the find INTO the iframe via frameLocator ---
+{
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "find", by: "role", value: "button", name: "결재", action: "click", frame: { by: "id", value: "payFrame" } }], { dryRun: false, irreversibleAt: 0, onBeforeIrreversible: () => {} });
+  assert(calls.some((c) => c === "frameLocator:iframe[id=\"payFrame\"]"), "scoped into the iframe via frameLocator (got " + calls.filter((c) => c.startsWith("frameLocator")).join() + ")");
+  assert(calls.includes("click"), "the click ran inside the frame");
+}
+assert(validateSteps([{ kind: "find", by: "role", value: "button", action: "click", frame: { by: "name", value: "pay" } }]).ok === true, "valid frame locator passes");
+assert(validateSteps([{ kind: "find", by: "role", value: "b", action: "click", frame: { by: "id", value: "a\"b" } }]).ok === false, "unsafe frame value ⇒ refused");
+assert(validateSteps([{ kind: "find", by: "role", value: "b", action: "click", frame: { by: "index", value: -1 } }]).ok === false, "negative frame index ⇒ refused");
+assert(validateSteps([{ kind: "find", by: "role", value: "b", action: "click", frame: { by: "css", value: "x" } }]).ok === false, "unknown frame.by ⇒ refused");
+
+console.log("  ✓ flow-runner: validate + dispatch + irreversible gate + fail-closed uniqueness + iframe scope all pass");
 ' )

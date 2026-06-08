@@ -16,6 +16,7 @@ const FIND_BY = new Set(['testid', 'role', 'label', 'text', 'placeholder', 'alt'
 const FIND_ACTION = new Set(['click', 'fill', 'type', 'select', 'check', 'uncheck', 'hover']);
 const WAIT_UNTIL = new Set(['url', 'text', 'load']);
 const SCROLL_DIR = new Set(['up', 'down', 'left', 'right']);
+const FRAME_BY = new Set(['id', 'name', 'title', 'urlGlob', 'index']); // iframe-step scope (same-origin recording)
 const EFFECTFUL = new Set(['click', 'fill', 'type', 'select', 'check', 'uncheck']); // hover is non-effectful
 
 // validateSteps(steps): PURE structural validation of a flow.json step array (no browser). Fail-closed on any
@@ -30,6 +31,12 @@ export function validateSteps(steps) {
 			if (!FIND_BY.has(s.by)) return { ok: false, reason: `step ${i}: find.by "${s.by}" invalid` };
 			if (typeof s.value !== 'string' || !s.value) return { ok: false, reason: `step ${i}: find.value required` };
 			if (!FIND_ACTION.has(s.action)) return { ok: false, reason: `step ${i}: find.action "${s.action}" invalid` };
+			if (s.frame !== undefined) { // optional iframe scope — validate it (fail-closed on a bad/unsafe frame locator)
+				const f = s.frame;
+				if (!f || typeof f !== 'object' || !FRAME_BY.has(f.by) || f.value == null) return { ok: false, reason: `step ${i}: invalid frame locator` };
+				if (typeof f.value === 'string' && /["\\]/.test(f.value)) return { ok: false, reason: `step ${i}: frame value has unsafe chars` };
+				if (f.by === 'index' && !(Number.isInteger(f.value) && f.value >= 0)) return { ok: false, reason: `step ${i}: frame index must be a non-negative integer` };
+			}
 		} else if (s.kind === 'wait') {
 			if (!WAIT_UNTIL.has(s.until)) return { ok: false, reason: `step ${i}: wait.until "${s.until}" invalid` };
 			if (s.until !== 'load' && (typeof s.value !== 'string' || !s.value)) return { ok: false, reason: `step ${i}: wait.value required` };
@@ -44,16 +51,31 @@ export function validateSteps(steps) {
 	return { ok: true, reason: '' };
 }
 
+// frameScope(page, frame): the parent-visible iframe → a Playwright FrameLocator scope (same-origin iframe
+// recording). Playwright scopes finds INTO the frame; a value with a quote/backslash is refused (selector-safe).
+function frameScope(page, f) {
+	const v = String(f.value);
+	if (f.by !== 'index' && /["\\]/.test(v)) throw new Error('unsafe frame value');
+	if (f.by === 'id') return page.frameLocator(`iframe[id="${v}"]`);
+	if (f.by === 'name') return page.frameLocator(`iframe[name="${v}"]`);
+	if (f.by === 'title') return page.frameLocator(`iframe[title="${v}"]`);
+	if (f.by === 'urlGlob') return page.frameLocator(`iframe[src*="${v}"]`);
+	if (f.by === 'index') return page.frameLocator('iframe').nth(f.value);
+	throw new Error(`unsupported frame locator: ${JSON.stringify(f)}`);
+}
+
 // buildLocator(page, step): semantic find-locator → a Playwright locator (getByRole/Text/Label/…). NO @ref/CSS.
+// A step with a `frame` is scoped INTO that iframe via frameScope (the uniqueness count is then frame-local).
 export function buildLocator(page, s) {
+	const scope = s.frame ? frameScope(page, s.frame) : page;
 	switch (s.by) {
-		case 'testid': return page.getByTestId(s.value);
-		case 'role': return page.getByRole(s.value, s.name ? { name: s.name, exact: !!s.exact } : undefined);
-		case 'label': return page.getByLabel(s.value, s.exact ? { exact: true } : undefined);
-		case 'text': return page.getByText(s.value, s.exact ? { exact: true } : undefined);
-		case 'placeholder': return page.getByPlaceholder(s.value);
-		case 'alt': return page.getByAltText(s.value);
-		case 'title': return page.getByTitle(s.value);
+		case 'testid': return scope.getByTestId(s.value);
+		case 'role': return scope.getByRole(s.value, s.name ? { name: s.name, exact: !!s.exact } : undefined);
+		case 'label': return scope.getByLabel(s.value, s.exact ? { exact: true } : undefined);
+		case 'text': return scope.getByText(s.value, s.exact ? { exact: true } : undefined);
+		case 'placeholder': return scope.getByPlaceholder(s.value);
+		case 'alt': return scope.getByAltText(s.value);
+		case 'title': return scope.getByTitle(s.value);
 		default: throw new Error(`unknown find.by ${s.by}`);
 	}
 }

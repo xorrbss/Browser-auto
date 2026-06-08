@@ -79,6 +79,23 @@ construction. Every step targets an element by a *semantic locator* only.
   warns (its effect is app-specific; review that replaying it is safe). `Shift+` alone (e.g. `Shift+Tab`)
   is normal navigation, not warned.
 
+### iframe steps (additive `frame` field on a `find` step) — SAME-ORIGIN only
+
+A `find` step performed inside a **same-origin** `<iframe>` carries an optional **`frame`** locator that scopes
+replay into that frame: `{ by: "id"|"name"|"title"|"urlGlob"|"index", value }` — the **parent-visible** identity
+of the iframe element (id > name > title > src-path > index), semantic, **never an `@ref`/CSS**. Capture works
+because same-origin iframes **share the top `sessionStorage`** (empirically verified), so the existing top-frame
+drain already collects the frame's actions; `bin/capture.js` tags each in-frame action with `frame_ref` (the
+parent-visible identifiers) + a `timestamp_ms`, and `build-flow.js` emits the `frame` field.
+
+- **Replay is `approve/flow-runner.mjs` (Playwright) ONLY** — it `page.frameLocator(...)`s into the frame, and
+  the in-frame uniqueness count is frame-local. The agent-browser TEST-compile path does **not** support frame
+  scoping (a documented ceiling) — a frame step there stays unsupported.
+- **CROSS-ORIGIN iframes are a ceiling, fail-closed:** the recorder can't read their storage, so their actions
+  are not captured (`probe-record.sh` warns when a cross-origin iframe is present), and any action `build-flow`
+  sees tagged `crossOrigin` is forced **`needs_review`** (unreplayable — the parent can't scope into it). An
+  iframe with no stable identity is likewise `needs_review`.
+
 ### needs_review (additive field on a `find` step)
 
 When recording finds **no unique stable locator** for an element, the step is emitted with:

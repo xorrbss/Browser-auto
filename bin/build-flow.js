@@ -59,21 +59,38 @@ function ladderOf(rec) {
   return (rec.candidates || []).map((c) => { const o = { by: c.by, value: c.value }; if (c.name) o.name = c.name; if (c.count != null) o.count = c.count; return o; });
 }
 
+// frameLoc(frame_ref): the parent-visible iframe LOCATOR for a step recorded inside an iframe (id > name >
+// title > src-path > index — semantic, never @ref). A CROSS-ORIGIN frame (parent can't scope into it) or an
+// iframe with NO stable identity is UNREPLAYABLE ⇒ {_unreplayable} ⇒ the step is forced needs_review (fail-closed).
+function frameLoc(fr) {
+  if (!fr) return null;
+  if (fr.crossOrigin) return { _unreplayable: 'cross-origin iframe (parent cannot scope into it)' };
+  if (fr.id) return { by: 'id', value: fr.id };
+  if (fr.name) return { by: 'name', value: fr.name };
+  if (fr.title) return { by: 'title', value: fr.title };
+  if (fr.srcPath) return { by: 'urlGlob', value: fr.srcPath };
+  if (typeof fr.index === 'number' && fr.index >= 0) return { by: 'index', value: fr.index };
+  return { _unreplayable: 'iframe with no stable identity (no id/name/title/src/index)' };
+}
 function actionFind(rec, action, extra) {
   const p = rec.primary;
-  if (!p || rec.insufficient) {
+  const fl = frameLoc(rec.frame_ref);
+  if (!p || rec.insufficient || (fl && fl._unreplayable)) {
     needsReview++;
     const step = { kind: 'find', needs_review: true, candidates: (rec.candidates || []).slice(0, Math.max(2, (rec.candidates || []).length)) };
     if (action) step.action = action;
+    if (fl && !fl._unreplayable) step.frame = fl; // a resolvable frame on a (otherwise) needs_review step is still recorded
     steps.push(step);
     candidatesByStep[steps.length - 1] = ladderOf(rec);
-    warns.push(`needs_review step #${steps.length - 1} (${rec.action_type}): ` +
+    const why = fl && fl._unreplayable ? ` [frame: ${fl._unreplayable}]` : '';
+    warns.push(`needs_review step #${steps.length - 1} (${rec.action_type})${why}: ` +
       (rec.candidates || []).map((c) => `${c.by}:${c.value}${c.count != null ? '(' + c.count + ')' : ''}`).join(', '));
     return;
   }
   const step = { kind: 'find', by: p.by, value: p.value };
   if (p.name) step.name = p.name;
   step.action = action;
+  if (fl) step.frame = fl; // iframe-scoped step: replay (flow-runner/Playwright) frameLocators into it
   if (extra) Object.assign(step, extra);
   steps.push(step);
   candidatesByStep[steps.length - 1] = ladderOf(rec);
@@ -99,6 +116,7 @@ for (let i = 0; i < records.length; i++) {
   const rec = records[i];
   const t = rec.action_type;
   if (t === 'navigate') {
+    if (rec.frame_ref) continue; // a FRAME-load navigate (an iframe loaded/navigated) is NOT a top-level nav gate
     // boundary: the settled URL is the next non-navigate record's url, else this marker's url
     let to = null;
     for (let j = i + 1; j < records.length; j++) { if (records[j].action_type !== 'navigate') { to = records[j].url_at_capture; break; } }

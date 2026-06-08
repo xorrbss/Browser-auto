@@ -50,6 +50,17 @@ compile() {
 		exit 1
 	fi
 
+	# FAIL-LOUD on iframe (frame-scoped) steps: the agent-browser TEST path cannot scope into an iframe (a
+	# documented ceiling — flows/SCHEMA.md). A `frame` step is replayable ONLY via the Playwright flow-runner
+	# (the effectful path), never compiled to a test.sh — refuse rather than silently run the find on the TOP
+	# frame (a wrong-element false-green).
+	if ! jq -e '[.steps[] | select(.frame!=null)] | length==0' "$flow" >/dev/null 2>&1; then
+		jq -r '.steps | to_entries[] | select(.value.frame!=null)
+			| "  iframe step #\(.key): frame \(.value.frame.by):\(.value.frame.value)"' "$flow" >&2
+		echo "[probe] compile refused: $flow has iframe (frame) step(s) — the agent-browser test path can't scope into frames; replay via the Playwright flow-runner (effectful path) instead." >&2
+		exit 1
+	fi
+
 	# FAIL-LOUD on any UNRECOGNIZED step/assert kind. The step/assert jq below both end in `else
 	# empty`, which would silently DROP an unknown (typo'd or future) kind and compile a green-but-
 	# incomplete test — the exact false-green this framework forbids. Refuse instead of dropping.
@@ -338,8 +349,12 @@ capture() {
 		# targets the active tab, so without switching back we would read the (empty) new tab's
 		# storage and lose the whole recording. Best-effort switch to the tab capture opened.
 		[ -n "$orig_tab" ] && agent-browser --session "$sess" tab "$orig_tab" >/dev/null 2>&1 </dev/null || true
+		# SAME-ORIGIN iframes SHARE the top sessionStorage (empirically verified), so the top-frame drain
+		# ALREADY collects their (frame_ref-tagged) events — no per-frame merge. CROSS-ORIGIN iframes have
+		# separate, unreadable storage: count them (sessionStorage access throws) to WARN that any actions
+		# inside them were NOT captured (the documented cross-origin ceiling).
 		out="$(agent-browser --session "$sess" eval --json \
-			"({buf:JSON.parse(sessionStorage.getItem('__aqa_buf')||'[]'),seq:(parseInt(sessionStorage.getItem('__aqa_seq')||'0',10)||0)})" 2>/dev/null || true)"
+			"({buf:JSON.parse(sessionStorage.getItem('__aqa_buf')||'[]'),seq:(parseInt(sessionStorage.getItem('__aqa_seq')||'0',10)||0),xoFrames:(function(){var n=0;for(var i=0;i<window.frames.length;i++){try{window.frames[i].sessionStorage.getItem('__aqa_buf');}catch(e){n++;}}return n;})()})" 2>/dev/null || true)"
 		ok="$(printf '%s' "$out" | jq -r '.success // false' 2>/dev/null || echo false)"
 		if [ "$ok" != "true" ]; then
 			echo "[probe] FATAL: could not drain capture buffer (browser closed/unreachable). Nothing written." >&2
@@ -354,6 +369,12 @@ capture() {
 			echo "[probe] WARNING: capture health-check FAILED — recorder advanced seq=$cap_seq but only" >&2
 			echo "[probe]   $cap_recovered event(s) persisted ($(( cap_seq - cap_recovered )) lost — likely sessionStorage" >&2
 			echo "[probe]   quota or private-mode). The recording is INCOMPLETE; re-record before trusting it." >&2
+		fi
+		local xo_frames; xo_frames="$(printf '%s' "$out" | jq -r '.data.result.xoFrames // 0' 2>/dev/null || echo 0)"
+		if [ "$xo_frames" -gt 0 ] 2>/dev/null; then
+			echo "[probe] NOTE: $xo_frames cross-origin iframe(s) present — actions performed INSIDE them were NOT" >&2
+			echo "[probe]   captured (same-origin iframes ARE captured; cross-origin is a ceiling). If your journey" >&2
+			echo "[probe]   used a cross-origin iframe, that part is missing — review the flow before relying on it." >&2
 		fi
 		agent-browser --session "$sess" close >/dev/null 2>&1 || true
 	}

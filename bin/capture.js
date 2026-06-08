@@ -21,6 +21,27 @@
 
   var BUF = '__aqa_buf', SEQ = '__aqa_seq', PREV = '__aqa_prevurl';
   var ss = window.sessionStorage;
+
+  // FRAME identity (iframe recording, same-origin MVP): null in the top frame. In an iframe, the PARENT-visible
+  // identifiers of this frame's <iframe> element (id/name/title/src-path/index) so replay can frameLocator into
+  // it — never a DOM @ref. A CROSS-ORIGIN frame can't read window.frameElement (SecurityError) ⇒ crossOrigin:true
+  // (build-flow fails it closed: a cross-origin frame action is unreplayable, marked needs_review). Computed once.
+  var FRAME_REF = null;
+  try {
+    if (window.top !== window.self) {
+      var fe = null; try { fe = window.frameElement; } catch (e) { fe = null; } // null when cross-origin
+      var idx = -1; try { var pf = window.parent.frames; for (var fi = 0; fi < pf.length; fi++) { if (pf[fi] === window.self) { idx = fi; break; } } } catch (e) {}
+      var srcPath = null; try { srcPath = new URL((fe && fe.getAttribute('src')) || location.href, location.href).pathname || null; } catch (e) {}
+      FRAME_REF = {
+        index: idx,
+        id: fe ? (fe.id || null) : null,
+        name: fe ? (fe.getAttribute('name') || null) : (window.name || null),
+        title: fe ? (fe.getAttribute('title') || null) : null,
+        srcPath: srcPath,
+        crossOrigin: !fe
+      };
+    }
+  } catch (e) {}
   function load() { try { return JSON.parse(ss.getItem(BUF) || '[]'); } catch (e) { return []; } }
   function save(a) { try { ss.setItem(BUF, JSON.stringify(a)); } catch (e) { /* quota: host seq-advance health-check fails loud */ } }
   function nextSeq() { var n = (parseInt(ss.getItem(SEQ) || '0', 10) || 0) + 1; try { ss.setItem(SEQ, String(n)); } catch (e) {} return n; }
@@ -28,7 +49,10 @@
     try {
       var a = load();
       ev.seq = nextSeq();
+      ev.timestamp_ms = Date.now();           // cross-frame ORDERING key — per-frame seq is local, so merged
+                                              // buffers from multiple frames are ordered by wall-clock time.
       ev.url_at_capture = location.href;
+      if (FRAME_REF) ev.frame_ref = FRAME_REF; // tag iframe actions with the parent-visible frame identity
       a.push(ev); save(a); window.__aqa_buf = a;
     } catch (e) {}
   }
