@@ -162,6 +162,25 @@ live-on-disposable + sign-off → the action is **fail-closed** (disabled). This
   `flow.json`; per-action capture for one non-approval action end-to-end (operator-accompanied).
 - Each effectful step stays **DESIGN-fail-closed** until its per-action capture + live-on-disposable + sign-off.
 
+### Step C status (2026-06-08) — the flow-runner is BUILT standalone (NOT yet wired to the leaf)
+`approve/flow-runner.mjs` implements the effectful executor: `validateSteps(steps)` (pure, fail-closed on an
+unknown kind / `needs_review` / malformed step) + `runSteps(page, steps, { irreversibleAt, onBeforeIrreversible,
+dryRun, resolveValue })` — it maps the documented `flow.json` step model (find/wait/press/scroll, semantic
+locators, `{{input_N}}` tokens) to Playwright (whose clicks are trusted), with an **effectful find FAIL-CLOSED
+unless the locator is UNIQUE** (count===1; never act on first-of-many) and the **irreversible step gated**:
+dry-run STOPS before it, live runs `onBeforeIrreversible` (the leaf's `audit('clicked')` + `clicksIssued` cap)
+then executes it. It takes `page` as a parameter and imports NO Playwright, so it is **unit-tested browser-free
+with a mock page** (`tests/flow-runner-unit.test.sh`). It is deliberately **NOT wired into `approve-run.mjs`** —
+approve keeps its captured hardcoded modal flow (byte-identical).
+
+**Remaining (operator-accompanied — the deferred half of Step C):**
+1. **Wiring** (small): in the action loop, `if (ap.steps) { resolveValue from the values sidecar; runSteps(page,
+   ap.steps, { irreversibleAt: ap.irreversible.atIndex, onBeforeIrreversible: () => { audit('clicked'); clicksIssued++ }, dryRun }) }`
+   ELSE the existing hardcoded modal flow. Identity/content/completion/audit/cap stay the shared guards around it.
+2. **Per-action capture** of ONE real non-approval action on a disposable target (record its `flow.json`, pin
+   `irreversibleAt` + the completion marker, set `enabled:true`), then a clean dry-run + live-on-disposable +
+   sign-off. This is the irreducible operator gate — the runner can't be live-validated without a captured action.
+
 **Net:** approve generalizes cleanly into a reversibility-scaled, capture-gated, deterministic action model
 that REUSES the existing recorder as the action source and the proven approve guards as the safety library —
 turning "그룹웨어 결재 RPA" into "**any-web-system, any-recorded-action** RPA", **without** an open LLM agent and
