@@ -21,7 +21,7 @@ import { PROBE_ROOT } from './spawn.js';
 const require = createRequire(import.meta.url);
 const { openDb, closeDb, getApproval, getSystem, getRecord } = require('../lib/db.js');
 import { resolveAction } from '../approve/guards.mjs'; // pure action selector (general-action-rpa Step B) — shared with the leaf
-import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews, assembleActionBlock } from './capture.js'; // UI approve-capture (Gate-B) Phase 1a/1b
+import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews, assembleActionBlock, enableActionInRecipe } from './capture.js'; // UI approve-capture (Gate-B) Phase 1a/1b/2
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
@@ -75,6 +75,44 @@ const validDoc = (d) => typeof d === 'string' && d.length > 0 && d.length <= 100
 
 const stopPath = () => path.join(PROBE_ROOT, 'data', 'approve-STOP');
 
+// _stageCapture(bodyJson, { live }): shared validation + staging for the capture dry-run (live:false) and the
+// capture LIVE-VERIFY (live:true). Builds a NON-committed temp preview recipe (the committed one is untouched),
+// the targets file (content-binding title required), and the leaf args. live:true adds --live --max 1 (single
+// doc, blast-radius capped) — the operator's conscious live test on a DISPOSABLE doc. Returns { ok, args,
+// startedAt, label } or { ok:false, code?, error }.
+function _stageCapture(bodyJson, { live }) {
+	const app = String(bodyJson.app || '').trim();
+	if (!NAME_RE.test(app)) return { ok: false, error: 'invalid app name' };
+	const action = String(bodyJson.action || 'approve').trim();
+	if (!NAME_RE.test(action)) return { ok: false, error: 'invalid action name' };
+	const docId = String(bodyJson.docId || '').trim();
+	if (!validDoc(docId)) return { ok: false, error: 'docId: a non-empty string ≤100 chars, no comma/newline' };
+	if (!fs.existsSync(recipeFor(app))) return { ok: false, error: `no recipe recipes/${app}.json` };
+	let recipeObj;
+	try { recipeObj = JSON.parse(fs.readFileSync(recipeFor(app), 'utf8')); } catch { return { ok: false, error: `recipe ${app} unreadable` }; }
+	const block = bodyJson.block && typeof bodyJson.block === 'object' && !Array.isArray(bodyJson.block) ? bodyJson.block : null;
+	const preview = buildPreviewRecipe(recipeObj, action, block);
+	if (!preview) return { ok: false, error: `no action "${action}" to test — provide a block or capture it first` };
+	if (!fs.existsSync(stateFor(app))) return { ok: false, error: `no Playwright login for '${app}' — capture/login first` };
+	const listUrl = listUrlFor(app);
+	if (!listUrl) return { ok: false, error: 'no 대기 list URL (set GW_INBOX_URL in data/approvals.config)' };
+	const titleField = (preview.actions[action] && preview.actions[action].titleField) || 'title';
+	const title = typeof bodyJson.title === 'string' && bodyJson.title.trim() ? bodyJson.title.trim() : (titlesFor(app, [docId], titleField)[docId] || null);
+	if (!title) return { ok: false, error: '문서 제목(title)이 필요합니다 — 먼저 동기화하거나 title을 직접 입력하세요(콘텐츠 바인딩 가드).' };
+	sweepOldPreviews(PROBE_ROOT);
+	const previewFile = path.join(PROBE_ROOT, 'data', `.capture-preview-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+	const targetsFile = path.join(PROBE_ROOT, 'data', `.approve-targets-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+	try {
+		fs.mkdirSync(path.dirname(previewFile), { recursive: true });
+		fs.writeFileSync(previewFile, JSON.stringify(preview), { mode: 0o600 });
+		fs.writeFileSync(targetsFile, JSON.stringify([{ doc_id: docId, title }]), { mode: 0o600 });
+	} catch (e) { return { ok: false, code: 500, error: 'could not stage capture: ' + (e && e.message) }; }
+	const args = ['--recipe', path.relative(PROBE_ROOT, previewFile), '--state', `approve/${app}.pw-state.json`, '--list-url', listUrl, '--targets-file', targetsFile];
+	if (live) args.push('--live', '--max', '1'); // single doc, capped — the operator's live test on a disposable doc
+	if (action !== 'approve') args.push('--action', action);
+	return { ok: true, args, startedAt: new Date().toISOString(), label: `CAPTURE ${live ? 'LIVE-VERIFY' : 'dry-run'} ${action} ${app} (${docId})` };
+}
+
 // approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) -> handled?
 export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	// KILL-SWITCH: write data/approve-STOP — a running approve leaf stops BEFORE its next doc (red-team
@@ -103,44 +141,52 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 		sendJson(res, 200, { block: r.block });
 		return true;
 	}
-	// CAPTURE DRY-RUN (Gate-B UI, Phase 1a): test an action's locators on a disposable doc and show per-guard
+	// CAPTURE DRY-RUN (Gate-B UI, Phase 1a): test an action's locators on a disposable doc + show per-guard
 	// results — NEVER approves (no --live). Tests a recipe's existing action OR an operator-supplied `block`
-	// (incl. a not-yet-enabled one) via a NON-committed temp preview recipe; the committed recipe is untouched.
+	// via a NON-committed temp preview recipe; the committed recipe is untouched.
 	if (p === '/api/approve/capture/dry-run') {
+		const r = _stageCapture(bodyJson, { live: false });
+		if (!r.ok) { sendJson(res, r.code || 400, { error: r.error }); return true; }
+		const job = enqueue({ kind: 'approve', label: r.label, spawnFn: () => nodeLeaf('approve/approve-run.mjs', r.args) });
+		sendJson(res, 202, { job, dryRun: true, docId: String(bodyJson.docId || '').trim(), startedAt: r.startedAt });
+		return true;
+	}
+	// CAPTURE LIVE-VERIFY (Gate-B UI, Phase 2): the SINGLE real 확인 on a DISPOSABLE doc, to confirm the captured
+	// action's completion marker BEFORE enabling it. ACTUALLY APPROVES (--live --max 1) ⇒ requires an explicit
+	// confirm:true (the operator's conscious live test; disposable docs ONLY, irreversible). Same preview block.
+	if (p === '/api/approve/capture/verify') {
+		if (bodyJson.confirm !== true) { sendJson(res, 400, { error: '라이브 검증(실제 확인 클릭)에는 confirm:true가 필요합니다 — 반드시 폐기용 문서에서만(되돌릴 수 없음).' }); return true; }
+		const r = _stageCapture(bodyJson, { live: true });
+		if (!r.ok) { sendJson(res, r.code || 400, { error: r.error }); return true; }
+		try { fs.rmSync(stopPath(), { force: true }); } catch {} // the leaf refuses to start while STOP exists
+		const job = enqueue({ kind: 'approve', label: r.label, spawnFn: () => nodeLeaf('approve/approve-run.mjs', r.args) });
+		sendJson(res, 202, { job, dryRun: false, live: true, docId: String(bodyJson.docId || '').trim(), startedAt: r.startedAt });
+		return true;
+	}
+	// CAPTURE ENABLE (Gate-B UI, Phase 2): atomically write the captured block into the committed recipe with
+	// enabled:true + capture metadata — the action becomes usable for batch approve. The OPERATOR is the
+	// irreducible gate: requires confirmed:true (they watched the live-verify succeed). NEVER auto-enabled.
+	if (p === '/api/approve/capture/enable') {
 		const app = String(bodyJson.app || '').trim();
 		if (!NAME_RE.test(app)) { sendJson(res, 400, { error: 'invalid app name' }); return true; }
-		const action = String(bodyJson.action || 'approve').trim();
+		const action = String(bodyJson.action || '').trim();
 		if (!NAME_RE.test(action)) { sendJson(res, 400, { error: 'invalid action name' }); return true; }
-		const docId = String(bodyJson.docId || '').trim();
-		if (!validDoc(docId)) { sendJson(res, 400, { error: 'docId: a non-empty string ≤100 chars, no comma/newline' }); return true; }
+		if (bodyJson.confirmed !== true) { sendJson(res, 400, { error: '활성화하려면 라이브 검증을 직접 확인했다는 confirmed:true가 필요합니다(운영자 서명) — 미검증 action을 켜지 않습니다.' }); return true; }
+		const block = bodyJson.block && typeof bodyJson.block === 'object' && !Array.isArray(bodyJson.block) ? bodyJson.block : null;
+		if (!block) { sendJson(res, 400, { error: 'block (조립된 action 블록)이 필요합니다.' }); return true; }
 		if (!fs.existsSync(recipeFor(app))) { sendJson(res, 400, { error: `no recipe recipes/${app}.json` }); return true; }
 		let recipeObj;
 		try { recipeObj = JSON.parse(fs.readFileSync(recipeFor(app), 'utf8')); } catch { sendJson(res, 400, { error: `recipe ${app} unreadable` }); return true; }
-		const block = bodyJson.block && typeof bodyJson.block === 'object' && !Array.isArray(bodyJson.block) ? bodyJson.block : null;
-		const preview = buildPreviewRecipe(recipeObj, action, block);
-		if (!preview) { sendJson(res, 400, { error: `no action "${action}" to test — provide a block or capture it first` }); return true; }
-		if (!fs.existsSync(stateFor(app))) { sendJson(res, 400, { error: `no Playwright login for '${app}' — capture/login first` }); return true; }
-		const listUrl = listUrlFor(app);
-		if (!listUrl) { sendJson(res, 400, { error: 'no 대기 list URL (set GW_INBOX_URL in data/approvals.config)' }); return true; }
-		// content binding: an explicit title (a disposable doc may be unsynced) OR the synced title; one is required.
-		const titleField = (preview.actions[action] && preview.actions[action].titleField) || 'title';
-		const title = typeof bodyJson.title === 'string' && bodyJson.title.trim() ? bodyJson.title.trim() : (titlesFor(app, [docId], titleField)[docId] || null);
-		if (!title) { sendJson(res, 400, { error: '문서 제목(title)이 필요합니다 — 먼저 동기화하거나 title을 직접 입력하세요(콘텐츠 바인딩 가드).' }); return true; }
-		sweepOldPreviews(PROBE_ROOT);
-		const previewFile = path.join(PROBE_ROOT, 'data', `.capture-preview-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
-		const targetsFile = path.join(PROBE_ROOT, 'data', `.approve-targets-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+		const meta = { date: new Date().toISOString(), by: process.env.USERNAME || process.env.USER || null, notes: String(bodyJson.notes || '').slice(0, 500) };
+		const r = enableActionInRecipe(recipeObj, action, block, meta);
+		if (!r.ok) { sendJson(res, 400, { error: r.error }); return true; }
 		try {
-			fs.mkdirSync(path.dirname(previewFile), { recursive: true });
-			fs.writeFileSync(previewFile, JSON.stringify(preview), { mode: 0o600 });
-			fs.writeFileSync(targetsFile, JSON.stringify([{ doc_id: docId, title }]), { mode: 0o600 });
-		} catch (e) { sendJson(res, 500, { error: 'could not stage capture dry-run: ' + (e && e.message) }); return true; }
-		// DRY-RUN ONLY — no --live, so the leaf stops before 확인 (never approves). Same guards as production.
-		const args = ['--recipe', path.relative(PROBE_ROOT, previewFile), '--state', `approve/${app}.pw-state.json`, '--list-url', listUrl, '--targets-file', targetsFile];
-		if (action !== 'approve') args.push('--action', action);
-		const startedAt = new Date().toISOString();
-		const label = `CAPTURE dry-run ${action} ${app} (${docId})`;
-		const job = enqueue({ kind: 'approve', label, spawnFn: () => nodeLeaf('approve/approve-run.mjs', args) });
-		sendJson(res, 202, { job, dryRun: true, docId, startedAt });
+			const tmp = `${recipeFor(app)}.tmp-${Date.now()}`;
+			fs.writeFileSync(tmp, JSON.stringify(r.recipe, null, 2) + '\n', { mode: 0o644 });
+			fs.renameSync(tmp, recipeFor(app)); // atomic replace
+		} catch (e) { sendJson(res, 500, { error: 'could not write recipe: ' + (e && e.message) }); return true; }
+		try { fs.appendFileSync(path.join(PROBE_ROOT, 'data', 'approve-audit.jsonl'), JSON.stringify({ at: meta.date, doc_id: '-', stage: 'capture-enabled', action, by: meta.by }) + '\n'); } catch {}
+		sendJson(res, 200, { ok: true, action, enabled: true });
 		return true;
 	}
 	if (p !== '/api/approve/run') return false;

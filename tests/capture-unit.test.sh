@@ -8,7 +8,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ( cd "$DIR" && node --input-type=module -e '
-import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews, assembleActionBlock } from "./webui/capture.js";
+import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews, assembleActionBlock, enableActionInRecipe } from "./webui/capture.js";
 import { resolveAction } from "./approve/guards.mjs";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const assert = (c, m) => { if (!c) { console.error("  ✗ capture: " + m); process.exit(1); } };
@@ -68,5 +68,18 @@ assert(assembleActionBlock(flow, {}).ok === false, "no confirmName ⇒ refused (
 const prev = buildPreviewRecipe({ actions: {} }, "approve_지출", ab.block);
 assert(resolveAction(prev, "approve_지출").ok === true, "assembled block resolves for the dry-run test");
 
-console.log("  ✓ capture: buildPreviewRecipe + listCaptureFlows + sweepOldPreviews + assembleActionBlock OK");
+// --- enableActionInRecipe (Phase 2): atomic-write content; forces enabled:true + capture meta, fail-closed ---
+const committed = { app: "hiworks", actions: { approve: { button: { name: "결재" } } } };
+const goodBlock = { enabled: false, button: { role: "button", name: "결재", exact: true }, decision: { role: "radio", name: "승인" }, confirm: { role: "button", name: "확인", exact: true }, success: "leftInbox" };
+const en = enableActionInRecipe(committed, "approve_지출", goodBlock, { date: "2026-06-08T00:00:00Z", by: "op", notes: "watched stamp" });
+assert(en.ok === true, "valid block enables");
+assert(en.recipe.actions["approve_지출"].enabled === true, "FORCES enabled:true");
+assert(en.recipe.actions["approve_지출"].capture.confirmed === true && en.recipe.actions["approve_지출"].capture.by === "op", "capture metadata stamped");
+assert(en.recipe.actions.approve.button.name === "결재", "existing actions preserved");
+assert(committed.actions["approve_지출"] === undefined, "enableActionInRecipe does NOT mutate the input recipe");
+assert(enableActionInRecipe(committed, "x", { button: { name: "결재" }, decision: { name: "승인" } }, {}).ok === false, "missing confirm.name ⇒ refused (fail-closed)");
+assert(enableActionInRecipe(committed, "x", { button: { name: "결재" }, confirm: { name: "확인" } }, {}).ok === false, "missing decision.name ⇒ refused");
+assert(enableActionInRecipe(committed, "", goodBlock, {}).ok === false, "empty action ⇒ refused");
+
+console.log("  ✓ capture: buildPreviewRecipe + listCaptureFlows + sweepOldPreviews + assembleActionBlock + enableActionInRecipe OK");
 ' )

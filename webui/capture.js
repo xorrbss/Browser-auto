@@ -60,6 +60,24 @@ export function assembleActionBlock(flow, facts = {}) {
 	return { ok: true, block };
 }
 
+// enableActionInRecipe(recipeObj, action, block, meta): PURE — return the committed recipe with actions[action]
+// set to `block` (Gate-B Phase 2 / enable). enabled is FORCED to true + a capture metadata stamp is attached.
+// FAIL-CLOSED at write time: refuses unless the structural essentials (button/decision/confirm names) are
+// present (the leaf would refuse otherwise). Does NOT do I/O — the route writes the result atomically. The
+// operator is the irreducible gate (the route requires confirmed:true; meta records who/when).
+export function enableActionInRecipe(recipeObj, action, block, meta = {}) {
+	const base = recipeObj && typeof recipeObj === 'object' ? recipeObj : {};
+	if (!action || typeof action !== 'string') return { ok: false, error: 'action (string) required' };
+	if (!block || typeof block !== 'object' || Array.isArray(block)) return { ok: false, error: 'block (object) required' };
+	if (!(block.button && block.button.name)) return { ok: false, error: 'block.button.name required (the 결재 affordance)' };
+	if (!(block.decision && block.decision.name)) return { ok: false, error: 'block.decision.name required (the 승인 radio)' };
+	if (!(block.confirm && block.confirm.name)) return { ok: false, error: 'block.confirm.name required (the 확인 commit button)' };
+	const { enabled, _capturedVia, capture, ...rest } = block; // we set enabled + capture ourselves
+	const actions = { ...(base.actions || {}) };
+	actions[action] = { ...rest, enabled: true, capture: { date: meta.date || null, by: meta.by || null, confirmed: true, notes: String(meta.notes || ''), via: 'webui-capture' } };
+	return { ok: true, recipe: { ...base, actions } };
+}
+
 // listCaptureFlows(probeRoot, app): the captured approve flows for an app (flows/approve-<app>-*.flow.json),
 // newest first. Read-only; used by the capture panel to show what has been recorded (Phase 1b consumes them).
 export function listCaptureFlows(probeRoot, app) {

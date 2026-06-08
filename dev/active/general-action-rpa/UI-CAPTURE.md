@@ -118,9 +118,16 @@ its own capture, not a forced click on the wrong layout.
   journey on a disposable doc, stopping before 확인) — no duplicate record path. Unit-tested + live-verified the
   full chain (recorded flow → assembled block → dry-run → `✓ identity_ok → ✓ dry_ok`). Still NO recipe write /
   enable (Phase 2). The headed recording needs a human at the browser (operator-accompanied).
-- **Phase 2 (live-verify + enable, ~1wk, gated):** `POST /verify` (live on a fresh disposable doc) + the
-  checklist + atomic `POST /enable`. Gate: live-verify completion confirmed + operator sign-off. MVP must **not**
-  re-architect the leaf (the reference `approve` action stays byte-identical; regression-pinned).
+- **Phase 2 (live-verify + atomic enable) — ✅ BUILT (2026-06-08):** `POST /api/approve/capture/verify` (the
+  SINGLE real 확인 on a DISPOSABLE doc — `--live --max 1`; requires an explicit `confirm:true`, the operator's
+  conscious live test) + `POST /api/approve/capture/enable` (`enableActionInRecipe` → **atomic** write of the
+  block into `recipes/<app>.json` with `enabled:true` + capture metadata, gated on `confirmed:true` — the
+  operator is the irreducible enable gate; refuses an incomplete block; appends a `capture-enabled` audit line)
+  + the 🔓 라이브 검증 → 활성화 UI section. dry-run/verify share `_stageCapture` (the reference `approve` stays
+  byte-identical; suite green). Verified: gating refuses verify without `confirm:true` and enable without
+  `confirmed:true`/with an incomplete block; the atomic enable writes correctly (checked end-to-end on a
+  throwaway recipe — hiworks untouched). The real verify (a live approval) + the real enable are the operator's
+  UI actions on a disposable doc — never triggered autonomously.
 
 ## 7. Open questions (operator decides)
 - Per-form capture (recommended, tight `formType` scope) vs one global action (relies on `--reviewed` for mixed).

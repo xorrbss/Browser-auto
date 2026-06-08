@@ -533,26 +533,28 @@ function renderApproveResults(logText, status, results) {
 
 // ---------- 🔧 approve capture (Gate-B) — DRY-RUN test only (Phase 1a; never approves, no recipe write) ----------
 const CAP_OKSTAGES = new Set(['requested', 'identity_ok', 'amount_ok', 'dry_ok', 'clicked', 'confirmed']);
-async function runCaptureDryRun() {
+function _capInputs() {
 	const app = ($('#cap-app').value || 'hiworks').trim();
 	const docId = $('#cap-doc').value.trim();
 	const action = ($('#cap-action').value || 'approve').trim();
 	const title = $('#cap-title').value.trim();
 	const blockText = $('#cap-block').value.trim();
-	const status = $('#cap-status'), guards = $('#cap-guards');
-	guards.replaceChildren();
-	if (!docId) { status.replaceChildren(el('div', { class: 'error' }, '폐기용 문서번호를 입력하세요.')); return; }
-	let block = null;
-	if (blockText) { try { block = JSON.parse(blockText); } catch (e) { status.replaceChildren(el('div', { class: 'error' }, '블록 JSON 파싱 오류: ' + e.message)); return; } }
-	status.replaceChildren(el('div', { class: 'hint' }, 'dry-run 미리보기 실행 중… (승인하지 않음)'));
+	let block = null, err = null;
+	if (blockText) { try { block = JSON.parse(blockText); } catch (e) { err = '블록 JSON 파싱 오류: ' + e.message; } }
 	const body = { app, action, docId };
 	if (title) body.title = title;
 	if (block) body.block = block;
+	return { body, err };
+}
+async function captureLeafRun(endpoint, body, runningMsg) {
+	const status = $('#cap-status'), guards = $('#cap-guards');
+	guards.replaceChildren();
+	status.replaceChildren(el('div', { class: 'hint' }, runningMsg));
 	let resp;
-	try { const r = await fetch('/api/approve/capture/dry-run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); resp = await r.json(); }
+	try { const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); resp = await r.json(); }
 	catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
-	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || 'dry-run이 거부되었습니다.')); return; }
-	const startedAt = resp.startedAt;
+	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '거부되었습니다.')); return; }
+	const startedAt = resp.startedAt, docId = body.docId;
 	const log = el('pre', { class: 'joblog' }); log.hidden = true; guards.append(log);
 	streamJob(resp.job.id, log, async () => {
 		let stages = [];
@@ -560,12 +562,39 @@ async function runCaptureDryRun() {
 		renderCaptureGuards(stages, status, guards, log);
 	});
 }
+async function runCaptureDryRun() {
+	const { body, err } = _capInputs();
+	if (!body.docId) { $('#cap-status').replaceChildren(el('div', { class: 'error' }, '폐기용 문서번호를 입력하세요.')); return; }
+	if (err) { $('#cap-status').replaceChildren(el('div', { class: 'error' }, err)); return; }
+	captureLeafRun('/api/approve/capture/dry-run', body, 'dry-run 미리보기 실행 중… (승인하지 않음)');
+}
+async function runCaptureVerify() {
+	const { body, err } = _capInputs();
+	if (!body.docId) { $('#cap-status').replaceChildren(el('div', { class: 'error' }, '폐기용 문서번호를 입력하세요.')); return; }
+	if (err) { $('#cap-status').replaceChildren(el('div', { class: 'error' }, err)); return; }
+	if (!window.confirm('⚠ 라이브 검증: 이 문서를 실제로 승인합니다(확인 클릭, 되돌릴 수 없음). 반드시 폐기용 문서여야 합니다. 진행할까요?')) return;
+	captureLeafRun('/api/approve/capture/verify', { ...body, confirm: true }, '라이브 검증 실행 중… (실제 승인 — 폐기용만)');
+}
+async function runCaptureEnable() {
+	const app = ($('#cap-app').value || 'hiworks').trim();
+	const action = ($('#cap-action').value || 'approve').trim();
+	const status = $('#cap-status');
+	if (!$('#cap-confirmed').checked) { status.replaceChildren(el('div', { class: 'error' }, '라이브 검증 성공(승인 스탬프+대기 이탈)을 직접 확인(체크)해야 활성화할 수 있습니다.')); return; }
+	let block; try { block = JSON.parse($('#cap-block').value.trim()); } catch (e) { status.replaceChildren(el('div', { class: 'error' }, '블록 JSON이 필요/유효해야 합니다: ' + e.message)); return; }
+	if (!window.confirm(`'${action}' action을 레시피에 enabled:true로 기록합니다 — 이후 일괄 결재에서 사용됩니다. 라이브 검증을 마쳤습니까?`)) return;
+	let resp;
+	try { const r = await fetch('/api/approve/capture/enable', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, action, block, confirmed: true, notes: $('#cap-notes').value.trim() }) }); resp = await r.json(); }
+	catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
+	if (!resp.ok) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '활성화 실패')); return; }
+	status.replaceChildren(el('div', { class: 'hint' }, `✅ '${resp.action}' 활성화됨 (recipes/${app}.json 에 enabled:true 기록) — 이제 일괄 결재에서 사용 가능.`));
+}
 function renderCaptureGuards(stages, status, guards, log) {
 	guards.replaceChildren();
 	if (!stages.length) { status.replaceChildren(el('div', { class: 'error' }, '가드 단계를 읽지 못했습니다 — 🧾 감사 로그를 확인하세요.')); guards.append(log); return; }
 	const last = stages[stages.length - 1];
-	const ok = last.stage === 'dry_ok';
-	status.replaceChildren(el('div', { class: ok ? 'hint' : 'error' }, ok ? '✅ dry-run 통과 — 확인 직전까지 모든 가드 OK (승인 안 함)' : '✗ ' + (AUDIT_ST[last.stage] || last.stage) + (last.detail ? ' — ' + last.detail : '')));
+	const ok = last.stage === 'dry_ok' || last.stage === 'confirmed';
+	const msg = last.stage === 'confirmed' ? '✅ 라이브 검증 성공 — 실제 승인 완료(스탬프+대기 이탈). 이제 🔓 활성화 가능' : (last.stage === 'dry_ok' ? '✅ dry-run 통과 — 확인 직전까지 모든 가드 OK (승인 안 함)' : '✗ ' + (AUDIT_ST[last.stage] || last.stage) + (last.detail ? ' — ' + last.detail : ''));
+	status.replaceChildren(el('div', { class: ok ? 'hint' : 'error' }, msg));
 	const list = el('div', { class: 'cap-guards' });
 	for (const e of stages) {
 		const good = CAP_OKSTAGES.has(e.stage);
@@ -645,6 +674,8 @@ $('#agent-run').addEventListener('click', runAgent);
 $('#agent-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent(); });
 $('#approve-run').addEventListener('click', runApprove);
 $('#cap-dry').addEventListener('click', runCaptureDryRun);
+$('#cap-verify').addEventListener('click', runCaptureVerify);
+$('#cap-enable').addEventListener('click', runCaptureEnable);
 $('#cap-assemble').addEventListener('click', runCaptureAssemble);
 $('#cap-flows').addEventListener('click', loadCaptureFlows);
 $('#audit-refresh').addEventListener('click', loadAudit);

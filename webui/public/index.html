@@ -107,6 +107,16 @@
 					</div>
 					<div id="cap-status" class="approve-status"></div>
 					<div id="cap-guards"></div>
+					<details class="cap-enable">
+						<summary>🔓 라이브 검증 → 활성화 (Phase 2 — 실제 승인 / 되돌릴 수 없음)</summary>
+						<p class="note warn">⚠ <b>라이브 검증</b>은 위 문서를 <b>실제로 승인</b>합니다(확인 클릭, 되돌릴 수 없음) — <b>반드시 폐기용 문서</b>로만. 성공(승인 스탬프+대기 이탈)을 직접 확인한 뒤에만 활성화하세요. <b>활성화</b>는 위 블록을 레시피에 <code>enabled:true</code>로 기록해 일괄 결재에서 쓰입니다.</p>
+						<div class="cap-row"><button id="cap-verify" type="button">▶ 라이브 검증 (실제 승인, 폐기용만)</button></div>
+						<label class="cap-confirmrow"><input id="cap-confirmed" type="checkbox" /> 라이브 검증에서 <b>승인 스탬프 + 대기 이탈</b>을 직접 확인했습니다</label>
+						<div class="cap-row">
+							<input id="cap-notes" placeholder="메모 (선택) — 캡처 검증 기록" autocomplete="off" spellcheck="false" />
+							<button id="cap-enable" type="button">✅ 저장 &amp; 활성화</button>
+						</div>
+					</details>
 					<div id="cap-flowlist" class="note"></div>
 				</div>
 
