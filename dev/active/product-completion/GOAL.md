@@ -219,6 +219,15 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   capture" is now MOOT for the recommended flow** — remaining unattended prereqs reduce to: a **live e2e of
   the reviewed batch** (one real approval through 확인) + agreed criteria. Live h1-readability + the form
   guards were live-verified by read-only probes (5 docs, 3 form types).
+  **[2026-06-08] Unattended auto-approve CRITERIA FRAMEWORK designed (DESIGN-ONLY)** →
+  `dev/active/phase2-guarded-approve/UNATTENDED-CRITERIA.md` (3-lens design workflow + adversarial). The
+  "agreed auto-approve criteria" prereq now has a framework: a deterministic, fail-closed, positive-match
+  allowlist policy (`data/policies/<name>.json`) the leaf evaluates (NO model in eligibility) — form-type
+  allow/deny, doc-id globs, drafter/dept/age/content-marker rules, hard caps (count/amount/RATE/window), with
+  amount-dependent unattended REQUIRING a Gate-B amount-cell capture (else ineligible → reviewed). A staged
+  graduation (SHADOW evaluate+audit-only → SAMPLED 5% live → BOUNDED unattended), each operator-signed.
+  **Still DESIGN-ONLY + fail-closed**; the safe immediately-buildable slice = SHADOW eligibility + the
+  human-reviewed click. Unattended live stays forbidden until live-e2e + Gate-B + a signed policy.
 - The DESIGN-v3 human-gated build below is **superseded** by the owner-override full-auto path (DESIGN §14);
   it stays as the revert target if the gate is re-imposed. After Gate A+B only, that path would implement:
   `bin/approve-doc.sh`, `webui/routes-approve.js`
