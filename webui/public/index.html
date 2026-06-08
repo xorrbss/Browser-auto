@@ -78,6 +78,25 @@
 						<div id="audit-list"><div class="hint">↻ 새로고침으로 감사 로그를 불러옵니다.</div></div>
 					</div>
 
+				<div class="capture-panel">
+					<h3>🔧 결재 캡처 — dry-run 테스트 (Gate-B)</h3>
+					<p class="note">새 시스템/양식(예: <b>합의</b>)의 결재 동작을 <b>폐기용 문서</b>로 검증합니다. action(또는 직접 붙여넣은 블록)을 <b>임시 미리보기 레시피</b>로 dry-run하고 <b>가드별 통과/실패</b>를 보여줍니다 — <b>승인하지 않습니다</b>(확인 전 정지). 레시피에 <b>기록/활성화하지 않음</b>(다음 단계). 비활성(<code>enabled:false</code>) action도 테스트 가능.</p>
+					<div class="cap-row">
+						<input id="cap-app" placeholder="앱 (예: hiworks)" autocomplete="off" spellcheck="false" value="hiworks" />
+						<input id="cap-doc" placeholder="폐기용 문서번호 (예: IB-…)" autocomplete="off" spellcheck="false" />
+						<input id="cap-action" placeholder="action (기본 approve)" autocomplete="off" spellcheck="false" value="approve" />
+					</div>
+					<input id="cap-title" placeholder="문서 제목 (미동기화 폐기용 문서면 직접 입력 — 콘텐츠 바인딩 가드)" autocomplete="off" spellcheck="false" />
+					<textarea id="cap-block" rows="4" placeholder="(선택) action 블록 JSON을 붙여넣어 테스트 — 비우면 레시피의 기존 action을 테스트" spellcheck="false"></textarea>
+					<div class="cap-row">
+						<button id="cap-dry" type="button">▶ dry-run 미리보기</button>
+						<button id="cap-flows" type="button">↻ 캡처된 플로우</button>
+					</div>
+					<div id="cap-status" class="approve-status"></div>
+					<div id="cap-guards"></div>
+					<div id="cap-flowlist" class="note"></div>
+				</div>
+
 				<div class="review-bar">
 					<div class="review-head">
 						<h3>✅ 검토 후 일괄 결재</h3>

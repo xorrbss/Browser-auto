@@ -100,9 +100,17 @@ its own capture, not a forced click on the wrong layout.
   for Hiworks.
 
 ## 6. Phased rollout
-- **Phase 1 (capture + dry-run, ~1wk):** the record + 10-field checklist + dry-run UI + `GET /flows` +
-  `POST /dry-run`. **No recipe write / no enable yet** — just capture + test + see per-guard results. Gate:
-  dry-run consistently green across forms (incl. a 합의 capture).
+- **Phase 1a (DRY-RUN TEST) — ✅ BUILT (2026-06-08):** test any action's locators on a disposable doc from the
+  UI and see **per-guard PASS/FAIL**, never approving. `webui/capture.js` (`buildPreviewRecipe` — a NON-committed
+  temp preview that strips `enabled:false` so an uncaptured action resolves for a DRY test; `listCaptureFlows`;
+  `sweepOldPreviews`), `POST /api/approve/capture/dry-run` (temp preview recipe → leaf `--dry-run --action`,
+  behind the approveGate; **no recipe write, no enable**) + `GET /api/approve/capture/flows`, the 🔧 결재 캡처 card
+  in the 결재 tab (app/doc/action/title/optional-block → per-guard stages from the audit), `tests/capture-unit.test.sh`.
+  Live-verified: a 지출 dry-run shows `✓ requested → ✓ identity_ok → ✓ dry_ok`; a mismatched form surfaces its
+  failing guard (e.g. `✗ failed — idLabel …`) right in the UI. Suite 30/30.
+- **Phase 1b (RECORD, next, operator-accompanied):** the headed recorder integration (`POST /capture/record` →
+  `probe-record.sh`) + the flow → `actions.<form>` block auto-assembly + the 10-field checklist form. Needs a
+  human at the browser to verify.
 - **Phase 2 (live-verify + enable, ~1wk, gated):** `POST /verify` (live on a fresh disposable doc) + the
   checklist + atomic `POST /enable`. Gate: live-verify completion confirmed + operator sign-off. MVP must **not**
   re-architect the leaf (the reference `approve` action stays byte-identical; regression-pinned).

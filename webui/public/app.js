@@ -531,6 +531,58 @@ function renderApproveResults(logText, status, results) {
 	results.replaceChildren(tbl);
 }
 
+// ---------- 🔧 approve capture (Gate-B) — DRY-RUN test only (Phase 1a; never approves, no recipe write) ----------
+const CAP_OKSTAGES = new Set(['requested', 'identity_ok', 'amount_ok', 'dry_ok', 'clicked', 'confirmed']);
+async function runCaptureDryRun() {
+	const app = ($('#cap-app').value || 'hiworks').trim();
+	const docId = $('#cap-doc').value.trim();
+	const action = ($('#cap-action').value || 'approve').trim();
+	const title = $('#cap-title').value.trim();
+	const blockText = $('#cap-block').value.trim();
+	const status = $('#cap-status'), guards = $('#cap-guards');
+	guards.replaceChildren();
+	if (!docId) { status.replaceChildren(el('div', { class: 'error' }, '폐기용 문서번호를 입력하세요.')); return; }
+	let block = null;
+	if (blockText) { try { block = JSON.parse(blockText); } catch (e) { status.replaceChildren(el('div', { class: 'error' }, '블록 JSON 파싱 오류: ' + e.message)); return; } }
+	status.replaceChildren(el('div', { class: 'hint' }, 'dry-run 미리보기 실행 중… (승인하지 않음)'));
+	const body = { app, action, docId };
+	if (title) body.title = title;
+	if (block) body.block = block;
+	let resp;
+	try { const r = await fetch('/api/approve/capture/dry-run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); resp = await r.json(); }
+	catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
+	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || 'dry-run이 거부되었습니다.')); return; }
+	const startedAt = resp.startedAt;
+	const log = el('pre', { class: 'joblog' }); log.hidden = true; guards.append(log);
+	streamJob(resp.job.id, log, async () => {
+		let stages = [];
+		try { const a = await (await fetch('/api/approve/audit?limit=80')).json(); stages = (a.audit || []).filter((e) => e.doc_id === docId && e.at >= startedAt).reverse(); } catch {}
+		renderCaptureGuards(stages, status, guards, log);
+	});
+}
+function renderCaptureGuards(stages, status, guards, log) {
+	guards.replaceChildren();
+	if (!stages.length) { status.replaceChildren(el('div', { class: 'error' }, '가드 단계를 읽지 못했습니다 — 🧾 감사 로그를 확인하세요.')); guards.append(log); return; }
+	const last = stages[stages.length - 1];
+	const ok = last.stage === 'dry_ok';
+	status.replaceChildren(el('div', { class: ok ? 'hint' : 'error' }, ok ? '✅ dry-run 통과 — 확인 직전까지 모든 가드 OK (승인 안 함)' : '✗ ' + (AUDIT_ST[last.stage] || last.stage) + (last.detail ? ' — ' + last.detail : '')));
+	const list = el('div', { class: 'cap-guards' });
+	for (const e of stages) {
+		const good = CAP_OKSTAGES.has(e.stage);
+		list.append(el('div', { class: 'cap-guard ' + (good ? 'g-ok' : 'g-bad') }, (good ? '✓ ' : '✗ ') + (AUDIT_ST[e.stage] || e.stage) + (e.detail ? ' — ' + e.detail : '')));
+	}
+	guards.append(list, log);
+}
+async function loadCaptureFlows() {
+	const app = ($('#cap-app').value || 'hiworks').trim();
+	const box = $('#cap-flowlist');
+	try {
+		const r = await (await fetch('/api/approve/capture/flows?app=' + encodeURIComponent(app))).json();
+		if (!r.flows || !r.flows.length) { box.textContent = '캡처된 플로우 없음 (' + app + ') — 레코더 통합은 Phase 1b'; return; }
+		box.replaceChildren(el('span', {}, '캡처된 플로우: '), ...r.flows.map((f) => el('code', { style: 'margin-right:8px' }, f.name)));
+	} catch (e) { box.textContent = '플로우 조회 실패: ' + e.message; }
+}
+
 // ---------- 🧾 approve audit viewer (read-only; data/approve-audit.jsonl is the source of truth) ----------
 const AUDIT_ST = { requested: '요청', identity_ok: '신원확인', amount_ok: '금액확인', dry_ok: '👁 미리보기OK', clicked: '⚠ 클릭', confirmed: '✅ 승인', failed: '✗ 실패', skipped: '⤼ 건너뜀', 'reconciled-approved': '🔁 재조정:승인', 'reconciled-failed': '🔁 재조정:실패', 'reconcile-uncertain': '🔁 재조정:불확실', 'reconcile-error': '🔁 재조정:오류' };
 
@@ -576,6 +628,8 @@ $('#sync-btn').addEventListener('click', startSync);
 $('#agent-run').addEventListener('click', runAgent);
 $('#agent-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent(); });
 $('#approve-run').addEventListener('click', runApprove);
+$('#cap-dry').addEventListener('click', runCaptureDryRun);
+$('#cap-flows').addEventListener('click', loadCaptureFlows);
 $('#audit-refresh').addEventListener('click', loadAudit);
 // ✅ 검토 후 일괄 결재 controls
 $('#rev-approve').addEventListener('click', runReviewApprove);

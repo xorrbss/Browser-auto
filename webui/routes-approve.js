@@ -21,6 +21,7 @@ import { PROBE_ROOT } from './spawn.js';
 const require = createRequire(import.meta.url);
 const { openDb, closeDb, getApproval, getSystem, getRecord } = require('../lib/db.js');
 import { resolveAction } from '../approve/guards.mjs'; // pure action selector (general-action-rpa Step B) — shared with the leaf
+import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews } from './capture.js'; // UI approve-capture (Gate-B) Phase 1a — DRY-RUN test only
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
@@ -81,6 +82,46 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	if (p === '/api/approve/stop') {
 		try { fs.mkdirSync(path.dirname(stopPath()), { recursive: true }); fs.writeFileSync(stopPath(), String(new Date().toISOString())); sendJson(res, 200, { ok: true, stopped: true }); }
 		catch (e) { sendJson(res, 500, { error: 'could not write kill-switch: ' + (e && e.message) }); }
+		return true;
+	}
+	// CAPTURE DRY-RUN (Gate-B UI, Phase 1a): test an action's locators on a disposable doc and show per-guard
+	// results — NEVER approves (no --live). Tests a recipe's existing action OR an operator-supplied `block`
+	// (incl. a not-yet-enabled one) via a NON-committed temp preview recipe; the committed recipe is untouched.
+	if (p === '/api/approve/capture/dry-run') {
+		const app = String(bodyJson.app || '').trim();
+		if (!NAME_RE.test(app)) { sendJson(res, 400, { error: 'invalid app name' }); return true; }
+		const action = String(bodyJson.action || 'approve').trim();
+		if (!NAME_RE.test(action)) { sendJson(res, 400, { error: 'invalid action name' }); return true; }
+		const docId = String(bodyJson.docId || '').trim();
+		if (!validDoc(docId)) { sendJson(res, 400, { error: 'docId: a non-empty string ≤100 chars, no comma/newline' }); return true; }
+		if (!fs.existsSync(recipeFor(app))) { sendJson(res, 400, { error: `no recipe recipes/${app}.json` }); return true; }
+		let recipeObj;
+		try { recipeObj = JSON.parse(fs.readFileSync(recipeFor(app), 'utf8')); } catch { sendJson(res, 400, { error: `recipe ${app} unreadable` }); return true; }
+		const block = bodyJson.block && typeof bodyJson.block === 'object' && !Array.isArray(bodyJson.block) ? bodyJson.block : null;
+		const preview = buildPreviewRecipe(recipeObj, action, block);
+		if (!preview) { sendJson(res, 400, { error: `no action "${action}" to test — provide a block or capture it first` }); return true; }
+		if (!fs.existsSync(stateFor(app))) { sendJson(res, 400, { error: `no Playwright login for '${app}' — capture/login first` }); return true; }
+		const listUrl = listUrlFor(app);
+		if (!listUrl) { sendJson(res, 400, { error: 'no 대기 list URL (set GW_INBOX_URL in data/approvals.config)' }); return true; }
+		// content binding: an explicit title (a disposable doc may be unsynced) OR the synced title; one is required.
+		const titleField = (preview.actions[action] && preview.actions[action].titleField) || 'title';
+		const title = typeof bodyJson.title === 'string' && bodyJson.title.trim() ? bodyJson.title.trim() : (titlesFor(app, [docId], titleField)[docId] || null);
+		if (!title) { sendJson(res, 400, { error: '문서 제목(title)이 필요합니다 — 먼저 동기화하거나 title을 직접 입력하세요(콘텐츠 바인딩 가드).' }); return true; }
+		sweepOldPreviews(PROBE_ROOT);
+		const previewFile = path.join(PROBE_ROOT, 'data', `.capture-preview-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+		const targetsFile = path.join(PROBE_ROOT, 'data', `.approve-targets-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+		try {
+			fs.mkdirSync(path.dirname(previewFile), { recursive: true });
+			fs.writeFileSync(previewFile, JSON.stringify(preview), { mode: 0o600 });
+			fs.writeFileSync(targetsFile, JSON.stringify([{ doc_id: docId, title }]), { mode: 0o600 });
+		} catch (e) { sendJson(res, 500, { error: 'could not stage capture dry-run: ' + (e && e.message) }); return true; }
+		// DRY-RUN ONLY — no --live, so the leaf stops before 확인 (never approves). Same guards as production.
+		const args = ['--recipe', path.relative(PROBE_ROOT, previewFile), '--state', `approve/${app}.pw-state.json`, '--list-url', listUrl, '--targets-file', targetsFile];
+		if (action !== 'approve') args.push('--action', action);
+		const startedAt = new Date().toISOString();
+		const label = `CAPTURE dry-run ${action} ${app} (${docId})`;
+		const job = enqueue({ kind: 'approve', label, spawnFn: () => nodeLeaf('approve/approve-run.mjs', args) });
+		sendJson(res, 202, { job, dryRun: true, docId, startedAt });
 		return true;
 	}
 	if (p !== '/api/approve/run') return false;
@@ -159,6 +200,13 @@ export function approveGet(p, url, res, { sendJson }) {
 		catch { /* no audit yet */ }
 		const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 300, 1000);
 		sendJson(res, 200, { audit: entries.slice(-limit).reverse(), total: entries.length });
+		return true;
+	}
+	// CAPTURE flows list (Gate-B UI): the recorded approve flows for an app (read-only; Phase 1b consumes them).
+	if (p === '/api/approve/capture/flows') {
+		const app = (url.searchParams.get('app') || '').trim();
+		if (!NAME_RE.test(app)) { sendJson(res, 400, { error: 'invalid app name' }); return true; }
+		sendJson(res, 200, { flows: listCaptureFlows(PROBE_ROOT, app) });
 		return true;
 	}
 	if (p !== '/api/approve/state') return false;
