@@ -283,7 +283,8 @@ body[data-view="runs"] .runbar { display: flex; }
 .review-head h3 { margin: 0; margin-right: auto; }
 .review-head label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 #rev-approve { font-weight: 600; }
-.approval-head .rev-chk { margin-right: 4px; width: 16px; height: 16px; cursor: pointer; }
+.approval-head .rev-chk, .approval-head .sys-rev-chk { margin-right: 4px; width: 16px; height: 16px; cursor: pointer; }
+.review-head button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* NL command box */
 .agent-box { display: flex; gap: 8px; margin: 8px 0; }

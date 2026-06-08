@@ -50,10 +50,18 @@ and every one **fails closed**. Read `dev/active/phase2-guarded-approve/` before
 | `confirm` `{role,name,exact}` | the modal commit button — `kind:dom`, exact `확인` (never `확인 후 다음 문서`). |
 | `formType` (string \| string[]) | **optional** form-type pin. When set, the live detail's form-type heading (Gate B: the **h1**) MUST match one of these names or the doc is SKIPPED — so a recipe tuned for one form family (its `amount.label`) can't be misapplied to another (e.g. a 지출 recipe on a 품의). Independently, a batch is **always kept homogeneous** (a later doc whose form differs is skipped) even without this pin. |
 | `success` | the positive completion signal (Hiworks: `leftInbox` + a new today-dated 승인 stamp on the doc's own line). |
+| `titleField` | **(generic systems)** the `records.data` field used as the content-binding title (default `title`). The legacy 결재 path reads the `approvals` table; a registered RPA system reads its `records` (this field). A doc with no title in either ⇒ refused. |
 
 Pagination during the all-pages identity/completion scan is taken from `pagination.mode` and is **only
 trusted for `"combobox"`** with a single contiguous `1..N` page `<select>`; a windowed/ambiguous/
 non-1..N pager is treated as UNCERTAIN ⇒ the scan fails closed (never under-scans → never false "approved").
+
+**Approve for ANY registered system (P2):** the approve route is registry-driven — it resolves the
+pending-list URL from the system's `target_url` and the content-binding title from its `records`
+(`approve.titleField`). To make a registered system approvable, the operator must additionally provide a
+committed `recipes/<system>.json` with this `approve` block (a Gate-B capture of that site's approve UI), a
+Playwright login (`approve/<system>.pw-state.json`), and synced records. The 시스템 view's **✅ 검토 후 결재**
+surface is **disabled (fail-closed)** until all three exist; the per-system capture is operator-accompanied.
 
 ## Portability
 A recipe with `collection.name` + `key` + `columns` (and `key` ∈ `columns`) is valid for **both** the

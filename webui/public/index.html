@@ -121,6 +121,19 @@
 				</div>
 				<p class="note">등록된 시스템: <span id="sys-list" class="sys-list">—</span></p>
 				<div class="sys-records-head"><h3>조회</h3><input id="sys-q" placeholder="검색어 (제목·내용·요약)" autocomplete="off" spellcheck="false" /></div>
+				<div class="review-bar" id="sys-review-bar" hidden>
+					<div class="review-head">
+						<h3>✅ 검토 후 결재</h3>
+						<label><input id="sys-rev-all" type="checkbox" /> 전체 선택</label>
+						<label><input id="sys-rev-dry" type="checkbox" checked /> 미리보기(dry-run)</label>
+						<button id="sys-rev-approve" type="button">✅ 선택 항목 결재 (0)</button>
+						<button id="sys-rev-cancel" type="button" class="cancel-btn" hidden>✕ 강제중지</button>
+					</div>
+					<div id="sys-rev-note" class="note"></div>
+					<div id="sys-rev-status" class="approve-status"></div>
+					<div id="sys-rev-results"></div>
+					<pre id="sys-rev-log" class="joblog" hidden></pre>
+				</div>
 				<div id="sys-records"><div class="placeholder">위에서 시스템을 선택하세요.</div></div>
 			</section>
 		</div>

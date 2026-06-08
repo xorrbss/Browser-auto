@@ -3,7 +3,7 @@
 // flows.js (own module state + shared helpers from util.js; exports loadSystems / reconcileSysJob /
 // initSystems / renderRecordCard). The queue panel self-refreshes on app.js's 2s poll.
 
-import { $, el, getJson, streamJob, statusKo } from './util.js';
+import { $, el, getJson, streamJob, statusKo, cancelJob } from './util.js';
 
 let selectedSystem = null;
 let sysJob = null; // id of the in-flight auth/analyze/sync job (single-slot queue)
@@ -11,11 +11,12 @@ let sysCache = [];
 
 // renderRecordCard(rec): a generic RPA record ({key, data:{...}, summary?}) — shared by the NL output
 // (app.js) and this view's 조회 list.
-export function renderRecordCard(rec) {
+export function renderRecordCard(rec, selectable = false) {
 	const fields = Object.entries(rec.data || {}).map(([k, v]) => `${k}: ${v}`).join('  ·  ');
-	const card = el('div', { class: 'approval' },
-		el('div', { class: 'approval-head' }, el('span', { class: 'badge sm run' }, statusKo(rec.status)), el('span', { class: 'approval-title' }, rec.key)),
-		el('div', { class: 'approval-meta' }, fields));
+	const head = el('div', { class: 'approval-head' });
+	if (selectable && rec.status !== 'approved') head.append(el('input', { type: 'checkbox', class: 'sys-rev-chk', title: '결재 선택', dataset: { key: rec.key }, onchange: updateSysRevCount }));
+	head.append(el('span', { class: 'badge sm run' }, statusKo(rec.status)), el('span', { class: 'approval-title' }, rec.key));
+	const card = el('div', { class: 'approval' }, head, el('div', { class: 'approval-meta' }, fields));
 	if (rec.summary) card.append(el('div', { class: 'approval-summary' }, rec.summary));
 	return card;
 }
@@ -101,13 +102,69 @@ async function analyzeSystem() {
 
 async function loadRecords() {
 	const box = $('#sys-records');
-	if (!selectedSystem) { box.replaceChildren(el('div', { class: 'placeholder' }, '위에서 시스템을 선택하세요.')); return; }
+	if (!selectedSystem) { box.replaceChildren(el('div', { class: 'placeholder' }, '위에서 시스템을 선택하세요.')); $('#sys-review-bar').hidden = true; return; }
 	const q = $('#sys-q').value.trim();
 	try {
 		const { records } = await getJson(`/api/systems/${encodeURIComponent(selectedSystem)}/records` + (q ? `?q=${encodeURIComponent(q)}` : ''));
 		box.replaceChildren(el('div', { class: 'hint' }, `${selectedSystem}: ${records.length}건`));
-		for (const rec of records) box.append(renderRecordCard(rec));
+		for (const rec of records) box.append(renderRecordCard(rec, true));
+		updateSysRevCount();
+		loadSysApproveState(selectedSystem); // is this system approvable? (fail-closed surface)
 	} catch (e) { box.replaceChildren(el('div', { class: 'error' }, e.message)); }
+}
+
+// ---------- ✅ 검토 후 결재 (generic system records → the reviewed-batch approve route; fail-closed per system) ----------
+let sysRevJob = null;
+const SYS_APV_ST = { approved: '✅ 승인', 'dry-ok': '👁 미리보기', failed: '✗ 실패', skipped: '⤼ 건너뜀' };
+const sysRevChecks = () => [...document.querySelectorAll('#sys-records .sys-rev-chk')];
+function updateSysRevCount() {
+	const boxes = sysRevChecks(); const n = boxes.filter((c) => c.checked).length;
+	const btn = $('#sys-rev-approve'); if (btn) btn.textContent = `✅ 선택 항목 결재 (${n})`;
+	const all = $('#sys-rev-all'); if (all) all.checked = boxes.length > 0 && boxes.every((c) => c.checked);
+}
+// is this system approvable? needs recipe.approve + a Playwright login + a list URL. Fail-closed: the button
+// is disabled with a clear "what's missing" note until all three exist (a NEW system needs its approve UI
+// captured into recipes/<name>.json + a login — the operator-accompanied per-system gate).
+async function loadSysApproveState(name) {
+	const bar = $('#sys-review-bar'), note = $('#sys-rev-note'), btn = $('#sys-rev-approve');
+	bar.hidden = false;
+	try {
+		const s = await getJson(`/api/approve/state?app=${encodeURIComponent(name)}`);
+		const ready = !!(s.hasApproveRecipe && s.loggedIn && s.listUrl);
+		btn.disabled = !ready;
+		if (ready) note.replaceChildren(el('span', {}, '결재할 항목을 체크하고 [선택 항목 결재]를 누르세요(사람이 직접 선택). 신원·제목·완료검증 가드 적용. 먼저 미리보기로 확인하세요.'));
+		else {
+			const miss = [!s.hasApproveRecipe && `recipes/${name}.json 의 approve 블록(결재 UI 캡처)`, !s.loggedIn && `Playwright 로그인(approve/${name}.pw-state.json)`, !s.listUrl && '대상(목록) URL'].filter(Boolean);
+			note.replaceChildren(el('span', { class: 'warn' }, '⚠ 이 시스템은 아직 결재 불가 — 필요: ' + miss.join(', ') + '.'));
+		}
+	} catch (e) { btn.disabled = true; note.replaceChildren(el('span', { class: 'error' }, '결재 가능 여부 확인 실패: ' + e.message)); }
+}
+async function runSysReviewApprove() {
+	if (!selectedSystem || $('#sys-rev-approve').disabled) return;
+	const checked = sysRevChecks().filter((c) => c.checked).map((c) => c.dataset.key).filter(Boolean);
+	const dryRun = $('#sys-rev-dry').checked;
+	const status = $('#sys-rev-status'), results = $('#sys-rev-results'), log = $('#sys-rev-log');
+	results.replaceChildren();
+	if (!checked.length) { status.replaceChildren(el('div', { class: 'error' }, '결재할 항목을 먼저 체크하세요.')); return; }
+	if (!dryRun && !window.confirm(`⚠ '${selectedSystem}' 시스템에서 체크한 ${checked.length}건을 실제로 자동 결재합니다(되돌릴 수 없음). 내용을 확인하셨나요?`)) return;
+	status.replaceChildren(el('div', { class: 'hint' }, (dryRun ? '미리보기(dry-run)' : '결재') + ` 실행 중… (${checked.length}건)`));
+	log.hidden = false;
+	let resp;
+	try { const r = await fetch('/api/approve/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: selectedSystem, docs: checked, dryRun, reviewed: true }) }); resp = await r.json(); }
+	catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
+	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '실행이 거부되었습니다.')); return; }
+	sysRevJob = resp.job.id; $('#sys-rev-cancel').hidden = false;
+	streamJob(resp.job.id, log, () => { $('#sys-rev-cancel').hidden = true; sysRevJob = null; renderSysApproveResults(log.textContent, status, results); loadRecords(); });
+}
+function renderSysApproveResults(logText, status, results) {
+	let summary = null;
+	for (const line of logText.split('\n')) { const t = line.trim(); if (t.startsWith('{') && t.includes('"results"')) { try { summary = JSON.parse(t); } catch {} } }
+	if (!summary || !Array.isArray(summary.results)) { status.replaceChildren(el('div', { class: 'error' }, '결과 요약 파싱 실패 — 로그를 확인하세요.')); return; }
+	const c = (s) => summary.results.filter((r) => r.status === s).length;
+	status.replaceChildren(el('div', { class: 'hint' }, `${summary.dry ? '미리보기' : '결재'} 완료 — ✅${c('approved')} · 👁${c('dry-ok')} · ✗${c('failed')} · ⤼${c('skipped')} / 총 ${summary.total}`));
+	const tbl = el('table', { class: 'approve-tbl' }, el('tr', {}, el('th', {}, '키'), el('th', {}, '상태'), el('th', {}, '사유')));
+	for (const r of summary.results) tbl.append(el('tr', { class: 'st-' + r.status }, el('td', {}, r.doc_id), el('td', {}, SYS_APV_ST[r.status] || r.status), el('td', {}, r.reason || '')));
+	results.replaceChildren(tbl);
 }
 
 async function deleteSelectedSystem() {
@@ -122,6 +179,7 @@ async function deleteSelectedSystem() {
 // event (same role as flows.js reconcileFlowJob). Called from app.js's 2s queue poll.
 export function reconcileSysJob(activeIds) {
 	if (sysJob && !activeIds.has(sysJob)) { sysJob = null; loadSystems(); }
+	if (sysRevJob && !activeIds.has(sysRevJob)) { sysRevJob = null; $('#sys-rev-cancel').hidden = true; loadRecords(); }
 }
 
 export function initSystems() {
@@ -132,4 +190,7 @@ export function initSystems() {
 	$('#sys-enrich').addEventListener('click', () => sysAction('enrich', () => loadRecords()));
 	$('#sys-delete').addEventListener('click', deleteSelectedSystem);
 	$('#sys-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadRecords(); });
+	$('#sys-rev-approve').addEventListener('click', runSysReviewApprove);
+	$('#sys-rev-all').addEventListener('change', () => { const c = $('#sys-rev-all').checked; sysRevChecks().forEach((b) => (b.checked = c)); updateSysRevCount(); });
+	$('#sys-rev-cancel').addEventListener('click', () => sysRevJob && cancelJob(sysRevJob));
 }

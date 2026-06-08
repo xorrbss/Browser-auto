@@ -12,28 +12,59 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { PROBE_ROOT } from './spawn.js';
 
-// lib/db.js (CJS) for the synced approval TITLE per doc_id — the leaf binds approval to that title
-// (content guard; red-team CRITICAL F1). A doc not in the DB cannot be content-verified ⇒ refused.
+// lib/db.js (CJS): the leaf binds approval to a per-doc TITLE re-verified on the live detail (content guard;
+// red-team CRITICAL F1). The title source is REGISTRY-AWARE (P2): the legacy 결재 path reads the `approvals`
+// table; a generic registered system reads its `records` table (the recipe-declared title field). A doc with
+// no title in EITHER ⇒ refused (can't content-verify). The recipe stays a committed `recipes/<app>.json`
+// file (the framework's existing per-system onboarding artifact) — generic vs 결재 differs only in the
+// list-URL + title SOURCE, never in the leaf's guards.
 const require = createRequire(import.meta.url);
-const { openDb, closeDb, getApproval } = require('../lib/db.js');
-function titlesFor(docs) {
-	const db = openDb();
-	try { const m = {}; for (const d of docs) { const row = getApproval(db, d); m[d] = row && row.title != null ? String(row.title) : null; } return m; }
-	finally { closeDb(db); }
-}
+const { openDb, closeDb, getApproval, getSystem, getRecord } = require('../lib/db.js');
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
 const stateFor = (app) => path.join(PROBE_ROOT, 'approve', `${app}.pw-state.json`);
 
-// Resolve the 대기/list URL: data/approvals.config GW_INBOX_URL (the hiworks 대기 inbox). Quotes stripped.
-function listUrlFor(app) {
+// gwConfig(): parse data/approvals.config for the legacy 결재 inbox (GW_APP + GW_INBOX_URL).
+function gwConfig() {
 	try {
 		const cfg = fs.readFileSync(path.join(PROBE_ROOT, 'data', 'approvals.config'), 'utf8');
-		const m = /^\s*GW_INBOX_URL\s*=\s*"?([^"\n]+)"?/m.exec(cfg);
-		if (m) return m[1].trim();
-	} catch { /* fall through */ }
+		const app = (/^\s*GW_APP\s*=\s*"?([^"\n]+)"?/m.exec(cfg) || [])[1];
+		const url = (/^\s*GW_INBOX_URL\s*=\s*"?([^"\n]+)"?/m.exec(cfg) || [])[1];
+		return { app: app && app.trim(), url: url && url.trim() };
+	} catch { return {}; }
+}
+
+// listUrlFor(app): the pending-list URL the leaf scans. REGISTRY-AWARE + fail-closed:
+//   • the legacy 결재 app (config GW_APP) → GW_INBOX_URL (hiworks 대기 inbox — UNCHANGED / exact);
+//   • a generic registered system → its registry target_url (its list page);
+//   • neither ⇒ '' (the route refuses).
+export function listUrlFor(app) {
+	const cfg = gwConfig();
+	if (app && app === cfg.app && cfg.url) return cfg.url; // legacy 결재 (hiworks) — exact, regression-preserved
+	const db = openDb();
+	try { const sys = getSystem(db, app); if (sys && sys.target_url) return String(sys.target_url).trim(); }
+	finally { closeDb(db); }
+	if (!cfg.app && cfg.url) return cfg.url; // back-compat: a bare GW_INBOX_URL config with no GW_APP set
 	return '';
+}
+
+// titlesFor(app, docs, titleField): per-doc content-binding title. Tries the `approvals` table (legacy 결재)
+// THEN the registered system's `records` table (data[titleField]); null when absent in BOTH ⇒ the route
+// refuses that doc (no content binding = no approve).
+export function titlesFor(app, docs, titleField = 'title') {
+	const db = openDb();
+	try {
+		const m = {};
+		for (const d of docs) {
+			const ap = getApproval(db, d);
+			if (ap && ap.title != null && String(ap.title).trim()) { m[d] = String(ap.title); continue; }
+			const rec = getRecord(db, app, d);
+			const t = rec && rec.data ? rec.data[titleField] : null;
+			m[d] = t != null && String(t).trim() ? String(t) : null;
+		}
+		return m;
+	} finally { closeDb(db); }
 }
 
 // A doc_id is passed as ONE argv element (shell:false) and joined with commas for --docs, so the only
@@ -54,10 +85,13 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	if (p !== '/api/approve/run') return false;
 	const app = String(bodyJson.app || '').trim();
 	if (!NAME_RE.test(app)) { sendJson(res, 400, { error: 'invalid app name' }); return true; }
-	if (!fs.existsSync(recipeFor(app))) { sendJson(res, 400, { error: `no recipe recipes/${app}.json` }); return true; }
+	if (!fs.existsSync(recipeFor(app))) { sendJson(res, 400, { error: `no recipe recipes/${app}.json — onboard this system's approve recipe first` }); return true; }
 	// The recipe must have an approve block (else the leaf refuses) — fail fast with a clear message.
-	try { if (!JSON.parse(fs.readFileSync(recipeFor(app), 'utf8')).approve) { sendJson(res, 400, { error: `recipe ${app} has no "approve" block` }); return true; } }
+	let recipeObj;
+	try { recipeObj = JSON.parse(fs.readFileSync(recipeFor(app), 'utf8')); }
 	catch { sendJson(res, 400, { error: `recipe ${app} unreadable` }); return true; }
+	if (!recipeObj.approve) { sendJson(res, 400, { error: `recipe ${app} has no "approve" block — capture this system's approve UI (Gate-B) first` }); return true; }
+	const titleField = recipeObj.approve.titleField || 'title'; // generic systems: the records field used for the content-binding title
 	if (!fs.existsSync(stateFor(app))) { sendJson(res, 400, { error: `no Playwright login for '${app}' — run: node approve/auth-pw.mjs … approve/${app}.pw-state.json` }); return true; }
 	const listUrl = listUrlFor(app);
 	if (!listUrl) { sendJson(res, 400, { error: 'no 대기 list URL (set GW_INBOX_URL in data/approvals.config)' }); return true; }
@@ -84,7 +118,7 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	}
 	// CONTENT BINDING (red-team CRITICAL F1): every doc must have a synced TITLE the leaf re-verifies on
 	// the live detail. A doc not in the approvals DB cannot be content-verified ⇒ refuse.
-	const titles = titlesFor(docs);
+	const titles = titlesFor(app, docs, titleField);
 	const unsynced = docs.filter((d) => !titles[d]);
 	if (unsynced.length) { sendJson(res, 400, { error: `동기화되지 않은 문서(제목 확인 불가) — 먼저 동기화하세요: ${unsynced.slice(0, 5).join(', ')}${unsynced.length > 5 ? '…' : ''}` }); return true; }
 	const targets = docs.map((d) => ({ doc_id: d, title: titles[d], ...(maxAmount ? { maxAmount } : {}) }));
