@@ -7,7 +7,7 @@ import { classifyIntent, runQuery, runRecordsQuery } from './agent.js';
 import { validSysName, listSystemsView, getSystemView, saveSystem, removeSystem, recordsView, readProposed, systemState, systemActions, allActionsView } from './systems.js';
 
 // rpaPost(p, bodyJson, res, {sendJson, enqueue, gitBash}) -> handled? (async: /api/agent classifies)
-export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash }) {
+export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, authSpawn }) {
 	// 결재 동기화: bin/fetch-approvals.sh (login -> scrape inbox -> DB). Browser job -> serial queue.
 	if (p === '/api/sync') {
 		const app = bodyJson.app ? String(bodyJson.app).trim() : '';
@@ -51,7 +51,7 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash }) 
 
 	// --- Generic RPA system registry (register any data-collection system) ---
 	if (p === '/api/systems') {
-		const r = saveSystem({ name: String(bodyJson.name || '').trim(), label: bodyJson.label, login_url: bodyJson.login_url, success_url: bodyJson.success_url, target_url: bodyJson.target_url, recipe: bodyJson.recipe });
+		const r = saveSystem({ name: String(bodyJson.name || '').trim(), label: bodyJson.label, engine: bodyJson.engine, login_url: bodyJson.login_url, success_url: bodyJson.success_url, target_url: bodyJson.target_url, recipe: bodyJson.recipe });
 		r.ok ? sendJson(res, 200, r) : sendJson(res, 400, r);
 		return true;
 	}
@@ -65,7 +65,14 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash }) 
 		if (!sysv) { sendJson(res, 404, { error: 'no such system' }); return true; }
 		if (action === 'auth') {
 			if (!sysv.login_url || !sysv.success_url) { sendJson(res, 400, { error: 'register login_url + success_url first' }); return true; }
-			const job = enqueue({ kind: 'auth', label: `auth ${name}`, spawnFn: () => gitBash('setup/auth.sh', [name, sysv.login_url, sysv.success_url]) });
+			const engine = sysv.engine || 'agent-browser';
+			const job = enqueue({
+					kind: 'auth',
+					label: `auth ${name} (${engine})`,
+				spawnFn: () => authSpawn
+					? authSpawn(engine, name, sysv.login_url, sysv.success_url)
+					: gitBash('setup/auth.sh', ['--engine', engine, name, sysv.login_url, sysv.success_url]),
+			});
 			sendJson(res, 202, { job });
 			return true;
 		}

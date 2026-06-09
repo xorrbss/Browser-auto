@@ -9,6 +9,7 @@ import { listUrlFor } from './routes-approve.js';
 
 const require = createRequire(import.meta.url);
 const { openDb, closeDb, registerSystem, listSystems, getSystem, deleteSystem, queryRecords, countRecords } = require('../lib/db.js');
+const { normalizeEngine, authStateExists, agentBrowserAuthRel, playwrightAuthRel, playwrightCompatAuthRel } = require('../lib/engine.js');
 
 const DATA_DIR = path.join(import.meta.dirname, '..', 'data');
 const PROBE_ROOT = path.join(import.meta.dirname, '..');
@@ -29,6 +30,11 @@ export function getSystemView(name) {
 // collection.name + key + columns (so a malformed recipe can't be saved and then fail every sync).
 export function saveSystem(sys) {
 	if (!validSysName(sys && sys.name)) return { ok: false, error: 'invalid system name (use [A-Za-z0-9_-])' };
+	try {
+		if (sys.engine != null && sys.engine !== '') sys.engine = normalizeEngine(sys.engine, 'system.engine');
+	} catch (e) {
+		return { ok: false, error: e.message };
+	}
 	if (sys.recipe != null) {
 		const r = sys.recipe;
 		if (typeof r !== 'object' || !r.collection || !r.collection.name || !r.columns || !Object.keys(r.columns).length || !r.key || !r.columns[r.key]) {
@@ -78,19 +84,31 @@ export function systemState(name, db0 = null) {
 	try {
 		const sys = getSystem(db, name);
 		if (!sys) return null;
+		const engine = normalizeEngine(sys.engine, 'system.engine');
 		const recipeOk = recipeReady(sys.recipe);
 		const proposed = readProposed(name);
-		const authState = hasFile(`fixtures/auth/${name}.state.json`);
-		const approveLogin = hasFile(`approve/${name}.pw-state.json`);
+		const agentAuth = authStateExists(PROBE_ROOT, 'agent-browser', name);
+		const pwAuth = authStateExists(PROBE_ROOT, 'playwright', name);
+		const selectedAuth = engine === 'playwright' ? pwAuth : agentAuth;
+		const approveLogin = hasFile(playwrightCompatAuthRel(name)) || hasFile(playwrightAuthRel(name));
 		const stats = recordStats(db, name);
 		const detailReady = !!(sys.recipe && sys.recipe.detail && sys.recipe.detail.idLabel);
-		const syncEnabled = !!(authState && sys.target_url && recipeOk);
-		const enrichEnabled = !!(authState && detailReady && stats.total > 0);
+		const syncEnabled = !!(agentAuth && sys.target_url && recipeOk);
+		const enrichEnabled = !!(agentAuth && detailReady && stats.total > 0);
 		return {
-			system: { name: sys.name, label: sys.label || sys.name, target_url: sys.target_url, recordCount: stats.total },
+			system: { name: sys.name, label: sys.label || sys.name, engine, target_url: sys.target_url, recordCount: stats.total },
 			auth: {
 				enabled: !!(sys.login_url && sys.success_url),
-				state: authState ? 'ready' : 'missing',
+				engine,
+				state: selectedAuth ? 'ready' : 'missing',
+				selected: selectedAuth ? 'ready' : 'missing',
+				agentBrowser: agentAuth ? 'ready' : 'missing',
+				playwright: pwAuth ? 'ready' : 'missing',
+				paths: {
+					agentBrowser: agentBrowserAuthRel(name).replace(/\\/g, '/'),
+					playwright: playwrightAuthRel(name).replace(/\\/g, '/'),
+					playwrightCompat: playwrightCompatAuthRel(name).replace(/\\/g, '/'),
+				},
 				disabledReason: sys.login_url && sys.success_url ? null : 'login_url and success_url are required',
 			},
 			analyze: {
@@ -102,12 +120,16 @@ export function systemState(name, db0 = null) {
 			sync: {
 				enabled: syncEnabled,
 				state: syncEnabled ? 'ready' : 'disabled',
-				disabledReason: syncEnabled ? null : (!authState ? 'cached auth state missing' : !sys.target_url ? 'target_url is required' : 'valid recipe is required'),
+				engine: 'agent-browser',
+				limited: engine === 'playwright',
+				disabledReason: syncEnabled ? null : (!agentAuth ? 'agent-browser auth state missing (sync is agent-browser only for now)' : !sys.target_url ? 'target_url is required' : 'valid recipe is required'),
 			},
 			enrich: {
 				enabled: enrichEnabled,
 				state: enrichEnabled ? 'ready' : 'disabled',
-				disabledReason: enrichEnabled ? null : (!authState ? 'cached auth state missing' : !detailReady ? 'recipe.detail.idLabel is required' : 'sync records before enrich'),
+				engine: 'agent-browser',
+				limited: engine === 'playwright',
+				disabledReason: enrichEnabled ? null : (!agentAuth ? 'agent-browser auth state missing (enrich is agent-browser only for now)' : !detailReady ? 'recipe.detail.idLabel is required' : 'sync records before enrich'),
 			},
 			approve: {
 				loginState: approveLogin ? 'ready' : 'missing',
@@ -126,10 +148,10 @@ export function systemActions(name, db0 = null) {
 		const sys = getSystem(db, name);
 		const recipe = sys && sys.recipe ? sys.recipe : {};
 		const actions = [];
-		actions.push({ system: name, action: 'auth', riskClass: 'read', enabled: state.auth.enabled, state: state.auth.state, disabledReason: state.auth.disabledReason });
-		actions.push({ system: name, action: 'analyze', riskClass: 'read', enabled: state.analyze.enabled, state: state.analyze.state, disabledReason: state.analyze.disabledReason });
-		actions.push({ system: name, action: 'sync', riskClass: 'read', enabled: state.sync.enabled, state: state.sync.state, disabledReason: state.sync.disabledReason });
-		actions.push({ system: name, action: 'enrich', riskClass: 'read', enabled: state.enrich.enabled, state: state.enrich.state, disabledReason: state.enrich.disabledReason });
+		actions.push({ system: name, action: 'auth', engine: state.auth.engine, riskClass: 'read', enabled: state.auth.enabled, state: state.auth.state, disabledReason: state.auth.disabledReason });
+		actions.push({ system: name, action: 'analyze', engine: 'agent-browser', riskClass: 'read', enabled: state.analyze.enabled, state: state.analyze.state, disabledReason: state.analyze.disabledReason || (state.auth.engine === 'playwright' ? 'analyze is agent-browser only for now' : null) });
+		actions.push({ system: name, action: 'sync', engine: state.sync.engine, riskClass: 'read', enabled: state.sync.enabled, state: state.sync.state, disabledReason: state.sync.disabledReason });
+		actions.push({ system: name, action: 'enrich', engine: state.enrich.engine, riskClass: 'read', enabled: state.enrich.enabled, state: state.enrich.state, disabledReason: state.enrich.disabledReason });
 		const effectful = { ...(recipe.actions || {}) };
 		if (recipe.approve && !effectful.approve) effectful.approve = recipe.approve;
 		for (const [action, block] of Object.entries(effectful)) {

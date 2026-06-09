@@ -10,6 +10,10 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { flowEngine } = require('../lib/engine.js');
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 const FLOWS_DIR = path.join(PROBE_ROOT, 'flows');
@@ -64,6 +68,7 @@ export async function listFlows() {
 		const steps = Array.isArray(flow.steps) ? flow.steps : [];
 		out.push({
 			name,
+			engine: flowEngine(flow),
 			startUrl: flow.startUrl || '',
 			app: flow.app || null,
 			steps: steps.length,
@@ -86,6 +91,7 @@ export async function getFlow(name) {
 	const tokens = collectTokens(flow);
 	return {
 		name,
+		engine: flowEngine(flow),
 		startUrl: flow.startUrl || '',
 		app: flow.app || null,
 		steps,

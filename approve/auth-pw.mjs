@@ -8,6 +8,8 @@
 // e.g. node approve/auth-pw.mjs "https://login.office.hiworks.com/ibizsoftware.net" "dashboard.office.hiworks.com" approve/hiworks.pw-state.json
 'use strict';
 import { chromium } from 'playwright';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const [loginUrl, successNeedle, outFile] = process.argv.slice(2);
 if (!loginUrl || !successNeedle || !outFile) {
@@ -34,6 +36,7 @@ try {
     console.error('[auth-pw] timed out before reaching the success URL — not saved.');
     process.exit(1);
   }
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
   await ctx.storageState({ path: outFile });
   console.error(`[auth-pw] OK. storageState saved → ${outFile}`);
 } finally {

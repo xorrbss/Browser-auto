@@ -6,6 +6,10 @@
 
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { normalizeEngine } = require('../lib/engine.js');
 
 export const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -55,12 +59,17 @@ export function browserBash(scriptRel, args = [], extraEnv = null) {
 // inert argument. (Chrome is still shown by agent-browser's headed mode; only the bash console
 // is hidden.) --seconds is MANDATORY: capture()'s interactive /dev/tty stop is unreachable from
 // a non-tty spawn, so a timed auto-stop is the only web-drivable way to end a recording.
-export function recordCmd(name, startUrl, { app, seconds, stopFile } = {}) {
-	const args = ['capture', name, startUrl];
+export function recordCmd(name, startUrl, { app, seconds, stopFile, engine } = {}) {
+	const selected = normalizeEngine(engine, 'record.engine');
+	const args = selected === 'playwright' ? ['--name', name, '--url', startUrl] : ['capture', name, startUrl, '--engine', selected];
 	if (app) args.push('--app', app);
 	args.push('--seconds', String(seconds));
 	// stopFile (optional): a path the web UI touches to request a GRACEFUL early finish; capture()
 	// watches AQA_CAPTURE_STOPFILE and breaks into its normal drain path (a complete flow).
+	if (selected === 'playwright') {
+		if (stopFile) args.push('--stop-file', stopFile);
+		return nodeLeaf('bin/pw-record.mjs', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
+	}
 	return browserBash('bin/probe-record.sh', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
 }
 

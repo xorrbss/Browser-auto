@@ -37,18 +37,22 @@ import { createReadStream, statSync } from 'node:fs';
 import { pipeline } from 'node:stream';
 import path from 'node:path';
 import os from 'node:os';
+import { createRequire } from 'node:module';
 import { listRuns, getRun, getTrends, pruneArtifacts, ARTIFACTS_DIR } from './index.js';
 import { enqueue, jobStatus, jobResult, subscribe, queueState, cancel, stop, killRunning } from './jobs.js';
 import { gitBash, browserBash, recordCmd, nodeLeaf } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
+import { getSystemView } from './systems.js';
 import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 import { listApprovalsView } from './approvals.js';
 import { rpaPost, rpaGet } from './routes-rpa.js';
-import { approvePost, approveGet } from './routes-approve.js';
+import { approvePost, approveGet, successNeedle } from './routes-approve.js';
 import { commandPlanPost, commandPlanGet, recordCommandGateRefusal } from './routes-command-plan.js';
 import { issueSessionIfNeeded, approveGate } from './session.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
+const require = createRequire(import.meta.url);
+const { normalizeEngine } = require('../lib/engine.js');
 // Bind address. Default 127.0.0.1 (localhost-only — the safe default for native Windows/macOS use).
 // A 127.0.0.1 listener inside a container is unreachable through Docker's published port, so the
 // Docker image sets WEBUI_HOST=0.0.0.0; that stays safe because compose publishes the port only to
@@ -126,6 +130,12 @@ function runCapture(child) {
 		child.on('error', (e) => resolve({ code: -1, output: out + `\n[spawn error] ${e.message}` }));
 		child.on('close', (c) => resolve({ code: c == null ? -1 : c, output: out }));
 	});
+}
+
+function systemAuthSpawn(engine, app, loginUrl, successUrl) {
+	return engine === 'playwright'
+		? nodeLeaf('approve/auth-pw.mjs', [loginUrl, successNeedle(successUrl), `fixtures/auth/playwright/${app}.state.json`])
+		: browserBash('setup/auth.sh', ['--engine', 'agent-browser', app, loginUrl, successUrl]);
 }
 
 // Resolve reqPath under base, refusing any traversal / NUL / absolute escape. Returns an
@@ -309,6 +319,13 @@ const server = http.createServer(async (req, res) => {
 					return sendJson(res, 400, { error: 'startUrl must be http(s)' });
 				}
 				if (app && !validName(app)) return sendJson(res, 400, { error: 'invalid app name' });
+				let engine;
+				try {
+					const sysDefault = app ? getSystemView(app)?.engine : null;
+					engine = normalizeEngine(bodyJson.engine || sysDefault || 'agent-browser', 'record.engine');
+				} catch (e) {
+					return sendJson(res, 400, { error: e.message });
+				}
 				// Re-recording overwrites flows/<name>.flow.json (and may lose manual resolutions);
 				// require an explicit overwrite flag so it is never silent.
 				if (flowExists(name) && bodyJson.overwrite !== true) {
@@ -319,8 +336,8 @@ const server = http.createServer(async (req, res) => {
 				const stopFile = path.join(os.tmpdir(), `aqa-stop-${name}-${Date.now()}`);
 				const job = enqueue({
 					kind: 'record',
-					label: `record ${name} (${seconds}s)`,
-					spawnFn: () => recordCmd(name, startUrl, { app: app || undefined, seconds, stopFile }),
+					label: `record ${name} (${engine}, ${seconds}s)`,
+					spawnFn: () => recordCmd(name, startUrl, { app: app || undefined, seconds, stopFile, engine }),
 					stopFile,
 				});
 				return sendJson(res, 202, { job, flow: name });
@@ -336,10 +353,14 @@ const server = http.createServer(async (req, res) => {
 				if (p === '/api/verify') {
 				const name = String(bodyJson.name || '').trim();
 				if (!flowExists(name)) return sendJson(res, 400, { error: 'no such flow' });
+				const flow = await getFlow(name);
+				const engine = normalizeEngine(flow?.engine || 'agent-browser', 'flow.engine');
 				const job = enqueue({
 					kind: 'verify',
-					label: `verify ${name}`,
-					spawnFn: () => browserBash('bin/probe-record.sh', ['verify', `flows/${name}.flow.json`]),
+					label: `verify ${name} (${engine})`,
+					spawnFn: () => engine === 'playwright'
+						? nodeLeaf('bin/play-flow.mjs', ['--flow', `flows/${name}.flow.json`, '--verify'])
+						: browserBash('bin/probe-record.sh', ['verify', `flows/${name}.flow.json`]),
 				});
 				return sendJson(res, 202, { job });
 			}
@@ -355,7 +376,7 @@ const server = http.createServer(async (req, res) => {
 				// 결재/RPA routes (sync, NL command router, system registry) — see webui/routes-rpa.js.
 				if (await commandPlanPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash, nodeLeaf })) return;
 				if (approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf })) return;
-				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash })) return;
+				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash, authSpawn: systemAuthSpawn })) return;
 
 			if (p === '/api/auth') {
 				const app = String(bodyJson.app || '').trim();
@@ -374,9 +395,18 @@ const server = http.createServer(async (req, res) => {
 				if (!successUrl || successUrl.length > 2048 || successUrl.includes('\0')) {
 					return sendJson(res, 400, { error: 'invalid successUrl' });
 				}
+				let engine;
+				try { engine = normalizeEngine(bodyJson.engine || 'agent-browser', 'auth.engine'); }
+				catch (e) { return sendJson(res, 400, { error: e.message }); }
 				// setup/auth.sh opens headed Chrome for human OTP, then saves fixtures/auth/<app>.state.json.
 				// Browser job -> through the single-slot serial queue. (successUrl is an inert arg via Git-Bash.)
-				const job = enqueue({ kind: 'auth', label: `auth ${app}`, spawnFn: () => browserBash('setup/auth.sh', [app, loginUrl, successUrl]) });
+				const job = enqueue({
+					kind: 'auth',
+					label: `auth ${app} (${engine})`,
+					spawnFn: () => engine === 'playwright'
+						? nodeLeaf('approve/auth-pw.mjs', [loginUrl, successNeedle(successUrl), `fixtures/auth/playwright/${app}.state.json`])
+						: browserBash('setup/auth.sh', ['--engine', 'agent-browser', app, loginUrl, successUrl]),
+				});
 				return sendJson(res, 202, { job, app });
 			}
 

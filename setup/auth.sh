@@ -20,6 +20,22 @@ set -euo pipefail
 PROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PROBE_ROOT
 
+ENGINE="${ENGINE:-agent-browser}"
+ARGS=()
+while [ $# -gt 0 ]; do
+	case "${1:-}" in
+		--engine)
+			[ $# -ge 2 ] || { echo "usage: bash setup/auth.sh [--engine agent-browser|playwright] <app> <login_url> <success_url>" >&2; exit 2; }
+			ENGINE="$2"; shift 2 ;;
+		*) ARGS+=("$1"); shift ;;
+	esac
+done
+set -- "${ARGS[@]}"
+case "$ENGINE" in
+	agent-browser|playwright) ;;
+	*) echo "[auth] invalid engine '$ENGINE' (expected agent-browser or playwright)" >&2; exit 2 ;;
+esac
+
 # Accept config as positional args (auth.sh <app> <login_url> <success_url>) OR env
 # vars. Args are preferred because they survive terminals that wrap/split long
 # multi-line env-prefixed commands; env vars stay supported for CI use.
@@ -27,8 +43,8 @@ APP="${1:-${APP:-}}"
 LOGIN_URL="${2:-${LOGIN_URL:-}}"
 SUCCESS_URL="${3:-${SUCCESS_URL:-}}"
 if [ -z "$APP" ] || [ -z "$LOGIN_URL" ] || [ -z "$SUCCESS_URL" ]; then
-	echo "usage: bash setup/auth.sh <app> <login_url> <success_url>" >&2
-	echo "  e.g: bash setup/auth.sh myapp https://app.example.com/login '**/dashboard'" >&2
+	echo "usage: bash setup/auth.sh [--engine agent-browser|playwright] <app> <login_url> <success_url>" >&2
+	echo "  e.g: bash setup/auth.sh --engine agent-browser myapp https://app.example.com/login '**/dashboard'" >&2
 	exit 2
 fi
 # How long to wait for the human to finish (default 5 min). OTP + reading email is slow.
@@ -37,6 +53,18 @@ HUMAN_TIMEOUT_MS="${HUMAN_TIMEOUT_MS:-300000}"
 STATE_DIR="${PROBE_ROOT}/fixtures/auth"
 STATE_FILE="${STATE_DIR}/${APP}.state.json"
 mkdir -p "$STATE_DIR"
+
+if [ "$ENGINE" = "playwright" ]; then
+	STATE_DIR="${PROBE_ROOT}/fixtures/auth/playwright"
+	STATE_FILE="${STATE_DIR}/${APP}.state.json"
+	mkdir -p "$STATE_DIR"
+	# approve/auth-pw.mjs waits by substring, not glob. Preserve the existing glob-friendly
+	# CLI by using the literal part of an agent-browser-style glob as the success needle.
+	SUCCESS_NEEDLE="${SUCCESS_URL//\*/}"
+	[ -n "$SUCCESS_NEEDLE" ] || SUCCESS_NEEDLE="$SUCCESS_URL"
+	echo "[auth] engine=playwright; opening headed Playwright login -> $STATE_FILE"
+	exec node "$PROBE_ROOT/approve/auth-pw.mjs" "$LOGIN_URL" "$SUCCESS_NEEDLE" "$STATE_FILE"
+fi
 
 # Isolated, headed session so the human can see and drive the real window.
 SESS="auth-${APP}"
