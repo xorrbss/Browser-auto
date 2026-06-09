@@ -27,13 +27,16 @@ const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
 const stateFor = (app) => path.join(PROBE_ROOT, 'approve', `${app}.pw-state.json`);
 
-// gwConfig(): parse data/approvals.config for the legacy 결재 inbox (GW_APP + GW_INBOX_URL).
+// gwConfig(): parse data/approvals.config for the legacy 결재 inbox (GW_APP + GW_INBOX_URL) and the
+// Playwright login coordinates (GW_LOGIN_URL + GW_SUCCESS_URL) used by the webui 결재-로그인 button.
 function gwConfig() {
 	try {
 		const cfg = fs.readFileSync(path.join(PROBE_ROOT, 'data', 'approvals.config'), 'utf8');
 		const app = (/^\s*GW_APP\s*=\s*"?([^"\n]+)"?/m.exec(cfg) || [])[1];
 		const url = (/^\s*GW_INBOX_URL\s*=\s*"?([^"\n]+)"?/m.exec(cfg) || [])[1];
-		return { app: app && app.trim(), url: url && url.trim() };
+		const loginUrl = (/^\s*GW_LOGIN_URL\s*=\s*"?([^"\n]+)"?/m.exec(cfg) || [])[1];
+		const successUrl = (/^\s*GW_SUCCESS_URL\s*=\s*"?([^"\n]+)"?/m.exec(cfg) || [])[1];
+		return { app: app && app.trim(), url: url && url.trim(), loginUrl: loginUrl && loginUrl.trim(), successUrl: successUrl && successUrl.trim() };
 	} catch { return {}; }
 }
 
@@ -49,6 +52,29 @@ export function listUrlFor(app) {
 	finally { closeDb(db); }
 	if (!cfg.app && cfg.url) return cfg.url; // back-compat: a bare GW_INBOX_URL config with no GW_APP set
 	return '';
+}
+
+// successNeedle(glob): auth-pw.mjs confirms login with page.url().includes(needle) — a SUBSTRING, not a glob.
+// success_url is stored as a setup/auth.sh glob (e.g. "**/dashboard", "https://x/**"); strip the wildcard
+// segments to the longest literal run so the substring match agrees with how the URL actually appears.
+export function successNeedle(glob) {
+	if (!glob) return '';
+	const lits = String(glob).split(/\*+/).filter(Boolean);
+	return lits.sort((a, b) => b.length - a.length)[0] || '';
+}
+
+// loginUrlFor(app): the Playwright headed-login coordinates the webui 결재-로그인 button spawns auth-pw.mjs
+// with. REGISTRY-AWARE + fail-closed, mirroring listUrlFor:
+//   • the legacy 결재 app (config GW_APP) → GW_LOGIN_URL / GW_SUCCESS_URL;
+//   • a generic registered system → its registry login_url / success_url (same fields setup/auth.sh uses);
+//   • neither / incomplete ⇒ null (the route refuses with a clear message).
+export function loginUrlFor(app) {
+	const cfg = gwConfig();
+	if (app && app === cfg.app && cfg.loginUrl && cfg.successUrl) return { loginUrl: cfg.loginUrl, successUrl: cfg.successUrl };
+	const db = openDb();
+	try { const sys = getSystem(db, app); if (sys && sys.login_url && sys.success_url) return { loginUrl: String(sys.login_url).trim(), successUrl: String(sys.success_url).trim() }; }
+	finally { closeDb(db); }
+	return null;
 }
 
 // titlesFor(app, docs, titleField): per-doc content-binding title. Tries the `approvals` table (legacy 결재)
@@ -120,6 +146,23 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	if (p === '/api/approve/stop') {
 		try { fs.mkdirSync(path.dirname(stopPath()), { recursive: true }); fs.writeFileSync(stopPath(), String(new Date().toISOString())); sendJson(res, 200, { ok: true, stopped: true }); }
 		catch (e) { sendJson(res, 500, { error: 'could not write kill-switch: ' + (e && e.message) }); }
+		return true;
+	}
+	// 결재 로그인 (Playwright): spawn the headed one-time login (approve/auth-pw.mjs) from the webui instead of
+	// the terminal — closes the last CLI step in the operator flow. A real Chrome window opens on the operator's
+	// desktop for ID/비번/OTP entry (that human gesture is irreducible — credentials are NOT typed into the webui);
+	// on reaching the success URL the leaf saves approve/<app>.pw-state.json (the trusted-click session the
+	// approve leaf reuses). login_url/success_url come from the registry (generic) or approvals.config (결재).
+	if (p === '/api/approve/login') {
+		const app = String(bodyJson.app || '').trim();
+		if (!NAME_RE.test(app)) { sendJson(res, 400, { error: 'invalid app name' }); return true; }
+		const coords = loginUrlFor(app);
+		if (!coords) { sendJson(res, 400, { error: `no login URL for '${app}' — register login_url + success_url (generic system) or set GW_LOGIN_URL + GW_SUCCESS_URL in data/approvals.config (결재).` }); return true; }
+		const needle = successNeedle(coords.successUrl);
+		if (!needle) { sendJson(res, 400, { error: `success URL for '${app}' has no literal segment to match on` }); return true; }
+		const outFile = `approve/${app}.pw-state.json`;
+		const job = enqueue({ kind: 'auth', label: `결재 로그인 ${app} (Playwright)`, spawnFn: () => nodeLeaf('approve/auth-pw.mjs', [coords.loginUrl, needle, outFile]) });
+		sendJson(res, 202, { job });
 		return true;
 	}
 	// CAPTURE ASSEMBLE (Gate-B UI, Phase 1b): turn a RECORDED approve flow (flows/<flowName>.flow.json, recorded

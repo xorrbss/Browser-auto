@@ -280,6 +280,12 @@ bash setup/auth.sh hiworks \
 #    GW_APP=hiworks
 #    GW_INBOX_URL="https://approval.office.hiworks.com/<company-domain>/approval/document/lists/W"
 #    ('/document/lists/W' is the 대기(pending) box — the approval home auto-redirects here.)
+#    GW_LOGIN_URL / GW_SUCCESS_URL let the webui 결재-로그인 button trigger the Playwright headed login
+#    (approve/auth-pw.mjs) without the terminal — a Chrome window still opens for ID/PW + OTP (the
+#    human gesture is irreducible; credentials are NOT typed into the webui). GW_SUCCESS_URL is matched
+#    as a substring of the post-login URL:
+#    GW_LOGIN_URL="https://login.office.hiworks.com/<company-domain>"
+#    GW_SUCCESS_URL="dashboard.office.hiworks.com"
 bash bin/fetch-approvals.sh        # or: --app hiworks --url <inbox>; or the webui 동기화 button
 #    -> snapshot -> extract 대기 rows -> upsert into data/approvals.db; the 결재 view shows the cards.
 ```

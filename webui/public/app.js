@@ -868,6 +868,9 @@ async function renderApprovalState() {
 	const app = $('#approval-app')?.value.trim() || state.selectedSystem || 'hiworks';
 	try {
 		const data = await getJson(`/api/approve/state?app=${encodeURIComponent(app)}`);
+		const loginLog = el('pre', { class: 'job-log', hidden: true });
+		const loginBtn = el('button', { class: 'btn small', type: 'button', onclick: () => runApproveLogin(app, loginBtn, loginLog) },
+			data.loggedIn ? '🔐 결재 재로그인' : '🔐 결재 로그인');
 		setChildren(box,
 			el('div', { class: 'metric-grid' },
 				metric('App', data.app || app, 'selected'),
@@ -875,12 +878,35 @@ async function renderApprovalState() {
 				metric('Recipe', data.hasApproveRecipe ? 'ready' : 'missing', `recipes/${app}.json`),
 				metric('List URL', data.listUrl ? 'configured' : 'missing', 'pending inbox'),
 			),
+			el('div', { class: 'row' }, loginBtn),
+			loginLog,
 			data.loggedIn && data.hasApproveRecipe && data.listUrl
 				? warnBox('Reviewed approval can dry-run. Live still requires human confirmation and server-side session/origin gate.')
 				: warnBox('Approval action is disabled until login state, recipe, and list URL are all present.'),
 		);
 	} catch (e) {
 		setChildren(box, errorBox(e.message));
+	}
+}
+
+// 결재 로그인: trigger the headed Playwright login (approve/auth-pw.mjs) from the UI. A real Chrome window
+// opens on the operator's desktop for ID/비번/OTP — credentials are NOT typed into the webui (irreducible
+// human gesture). On success the leaf saves approve/<app>.pw-state.json and the job ends; we re-render state.
+async function runApproveLogin(app, btn, log) {
+	if (btn) { btn.disabled = true; btn.textContent = '로그인 창 대기 중…'; }
+	if (log) { log.hidden = false; log.textContent = '데스크톱에 뜬 Chrome 창에서 로그인(OTP 포함)을 완료하세요…\n'; }
+	try {
+		const data = await postJson('/api/approve/login', { app });
+		if (data.job) {
+			streamJob(data.job.id, log || document.createElement('pre'), async () => {
+				if (btn) { btn.disabled = false; }
+				await renderApprovalState();
+			});
+		}
+	} catch (e) {
+		if (btn) { btn.disabled = false; btn.textContent = '🔐 결재 로그인'; }
+		if (log) { log.textContent += `로그인 실행 거부: ${e.message}\n`; }
+		alert(`결재 로그인 실패: ${e.message}`);
 	}
 }
 
