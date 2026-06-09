@@ -11,6 +11,7 @@ construction. Every step targets an element by a *semantic locator* only.
 ```jsonc
 {
   "name": "checkout",                    // matches tests/<name>.test.sh
+  "engine": "agent-browser",             // optional; agent-browser|playwright. Absent == agent-browser
   "app": "myapp",                        // optional; if set, test starts with AB_AUTH <app>
   "startUrl": "https://app.example.com/cart",
   "steps": [
@@ -27,6 +28,17 @@ construction. Every step targets an element by a *semantic locator* only.
   ]
 }
 ```
+
+## Engine
+
+Top-level `engine` is optional and may be `"agent-browser"` or `"playwright"`.
+Back-compat rule: if the field is absent, the flow is treated as
+`"agent-browser"`.
+
+`flow.engine` is the replay source of truth. `system.engine` is only the default
+for new auth/record/play work and never migrates existing flows. Compile, verify,
+and replay must fail closed if the requested engine and `flow.engine` disagree;
+there is no silent fallback to the other engine. New captures write the field.
 
 ## Step kinds
 
