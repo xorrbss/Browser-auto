@@ -152,6 +152,49 @@ assert(r.code === 200 && r.body.targetSetHash !== oldTargetSetHash, 'reviewed ta
 r = await post(`/api/agent/plan/${plan2.id}/confirm`, { planHash: plan2.hash, targetSetHash: r.body.targetSetHash, dryRunHash: 'sha256:dry2', confirm: true });
 assert(r.code === 409 && r.body.reason === 'dry_run_missing', 'target changes invalidate the prior dry-run');
 
+// #4 regression: a benign re-sync (bumps fetched_at, identical title/summary) must NOT change the
+// target-set hash — else verifyTargetSet would reject an already-reviewed set on confirm.
+r = await post('/api/agent/plan', { text: 'approve hash stability', system: 'planunit', action: 'approve' });
+const plan3 = r.body.plan;
+r = await post(`/api/agent/plan/${plan3.id}/targets`, { planHash: plan3.hash, targetKeys: ['DOC-1'] });
+assert(r.code === 200, 'plan3 targets reviewed');
+const hashBeforeResync = r.body.targetSetHash;
+let h3 = dbm.openDb();
+dbm.upsertRecords(h3, 'planunit', [{ key: 'DOC-1', data: { title: 'Expense one' }, summary: 'ready' }], '2099-01-01T00:00:00.000Z');
+dbm.closeDb(h3);
+r = await post(`/api/agent/plan/${plan3.id}/targets`, { planHash: plan3.hash, targetKeys: ['DOC-1'] });
+assert(r.code === 200 && r.body.targetSetHash === hashBeforeResync, 'benign re-sync (new fetched_at, same content) preserves the target-set hash');
+
+// #3 regression: a LIVE run that approves NOTHING (all skipped / kill-switch abort) must record
+// 'failed', not 'succeeded' — a no-op/abort reported as success would corrupt the audit trail.
+r = await post('/api/agent/plan', { text: 'approve all-skip', system: 'planunit', action: 'approve' });
+const plan4 = r.body.plan;
+r = await post(`/api/agent/plan/${plan4.id}/dry-run`, { planHash: plan4.hash, targetKeys: ['DOC-1'] });
+const ts4 = r.body.plan.targetSetHash;
+const dry4 = enqueued.find((e) => e.job.id === r.body.job.id);
+dry4.spec.onFinish({ id: dry4.job.id, status: 'done', exitCode: 0, result: { results: [{ doc_id: 'DOC-1', status: 'dry-ok' }] } });
+const p4dry = get(`/api/agent/plan/${plan4.id}`).body.plan;
+r = await post(`/api/agent/plan/${plan4.id}/confirm`, { planHash: plan4.hash, targetSetHash: ts4, dryRunHash: p4dry.dryRun.hash, confirm: true });
+assert(r.code === 202, 'plan4 live job queued');
+const live4 = enqueued.find((e) => e.job.id === r.body.job.id);
+live4.spec.onFinish({ id: live4.job.id, status: 'done', exitCode: 0, result: { approved: 0, results: [{ doc_id: 'DOC-1', status: 'skipped', reason: 'kill-switch' }] } });
+assert(get(`/api/agent/plan/${plan4.id}`).body.plan.status === 'failed', 'all-skipped live run records failed, not succeeded');
+assert(get(`/api/agent/plan/${plan4.id}/events`).body.events.some((e) => e.type === 'live_completed' && e.status === 'failed' && e.reason === 'live_no_approval'), 'all-skip live emits live_no_approval reason');
+
+// #3 positive: a run that approves >=1 (others skipped) still records 'succeeded'.
+r = await post('/api/agent/plan', { text: 'approve partial', system: 'planunit', action: 'approve' });
+const plan5 = r.body.plan;
+r = await post(`/api/agent/plan/${plan5.id}/dry-run`, { planHash: plan5.hash, targetKeys: ['DOC-1', 'DOC-2'] });
+const ts5 = r.body.plan.targetSetHash;
+const dry5 = enqueued.find((e) => e.job.id === r.body.job.id);
+dry5.spec.onFinish({ id: dry5.job.id, status: 'done', exitCode: 0, result: { results: [{ doc_id: 'DOC-1', status: 'dry-ok' }, { doc_id: 'DOC-2', status: 'dry-ok' }] } });
+const p5dry = get(`/api/agent/plan/${plan5.id}`).body.plan;
+r = await post(`/api/agent/plan/${plan5.id}/confirm`, { planHash: plan5.hash, targetSetHash: ts5, dryRunHash: p5dry.dryRun.hash, confirm: true });
+assert(r.code === 202, 'plan5 live job queued');
+const live5 = enqueued.find((e) => e.job.id === r.body.job.id);
+live5.spec.onFinish({ id: live5.job.id, status: 'done', exitCode: 0, result: { approved: 1, results: [{ doc_id: 'DOC-1', status: 'approved' }, { doc_id: 'DOC-2', status: 'skipped', reason: 'form type mismatch' }] } });
+assert(get(`/api/agent/plan/${plan5.id}`).body.plan.status === 'succeeded', 'partial approve (>=1 approved, rest skipped) records succeeded');
+
 console.log('  agent-plan-unit: all checks passed');
 NODE
 )

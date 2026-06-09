@@ -483,6 +483,7 @@ async function runDryRun() {
 	try {
 		const planId = state.plan.id; // capture now — the operator may switch plans while the job streams
 		const data = await postJson(`/api/agent/plan/${encodeURIComponent(planId)}/dry-run`, { planHash: state.plan.hash, targetKeys: docs });
+		state.activeApproveJob = data.job ? data.job.id : null; // track the id so the poll self-heals a pre-empted stream
 		if (data.job) {
 			streamJob(data.job.id, log || document.createElement('pre'), async () => {
 				state.activeApproveJob = null;
@@ -532,6 +533,7 @@ async function runLiveConfirm() {
 			dryRunHash: state.plan.dryRun?.hash,
 			confirm: true,
 		});
+		state.activeApproveJob = data.job ? data.job.id : null; // track the id so the poll self-heals a pre-empted stream
 		if (data.job) {
 			streamJob(data.job.id, log || document.createElement('pre'), async () => {
 				state.activeApproveJob = null;
@@ -1078,9 +1080,21 @@ function bindEvents() {
 	$('#diagnostics-refresh').addEventListener('click', loadDiagnostics);
 }
 
+// Self-heal the approve gate. The single shared SSE stream (util.js) is pre-empted whenever another
+// view opens a job log, so the dry-run/confirm onEnd that clears activeApproveJob may never fire. If
+// the tracked approve job is no longer running/pending (it finished while pre-empted), clear the flag
+// so the gate doesn't stay wedged until reload. Same self-heal role as flows.js reconcileFlowJob.
+function reconcileApproveJob() {
+	if (typeof state.activeApproveJob !== 'string') return; // null, or the brief pre-enqueue `true`
+	const q = state.queue || {};
+	const active = new Set([q.running && q.running.id, ...(q.pending || []).map((j) => j.id)].filter(Boolean));
+	if (!active.has(state.activeApproveJob)) state.activeApproveJob = null;
+}
+
 bindEvents();
 loadCoreData();
 setInterval(() => loadQueue().then(() => {
+	reconcileApproveJob();
 	if (state.view === 'queue') renderQueueView();
 	renderCommandCenter();
 }), 2500);

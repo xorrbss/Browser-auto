@@ -158,7 +158,7 @@ async function runSysReviewApprove() {
 }
 function renderSysApproveResults(logText, status, results) {
 	let summary = null;
-	for (const line of logText.split('\n')) { const t = line.trim(); if (t.startsWith('{') && t.includes('"results"')) { try { summary = JSON.parse(t); } catch {} } }
+	for (const line of logText.split('\n')) { let t = line.trim(); if (t.startsWith('AQA_JOB_RESULT=')) t = t.slice('AQA_JOB_RESULT='.length); if (t.startsWith('{') && t.includes('"results"')) { try { summary = JSON.parse(t); } catch {} } }
 	if (!summary || !Array.isArray(summary.results)) { status.replaceChildren(el('div', { class: 'error' }, '결과 요약 파싱 실패 — 로그를 확인하세요.')); return; }
 	const c = (s) => summary.results.filter((r) => r.status === s).length;
 	status.replaceChildren(el('div', { class: 'hint' }, `${summary.dry ? '미리보기' : '결재'} 완료 — ✅${c('approved')} · 👁${c('dry-ok')} · ✗${c('failed')} · ⤼${c('skipped')} / 총 ${summary.total}`));

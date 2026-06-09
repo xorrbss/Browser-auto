@@ -34,9 +34,15 @@ export function hashObject(value) {
 	return `sha256:${crypto.createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')}`;
 }
 
+// Hash ONLY the stable identity of the review: drop reviewedAt AND the per-target volatile fields
+// (fetchedAt/status/source). A benign re-sync bumps fetched_at on every row even when the content is
+// unchanged (lib/db.js upserts set fetched_at=excluded.fetched_at unconditionally); folding that into
+// the hash would make verifyTargetSet reject an already-reviewed set on confirm. titleHash/summaryHash
+// already pin what is actually being approved, so content changes are still caught.
 function hashTargetSet(targetSet) {
-	const { reviewedAt, ...stable } = targetSet;
-	return hashObject(stable);
+	const { reviewedAt, targets, ...stable } = targetSet;
+	const stableTargets = (targets || []).map((t) => ({ key: t.key, titleHash: t.titleHash, summaryHash: t.summaryHash }));
+	return hashObject({ ...stable, targets: stableTargets });
 }
 
 function newPlanId() {
@@ -201,23 +207,26 @@ function assertPlanHash(res, plan, supplied) {
 	return false;
 }
 
+// Targets are editable / a dry-run may (re)start in exactly the same lifecycle states: pre-confirm,
+// not yet confirmed. One predicate is the single source of truth for both gates so they can't drift.
 function canEditTargets(plan) {
 	return ['planned', 'dry_failed', 'dry_running', 'awaiting_confirmation'].includes(plan.status) && !plan.confirmation;
 }
-
-function canRunDryRun(plan) {
-	return ['planned', 'dry_failed', 'dry_running', 'awaiting_confirmation'].includes(plan.status) && !plan.confirmation;
-}
+const canRunDryRun = canEditTargets;
 
 function buildTargetSet(plan, targetKeys) {
 	const keys = [...new Set((targetKeys || []).map((x) => String(x || '').trim()).filter(Boolean))];
 	if (!keys.length) return { ok: false, reason: 'target_review_required', error: 'target review requires at least one target' };
-	const titleField = plan.plan && plan.plan.action === 'approve' && plan.plan.system ? (actionInfo(plan.plan.system, 'approve').actionBlock || {}).titleField || 'title' : 'title';
-	const titles = titlesFor(plan.system, keys, titleField);
+	// titleField follows the plan's ACTUAL action (not a hardcoded 'approve'), so a non-approve effectful
+	// action that declares its own titleField can still bind a content title; READ/unknown actions fall
+	// back to 'title'. Recipe read (fs) only — does not need the DB handle.
+	const ai = plan.system && plan.action ? actionInfo(plan.system, plan.action) : null;
+	const titleField = (ai && ai.actionBlock && ai.actionBlock.titleField) || 'title';
 	const targets = [];
 	const missing = [];
 	const db = dbm.openDb();
 	try {
+		const titles = titlesFor(plan.system, keys, titleField, db); // reuse this handle (no second openDb)
 		for (const key of keys) {
 			const ap = dbm.getApproval(db, key);
 			const rec = dbm.getRecord(db, plan.system, key);
@@ -376,7 +385,12 @@ function storeJobCompletion(planId, stage, job, binding = {}) {
 		});
 		return;
 	}
-	const ok = job.status === 'done' && job.result && Array.isArray(job.result.results) && job.result.results.length > 0 && job.result.results.every((r) => r.status === 'approved' || r.status === 'skipped');
+	// A LIVE run is 'succeeded' ONLY if it actually approved >=1 target and nothing failed. All-skipped
+	// (every guard tripped) or a kill-switch abort (one skipped result, then the leaf breaks) approves
+	// NOTHING and must be recorded as failed — otherwise the audit trail reports a no-op/abort as success.
+	const results = job.status === 'done' && job.result && Array.isArray(job.result.results) ? job.result.results : null;
+	const approvedN = results ? results.filter((r) => r.status === 'approved').length : 0;
+	const ok = !!(results && results.length > 0 && approvedN > 0 && results.every((r) => r.status === 'approved' || r.status === 'skipped'));
 	dbCall((db) => {
 		dbm.updateCommandPlan(db, planId, { status: ok ? 'succeeded' : 'failed', job_id: job.id });
 		dbm.appendCommandEvent(db, {
@@ -384,7 +398,7 @@ function storeJobCompletion(planId, stage, job, binding = {}) {
 			actor: ACTOR,
 			type: 'live_completed',
 			status: ok ? 'succeeded' : 'failed',
-			reason: ok ? null : 'live_failed',
+			reason: ok ? null : (results && results.length > 0 && approvedN === 0 && results.every((r) => r.status === 'skipped') ? 'live_no_approval' : 'live_failed'),
 			job_id: job.id,
 			plan_hash: row.planHash,
 			target_set_hash: row.targetSetHash,
@@ -419,7 +433,7 @@ function runReadPlan(plan, deps) {
 		});
 		return { ok: true, plan: row, result };
 	}
-	const args = plan.action === 'sync' ? ['--system', plan.system] : ['--system', plan.system];
+	const args = ['--system', plan.system];
 	const script = plan.action === 'sync' ? 'bin/sync-system.sh' : 'bin/enrich-system.sh';
 	const job = deps.enqueue({
 		kind: plan.action === 'sync' ? 'sync' : 'summarize',

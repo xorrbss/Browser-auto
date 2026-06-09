@@ -51,6 +51,19 @@ export function streamJob(jobId, logEl, onEnd) {
 	}
 	const es = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/stream`);
 	currentEs = es;
+	// onEnd MUST fire exactly once — on the terminal 'end' frame, OR (if that frame never arrives because
+	// the stream closed abnormally: server restart, evicted job) on a best-effort fetch of the final job
+	// state. Without the fallback, a caller that clears UI state in onEnd (e.g. an in-flight approve flag)
+	// would wedge until a full reload. `data` is the publicJob (same shape as the 'end' frame), or null
+	// only when the fallback fetch also fails — every onEnd caller already null-guards its argument.
+	let finished = false;
+	const finish = (data) => {
+		if (finished) return;
+		finished = true;
+		if (currentEs === es) currentEs = null;
+		try { es.close(); } catch { /* idempotent */ }
+		if (onEnd) onEnd(data);
+	};
 	es.addEventListener('open', () => {
 		logEl.textContent = '';
 	});
@@ -61,14 +74,18 @@ export function streamJob(jobId, logEl, onEnd) {
 		if (atBottom) logEl.scrollTop = logEl.scrollHeight;
 	});
 	es.addEventListener('end', (ev) => {
-		es.close();
-		if (currentEs === es) currentEs = null;
-		if (onEnd) onEnd(JSON.parse(ev.data));
+		let data = null;
+		try { data = JSON.parse(ev.data); } catch { /* keep null */ }
+		finish(data);
 	});
 	es.onerror = () => {
-		if (es.readyState === EventSource.CLOSED && currentEs === es) {
-			currentEs = null;
-			logEl.append(document.createTextNode('\n[webui] 로그 스트림이 닫혔습니다 — 새로고침하세요.\n'));
+		// CLOSED = the browser gave up reconnecting (transient drops auto-reconnect with readyState
+		// CONNECTING and are left alone). The 'end' frame won't come, so fetch the terminal state once
+		// and finalize — otherwise the caller's onEnd never runs and its UI state stays stuck.
+		if (es.readyState === EventSource.CLOSED && currentEs === es && !finished) {
+			currentEs = null; // claim this stream so a repeat CLOSED dispatch can't schedule a 2nd fallback fetch
+			logEl.append(document.createTextNode('\n[webui] 로그 스트림이 닫혔습니다 — 최종 상태를 확인합니다…\n'));
+			getJson(`/api/jobs/${encodeURIComponent(jobId)}`).then(finish).catch(() => finish(null));
 		}
 	};
 }

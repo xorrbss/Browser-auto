@@ -80,8 +80,10 @@ export function loginUrlFor(app) {
 // titlesFor(app, docs, titleField): per-doc content-binding title. Tries the `approvals` table (legacy 결재)
 // THEN the registered system's `records` table (data[titleField]); null when absent in BOTH ⇒ the route
 // refuses that doc (no content binding = no approve).
-export function titlesFor(app, docs, titleField = 'title') {
-	const db = openDb();
+// db0: optional caller-owned handle to reuse (the caller closes it). When omitted, opens+closes its own.
+// Lets a caller that already has a connection (e.g. buildTargetSet) avoid a second openDb per request.
+export function titlesFor(app, docs, titleField = 'title', db0 = null) {
+	const db = db0 || openDb();
 	try {
 		const m = {};
 		for (const d of docs) {
@@ -92,7 +94,7 @@ export function titlesFor(app, docs, titleField = 'title') {
 			m[d] = t != null && String(t).trim() ? String(t) : null;
 		}
 		return m;
-	} finally { closeDb(db); }
+	} finally { if (!db0) closeDb(db); }
 }
 
 // A doc_id is passed as ONE argv element (shell:false) and joined with commas for --docs, so the only

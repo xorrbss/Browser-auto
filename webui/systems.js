@@ -71,9 +71,10 @@ function recordStats(db, name) {
 	return { total, summarized, missingSummary: Math.max(0, total - summarized), lastFetchedAt: last };
 }
 
-export function systemState(name) {
+// db0: optional caller-owned handle (allActionsView reuses one across every system). Omitted -> own handle.
+export function systemState(name, db0 = null) {
 	if (!validSysName(name)) return null;
-	const db = openDb();
+	const db = db0 || openDb();
 	try {
 		const sys = getSystem(db, name);
 		if (!sys) return null;
@@ -114,14 +115,14 @@ export function systemState(name) {
 			},
 			recordStats: stats,
 		};
-	} finally { closeDb(db); }
+	} finally { if (!db0) closeDb(db); }
 }
 
-export function systemActions(name) {
-	const state = systemState(name);
-	if (!state) return null;
-	const db = openDb();
+export function systemActions(name, db0 = null) {
+	const db = db0 || openDb();
 	try {
+		const state = systemState(name, db);
+		if (!state) return null;
 		const sys = getSystem(db, name);
 		const recipe = sys && sys.recipe ? sys.recipe : {};
 		const actions = [];
@@ -137,7 +138,11 @@ export function systemActions(name) {
 			actions.push({
 				system: name,
 				action,
-				riskClass: block.class || block.riskClass || 'irreversible',
+				// These come from recipe.actions/recipe.approve — effectful by construction. The plan GATE
+				// (routes-command-plan.js) is the single source of truth and NEVER downgrades a non-READ action
+				// to read, so the display must not claim 'read' here either: clamp a (mis)declared read up to
+				// irreversible so the capability view can't contradict the gate.
+				riskClass: (block.class === 'read' || block.riskClass === 'read') ? 'irreversible' : (block.class || block.riskClass || 'irreversible'),
 				enabled,
 				state: enabled ? 'enabled' : captured ? 'disabled' : 'needs implementation',
 				reviewedOnly: block.reviewedOnly !== false,
@@ -151,12 +156,12 @@ export function systemActions(name) {
 			actions.push({ system: name, action: 'approve', riskClass: 'irreversible', enabled: false, state: 'needs implementation', dryRunRequired: true, humanConfirmRequired: true, permission: 'actions.approve.live', disabledReason: 'recipe action is not captured' });
 		}
 		return actions;
-	} finally { closeDb(db); }
+	} finally { if (!db0) closeDb(db); }
 }
 
 export function allActionsView() {
 	const db = openDb();
 	try {
-		return listSystems(db).flatMap((s) => systemActions(s.name) || []);
+		return listSystems(db).flatMap((s) => systemActions(s.name, db) || []);
 	} finally { closeDb(db); }
 }

@@ -289,4 +289,6 @@ try {
 	}
 } finally { await browser.close(); }
 const summary = { live, dry, total: targets.length, approved: approvedCount, results };
-console.log(JSON.stringify(summary));
+// AQA_JOB_RESULT= sentinel: the webui job machinery (webui/jobs.js) treats this prefix as the
+// AUTHORITATIVE structured result, so no other log line can clobber it before the gate reads it.
+console.log('AQA_JOB_RESULT=' + JSON.stringify(summary));

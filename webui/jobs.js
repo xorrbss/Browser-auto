@@ -81,17 +81,23 @@ function pushLine(job, line) {
 	for (const res of job.subscribers) writeSse(res, 'line', { line });
 }
 
+// Capture a driver's structured result. The AQA_JOB_RESULT= sentinel is AUTHORITATIVE: once a sentinel
+// line is seen, the loose `{…"results"…}` heuristic is disabled so a later stray results-bearing log line
+// can't clobber the real result that feeds the dry-run/approve gate. The loose branch remains only as a
+// fallback for drivers that don't emit the sentinel. A malformed result is flagged ONLY for the explicit
+// sentinel — a malformed loose line is just a normal log line, not a job error.
 function captureStructuredResult(job, line) {
 	const t = String(line || '').trim();
 	let raw = '';
-	if (t.startsWith('AQA_JOB_RESULT=')) raw = t.slice('AQA_JOB_RESULT='.length);
-	else if (t.startsWith('{') && t.includes('"results"')) raw = t;
+	let sentinel = false;
+	if (t.startsWith('AQA_JOB_RESULT=')) { raw = t.slice('AQA_JOB_RESULT='.length); sentinel = true; }
+	else if (!job._resultSentinel && t.startsWith('{') && t.includes('"results"')) raw = t;
 	if (!raw) return;
 	try {
 		const obj = JSON.parse(raw);
-		if (obj && typeof obj === 'object') job.result = obj;
+		if (obj && typeof obj === 'object') { job.result = obj; if (sentinel) job._resultSentinel = true; }
 	} catch {
-		job.error = job.error || 'malformed structured job result';
+		if (sentinel) job.error = job.error || 'malformed structured job result';
 	}
 }
 
