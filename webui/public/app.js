@@ -159,6 +159,30 @@ async function makePlan(source) {
 	}
 }
 
+// 동기화: hiworks 결재 대기함을 스크랩해 DB(/api/approvals)를 채운다. fetch-approvals.sh 브라우저 작업을
+// 직렬 큐에 올리고, 끝나면 대상 검토 표를 새로고침한다. 동기화 전에는 검토할 대기 문서가 없다.
+async function runApprovalsSync() {
+	const app = state.selectedSystem || 'hiworks';
+	const log = $('#job-log');
+	if (log) {
+		log.textContent = '';
+		$('#job-log-badge').textContent = '동기화';
+		$('#job-log-badge').className = 'badge info';
+	}
+	try {
+		const data = await postJson('/api/sync', { app });
+		if (data.job) {
+			setView('queue');
+			streamJob(data.job.id, log || document.createElement('pre'), async () => {
+				await loadApprovals();
+				renderAll();
+			});
+		}
+	} catch (e) {
+		alert(`동기화 거부됨: ${e.message}`);
+	}
+}
+
 function addTimeline(title, detail, kind = 'info') {
 	if (!state.plan) return;
 	state.plan.events = state.plan.events || [];
@@ -457,14 +481,23 @@ async function runDryRun() {
 		$('#job-log-badge').className = 'badge info';
 	}
 	try {
-		const data = await postJson(`/api/agent/plan/${encodeURIComponent(state.plan.id)}/dry-run`, { planHash: state.plan.hash, targetKeys: docs });
+		const planId = state.plan.id; // capture now — the operator may switch plans while the job streams
+		const data = await postJson(`/api/agent/plan/${encodeURIComponent(planId)}/dry-run`, { planHash: state.plan.hash, targetKeys: docs });
 		if (data.job) {
 			streamJob(data.job.id, log || document.createElement('pre'), async () => {
 				state.activeApproveJob = null;
-				await refreshPlan(state.plan.id);
-				const jr = await getJson(`/api/jobs/${encodeURIComponent(data.job.id)}/result`).catch(() => null);
-				state.dryRunSummary = state.plan?.dryRun?.result || jr?.result || null;
-				addTimeline(state.dryRunPassed ? '모의실행 통과' : '모의실행 종료', state.dryRunPassed ? '선택한 모든 대상이 dry-ok를 반환했습니다.' : '작업 로그와 가드 결과를 확인하세요.', state.dryRunPassed ? 'success' : 'warning');
+				try {
+					// Only fold the result into the view if we're STILL on this plan; otherwise refreshPlan(planId)
+					// would clobber the newer plan the operator navigated to (cross-plan contamination).
+					if (state.plan && state.plan.id === planId) {
+						await refreshPlan(planId);
+						const jr = await getJson(`/api/jobs/${encodeURIComponent(data.job.id)}/result`).catch(() => null);
+						state.dryRunSummary = state.plan?.dryRun?.result || jr?.result || null;
+						addTimeline(state.dryRunPassed ? '모의실행 통과' : '모의실행 종료', state.dryRunPassed ? '선택한 모든 대상이 dry-ok를 반환했습니다.' : '작업 로그와 가드 결과를 확인하세요.', state.dryRunPassed ? 'success' : 'warning');
+					}
+				} catch (e) {
+					addTimeline('모의실행 상태 갱신 실패', e.message, 'warning');
+				}
 				loadQueue().finally(renderAll);
 			});
 			setView('queue');
@@ -492,7 +525,8 @@ async function runLiveConfirm() {
 		$('#job-log-badge').className = 'badge risk';
 	}
 	try {
-		const data = await postJson(`/api/agent/plan/${encodeURIComponent(state.plan.id)}/confirm`, {
+		const planId = state.plan.id; // capture now — guard the onEnd refresh against a plan switch mid-job
+		const data = await postJson(`/api/agent/plan/${encodeURIComponent(planId)}/confirm`, {
 			planHash: state.plan.hash,
 			targetSetHash: state.plan.targetSetHash,
 			dryRunHash: state.plan.dryRun?.hash,
@@ -501,8 +535,14 @@ async function runLiveConfirm() {
 		if (data.job) {
 			streamJob(data.job.id, log || document.createElement('pre'), async () => {
 				state.activeApproveJob = null;
-				await refreshPlan(state.plan.id);
-				addTimeline('실제 작업 완료', '감사 API에서 requested/clicked/confirmed/skipped 이벤트를 확인할 수 있습니다.');
+				try {
+					if (state.plan && state.plan.id === planId) {
+						await refreshPlan(planId);
+						addTimeline('실제 작업 완료', '감사 API에서 requested/clicked/confirmed/skipped 이벤트를 확인할 수 있습니다.');
+					}
+				} catch (e) {
+					addTimeline('상태 갱신 실패', e.message, 'warning');
+				}
 				Promise.allSettled([loadApprovals(), loadAudit(), loadQueue()]).then(renderAll);
 			});
 			setView('queue');
@@ -1006,6 +1046,7 @@ function columnClass(name) {
 function bindEvents() {
 	document.querySelectorAll('.nav-item').forEach((btn) => btn.addEventListener('click', () => setView(btn.dataset.viewTarget)));
 	$('#global-refresh').addEventListener('click', () => loadCoreData());
+	$('#cc-sync').addEventListener('click', runApprovalsSync);
 	$('#cc-create-plan').addEventListener('click', () => makePlan($('#cc-command').value));
 	$('#cc-dry-run').addEventListener('click', runDryRun);
 	$('#tr-dry-run').addEventListener('click', runDryRun);
