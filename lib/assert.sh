@@ -77,6 +77,57 @@ wait_url() {
 	echo "  ✗ wait_url: URL '${got:-?}' never matched '$want' within ${timeout}s" >&2; return 1
 }
 
+wait_text() {
+	local want="$1" timeout="${2:-15}" got deadline
+	deadline=$(( $(date +%s) + timeout ))
+	while :; do
+		got="$(_ab_data '.data.text' get text body 2>/dev/null)" && case "$got" in *"$want"*) return 0 ;; esac
+		[ "$(date +%s)" -ge "$deadline" ] && break
+		sleep 0.3
+	done
+	echo "  ✗ wait_text: text '$want' not seen within ${timeout}s" >&2; return 1
+}
+
+wait_visible() {
+	local sel="$1" timeout="${2:-15}" vis deadline
+	deadline=$(( $(date +%s) + timeout ))
+	while :; do
+		vis="$(_ab_data '.data.visible' is visible "$sel" 2>/dev/null)" && [ "$vis" = "true" ] && return 0
+		[ "$(date +%s)" -ge "$deadline" ] && break
+		sleep 0.3
+	done
+	echo "  ✗ wait_visible: '$sel' not visible within ${timeout}s" >&2; return 1
+}
+
+wait_gone() {
+	local sel="$1" timeout="${2:-15}" count deadline
+	deadline=$(( $(date +%s) + timeout ))
+	while :; do
+		count="$(_ab_data '.data.count' get count "$sel" 2>/dev/null)" && [ "$count" = "0" ] && return 0
+		[ "$(date +%s)" -ge "$deadline" ] && break
+		sleep 0.3
+	done
+	echo "  ✗ wait_gone: '$sel' still present after ${timeout}s" >&2; return 1
+}
+
+wait_stable() {
+	local sel="$1" timeout="${2:-15}" box prev="" stable=0 deadline
+	deadline=$(( $(date +%s) + timeout ))
+	while :; do
+		box="$(AB_JSON get box "$sel" 2>/dev/null | jq -c 'select(.success==true) | .data' 2>/dev/null || true)"
+		if [ -n "$box" ] && [ "$box" = "$prev" ]; then
+			stable=$((stable + 1))
+			[ "$stable" -ge 1 ] && return 0
+		else
+			stable=0
+			prev="$box"
+		fi
+		[ "$(date +%s)" -ge "$deadline" ] && break
+		sleep 0.2
+	done
+	echo "  ✗ wait_stable: '$sel' did not stabilize within ${timeout}s" >&2; return 1
+}
+
 # assert_text <substring> [selector]: page (or element) text must contain substring.
 # No selector => whole-page text via `get text` on body.
 assert_text() {
