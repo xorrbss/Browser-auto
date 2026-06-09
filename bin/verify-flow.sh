@@ -214,7 +214,7 @@ if [ $((repaired + promoted)) -gt 0 ]; then
 		if [ "${REPAIR[$i]}" = "NEEDSREVIEW" ]; then repairs="$(printf '%s' "$repairs" | jq --arg i "$i" '.[$i]="NEEDSREVIEW"')"
 		else repairs="$(printf '%s' "$repairs" | jq --arg i "$i" --argjson loc "${REPAIR[$i]}" '.[$i]=$loc')"; fi
 	done
-	tmp="$(mktemp)"
+	tmp="$(mktemp "${flow}.tmp.XXXXXX")"
 	# On promotion: prefer the captured ladder for candidates; if absent, PRESERVE the step's own
 	# locator as a candidate so the resolver always has something to work from (never empty []).
 	jq --argjson r "$repairs" --argjson lad "$LADDER" '
