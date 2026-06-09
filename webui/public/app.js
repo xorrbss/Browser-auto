@@ -4,16 +4,16 @@
 import { $, el, getJson, fmtTime, streamJob, cancelJob } from './util.js';
 
 const VIEW_TITLES = {
-	'command-center': 'Command Center',
-	'nl-command': 'Natural Language Command',
-	'command-plan': 'CommandPlan',
-	'target-review': 'Target Review',
-	systems: 'System Registry',
-	actions: 'Action Registry',
-	queue: 'Queue / Jobs',
-	audit: 'Audit Log',
-	'approval-state': 'Approval State',
-	diagnostics: 'Diagnostics / Workspace Links',
+	'command-center': '커맨드 센터',
+	'nl-command': '자연어 명령',
+	'command-plan': '커맨드 플랜',
+	'target-review': '대상 검토',
+	systems: '시스템 레지스트리',
+	actions: '액션 레지스트리',
+	queue: '큐 / 작업',
+	audit: '감사 로그',
+	'approval-state': '결재 상태',
+	diagnostics: '진단 / 워크스페이스 링크',
 };
 
 const state = {
@@ -109,14 +109,14 @@ function setView(view) {
 	$('.view.active')?.classList.remove('active');
 	document.querySelector(`.view[data-view="${view}"]`)?.classList.add('active');
 	document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.viewTarget === view));
-	$('#page-title').textContent = VIEW_TITLES[view] || 'Control Plane';
+	$('#page-title').textContent = VIEW_TITLES[view] || '컨트롤 플레인';
 	loadView(view);
 }
 
 function updatePlanPill() {
 	const pill = $('#top-plan-pill');
 	if (!state.plan) {
-		pill.textContent = 'plan: none';
+		pill.textContent = '플랜: 없음';
 		pill.className = 'pill muted';
 		return;
 	}
@@ -126,9 +126,9 @@ function updatePlanPill() {
 
 function inferAction(text) {
 	const s = String(text || '');
-	if (/(approve|confirm|review|approval)/i.test(s)) return 'approve';
-	if (/(sync|refresh|fetch)/i.test(s)) return 'sync';
-	if (/(summarize|summary|digest|enrich)/i.test(s)) return 'enrich';
+	if (/(approve|confirm|review|approval|결재|승인|검토|확정)/i.test(s)) return 'approve';
+	if (/(sync|refresh|fetch|동기화|새로고침|가져오기)/i.test(s)) return 'sync';
+	if (/(summarize|summary|digest|enrich|요약|상세)/i.test(s)) return 'enrich';
 	return '';
 }
 
@@ -148,13 +148,13 @@ async function makePlan(source) {
 			state.plan.targets = selectedDocs();
 			state.plan.targetCount = state.plan.targets.length;
 		}
-		if (refusal) addTimeline('Plan refused', `${refusal.reason}: ${refusal.detail || ''}`, 'danger');
+		if (refusal) addTimeline('플랜 거부됨', `${refusal.reason}: ${refusal.detail || ''}`, 'danger');
 		renderAll();
 		return plan;
 	} catch (e) {
 		state.planError = e.message;
 		renderAll();
-		alert(`Plan creation refused: ${e.message}`);
+		alert(`플랜 생성 거부됨: ${e.message}`);
 		return null;
 	}
 }
@@ -287,37 +287,37 @@ function renderCommandCenter() {
 function renderPlanBadges(selector) {
 	const box = $(selector);
 	if (!box) return;
-	if (!state.plan) return setChildren(box, badge('no plan', 'neutral'));
+	if (!state.plan) return setChildren(box, badge('플랜 없음', 'neutral'));
 	const risk = state.plan.riskClass === 'irreversible' ? 'risk' : 'info';
 	setChildren(
 		box,
 		badge(state.plan.status, 'pending'),
 		badge(state.plan.action, 'info'),
 		badge(state.plan.riskClass, risk),
-		state.dryRunPassed ? badge('dry-run passed', 'success') : badge('dry-run required', state.plan.requirements.dryRun ? 'warning' : 'neutral'),
+		state.dryRunPassed ? badge('모의실행 통과', 'success') : badge('모의실행 필요', state.plan.requirements.dryRun ? 'warning' : 'neutral'),
 	);
 }
 
 function renderPlanSummary(selector, includeMetrics = false) {
 	const box = $(selector);
 	if (!box) return;
-	if (!state.plan) return setChildren(box, empty('No plan preview has been created.'));
+	if (!state.plan) return setChildren(box, empty('생성된 플랜 미리보기가 없습니다.'));
 	const metrics = includeMetrics ? el('div', { class: 'metric-grid' },
-		metric('Targets', state.plan.targetCount, 'selected or resolved'),
-		metric('Risk', state.plan.riskClass, state.plan.mode),
-		metric('Dry-run', state.plan.requirements.dryRun ? (state.dryRunPassed ? 'passed' : 'required') : 'not required', 'gate state'),
-		metric('Plan hash', state.plan.hash, 'server computed'),
+		metric('대상', state.plan.targetCount, '선택 또는 확정됨'),
+		metric('위험도', state.plan.riskClass, state.plan.mode),
+		metric('모의실행', state.plan.requirements.dryRun ? (state.dryRunPassed ? 'passed' : 'required') : 'not required', '게이트 상태'),
+		metric('플랜 해시', state.plan.hash, '서버 계산'),
 	) : null;
 	const kvs = el('div', { class: 'kv-grid' },
-		kv('Plan ID', state.plan.id),
-		kv('System', state.plan.system),
-		kv('Action', state.plan.action),
-		kv('Intent', state.plan.intent),
-		kv('Actor', state.plan.actor),
-		kv('Source text', state.plan.sourceText),
-		kv('Contract', state.plan.refusal ? `refused: ${state.plan.refusal.reason}` : 'durable server CommandPlan'),
-		kv('Created', fmtTime(state.plan.createdAt)),
-		kv('Hash', state.plan.hash),
+		kv('플랜 ID', state.plan.id),
+		kv('시스템', state.plan.system),
+		kv('액션', state.plan.action),
+		kv('인텐트', state.plan.intent),
+		kv('수행자', state.plan.actor),
+		kv('원본 텍스트', state.plan.sourceText),
+		kv('계약', state.plan.refusal ? `refused: ${state.plan.refusal.reason}` : 'durable server CommandPlan'),
+		kv('생성 시각', fmtTime(state.plan.createdAt)),
+		kv('해시', state.plan.hash),
 	);
 	setChildren(box, metrics, kvs);
 }
@@ -334,15 +334,15 @@ function kv(label, value) {
 function renderGates(selector) {
 	const box = $(selector);
 	if (!box) return;
-	if (!state.plan) return setChildren(box, empty('Create a plan preview to inspect gates.'));
+	if (!state.plan) return setChildren(box, empty('게이트를 확인하려면 플랜 미리보기를 생성하세요.'));
 	const selected = selectedDocs().length;
 	const gates = [
-		['Plan preview', true, `id ${state.plan.id}`],
-		['Target review', state.plan.riskClass === 'read' || selected > 0, selected ? `${selected} selected` : 'select target rows'],
-		['Dry-run required', state.plan.riskClass === 'read' || state.dryRunPassed, state.plan.riskClass === 'read' ? 'read-only plan' : (state.dryRunPassed ? 'passed' : 'pending')],
-		['Plan hash visible', !!state.plan.hash, state.plan.hash],
-		['Human confirm', state.plan.riskClass === 'read' || state.dryRunPassed, state.plan.riskClass === 'read' ? 'not required' : 'enabled after dry-run'],
-		['Audit trail', true, 'approve audit API connected'],
+		['플랜 미리보기', true, `id ${state.plan.id}`],
+		['대상 검토', state.plan.riskClass === 'read' || selected > 0, selected ? `${selected}개 선택됨` : '대상 행을 선택하세요'],
+		['모의실행 필요', state.plan.riskClass === 'read' || state.dryRunPassed, state.plan.riskClass === 'read' ? '읽기 전용 플랜' : (state.dryRunPassed ? '통과' : '대기 중')],
+		['플랜 해시 표시', !!state.plan.hash, state.plan.hash],
+		['사람 확인', state.plan.riskClass === 'read' || state.dryRunPassed, state.plan.riskClass === 'read' ? '불필요' : '모의실행 후 활성화'],
+		['감사 추적', true, '결재 감사 API 연결됨'],
 	];
 	const list = el('ul', { class: 'gate-list' });
 	for (const [name, ok, detail] of gates) {
@@ -358,7 +358,7 @@ function renderTimeline(selector) {
 		? state.planEvents.map((e) => ({ at: e.at, title: e.type, detail: [e.status, e.reason, e.jobId].filter(Boolean).join(' / '), kind: e.status }))
 		: (state.plan && state.plan.events && state.plan.events.length)
 			? state.plan.events
-		: [{ at: new Date().toISOString(), title: 'Waiting for plan', detail: 'No command has been staged yet.', kind: 'neutral' }];
+		: [{ at: new Date().toISOString(), title: '플랜 대기 중', detail: '아직 준비된 명령이 없습니다.', kind: 'neutral' }];
 	setChildren(box, ...events.slice(-8).reverse().map((ev, i) =>
 		el('div', { class: 'event' },
 			el('div', { class: 'event-dot' }, String(events.length - i).slice(0, 2)),
@@ -380,35 +380,35 @@ function updateActionButtons() {
 		const btn = $(id);
 		if (btn) {
 			btn.disabled = !canConfirm;
-			btn.textContent = `Confirm Live (${selected})`;
+			btn.textContent = `확정 실행 (${selected})`;
 		}
 	}
 }
 
 function approvalTitle(a) {
-	return a.title || a.summary || '(no title)';
+	return a.title || a.summary || '(제목 없음)';
 }
 
 function renderTargetsTable(selector, rows, { compact = false } = {}) {
 	const box = $(selector);
 	if (!box) return;
-	if (state.approvalsError) return setChildren(box, errorBox(`Approvals API error: ${state.approvalsError}`));
-	if (!rows.length) return setChildren(box, empty('No approval records. Run sync before target review.'));
+	if (state.approvalsError) return setChildren(box, errorBox(`결재 API 오류: ${state.approvalsError}`));
+	if (!rows.length) return setChildren(box, empty('결재 레코드가 없습니다. 대상 검토 전에 동기화를 실행하세요.'));
 	const table = el('table', {},
 		el('thead', {}, el('tr', {},
 			el('th', { class: 'col-check' }, ''),
-			el('th', { class: 'col-key' }, 'Doc key'),
-			el('th', {}, 'Title / summary'),
-			el('th', { class: 'col-short' }, 'Drafter'),
-			el('th', { class: 'col-short' }, 'Submitted'),
-			el('th', { class: 'col-status' }, 'Status'),
+			el('th', { class: 'col-key' }, '문서 키'),
+			el('th', {}, '제목 / 요약'),
+			el('th', { class: 'col-short' }, '기안자'),
+			el('th', { class: 'col-short' }, '제출'),
+			el('th', { class: 'col-status' }, '상태'),
 		)),
 	);
 	const body = el('tbody');
 	for (const a of rows) {
 		const doc = safeText(a.doc_id);
 		const checked = state.selectedTargets.has(doc);
-		const cb = el('input', { type: 'checkbox', class: 'check', title: 'Select target', dataset: { doc } });
+		const cb = el('input', { type: 'checkbox', class: 'check', title: '대상 선택', dataset: { doc } });
 		cb.checked = checked;
 		cb.addEventListener('change', () => {
 			if (cb.checked) state.selectedTargets.add(doc);
@@ -432,7 +432,7 @@ function renderTargetsTable(selector, rows, { compact = false } = {}) {
 	}
 	table.append(body);
 	const selected = selectedDocs().length;
-	const caption = compact ? el('div', { class: 'panel-body border-top' }, `${rows.length} visible / ${selected} selected`) : null;
+	const caption = compact ? el('div', { class: 'panel-body border-top' }, `${rows.length}개 표시 / ${selected}개 선택됨`) : null;
 	setChildren(box, table, caption);
 }
 
@@ -448,12 +448,12 @@ async function runDryRun() {
 	if (!state.plan) return;
 	state.activeApproveJob = true;
 	state.dryRunPassed = false;
-	addTimeline('Dry-run requested', `${docs.length} target(s)`);
+	addTimeline('모의실행 요청됨', `대상 ${docs.length}개`);
 	renderAll();
 	const log = $('#job-log');
 	if (log) {
 		log.textContent = '';
-		$('#job-log-badge').textContent = 'dry-run';
+		$('#job-log-badge').textContent = '모의실행';
 		$('#job-log-badge').className = 'badge info';
 	}
 	try {
@@ -464,31 +464,31 @@ async function runDryRun() {
 				await refreshPlan(state.plan.id);
 				const jr = await getJson(`/api/jobs/${encodeURIComponent(data.job.id)}/result`).catch(() => null);
 				state.dryRunSummary = state.plan?.dryRun?.result || jr?.result || null;
-				addTimeline(state.dryRunPassed ? 'Dry-run passed' : 'Dry-run ended', state.dryRunPassed ? 'All selected targets returned dry-ok.' : 'Inspect the job log and guard results.', state.dryRunPassed ? 'success' : 'warning');
+				addTimeline(state.dryRunPassed ? '모의실행 통과' : '모의실행 종료', state.dryRunPassed ? '선택한 모든 대상이 dry-ok를 반환했습니다.' : '작업 로그와 가드 결과를 확인하세요.', state.dryRunPassed ? 'success' : 'warning');
 				loadQueue().finally(renderAll);
 			});
 			setView('queue');
 		}
 	} catch (e) {
 		state.activeApproveJob = null;
-		addTimeline('Dry-run refused', e.message, 'danger');
+		addTimeline('모의실행 거부됨', e.message, 'danger');
 		renderAll();
-		alert(`Dry-run refused: ${e.message}`);
+		alert(`모의실행 거부됨: ${e.message}`);
 	}
 }
 
 async function runLiveConfirm() {
 	const docs = selectedDocs();
 	if (!state.plan || !state.dryRunPassed || !docs.length) return;
-	const msg = `This will request LIVE approval for ${docs.length} selected document(s).\n\nPlan: ${state.plan.id}\nHash: ${state.plan.hash}\n\nContinue?`;
+	const msg = `선택한 문서 ${docs.length}건에 대해 실제 결재를 요청합니다.\n\n플랜: ${state.plan.id}\n해시: ${state.plan.hash}\n\n계속할까요?`;
 	if (!window.confirm(msg)) return;
 	state.activeApproveJob = true;
-	addTimeline('Human confirmation accepted', `${docs.length} live target(s) / hash ${state.plan.hash}`);
+	addTimeline('사람 확인 완료', `실제 대상 ${docs.length}개 / 해시 ${state.plan.hash}`);
 	renderAll();
 	const log = $('#job-log');
 	if (log) {
 		log.textContent = '';
-		$('#job-log-badge').textContent = 'live approve';
+		$('#job-log-badge').textContent = '실제 결재';
 		$('#job-log-badge').className = 'badge risk';
 	}
 	try {
@@ -502,16 +502,16 @@ async function runLiveConfirm() {
 			streamJob(data.job.id, log || document.createElement('pre'), async () => {
 				state.activeApproveJob = null;
 				await refreshPlan(state.plan.id);
-				addTimeline('Live job finished', 'Audit API will show requested/clicked/confirmed/skipped events.');
+				addTimeline('실제 작업 완료', '감사 API에서 requested/clicked/confirmed/skipped 이벤트를 확인할 수 있습니다.');
 				Promise.allSettled([loadApprovals(), loadAudit(), loadQueue()]).then(renderAll);
 			});
 			setView('queue');
 		}
 	} catch (e) {
 		state.activeApproveJob = null;
-		addTimeline('Live confirmation refused', e.message, 'danger');
+		addTimeline('실제 확정 거부됨', e.message, 'danger');
 		renderAll();
-		alert(`Live confirm refused: ${e.message}`);
+		alert(`실제 확정 거부됨: ${e.message}`);
 	}
 }
 
@@ -544,7 +544,7 @@ async function runNlCommand() {
 	const text = input.value.trim();
 	if (!text) return;
 	const out = $('#nl-output');
-	setChildren(out, empty('Calling /api/agent...'));
+	setChildren(out, empty('/api/agent 호출 중...'));
 	try {
 		const data = await postJson('/api/agent', { text });
 		renderNlOutput(data, text);
@@ -558,11 +558,11 @@ function renderNlOutput(data, source) {
 	const out = $('#nl-output');
 	const intent = data.intent || {};
 	const parts = [
-		el('div', { class: 'badge-row' }, badge(`intent: ${intent.action || 'unknown'}`, statusKind(intent.action)), data.job ? badge(`job: ${data.job.id}`, 'info') : null),
+		el('div', { class: 'badge-row' }, badge(`인텐트: ${intent.action || 'unknown'}`, statusKind(intent.action)), data.job ? badge(`작업: ${data.job.id}`, 'info') : null),
 		el('div', { class: 'kv-grid' },
-			kv('Source', source),
-			kv('Surface', data.surface || '-'),
-			kv('Note', data.note || intent.question || '-'),
+			kv('소스', source),
+			kv('표면', data.surface || '-'),
+			kv('비고', data.note || intent.question || '-'),
 		),
 	];
 	if (data.job) {
@@ -570,11 +570,11 @@ function renderNlOutput(data, source) {
 		parts.push(log);
 		streamJob(data.job.id, log, () => Promise.allSettled([loadApprovals(), loadQueue(), loadAudit()]).then(renderAll));
 	}
-	if (Array.isArray(data.approvals)) parts.push(renderGenericTable(data.approvals.slice(0, 50), ['doc_id', 'title', 'drafter', 'submitted_at', 'status'], 'Approval candidates'));
+	if (Array.isArray(data.approvals)) parts.push(renderGenericTable(data.approvals.slice(0, 50), ['doc_id', 'title', 'drafter', 'submitted_at', 'status'], '결재 후보'));
 	if (Array.isArray(data.systems)) {
 		for (const sys of data.systems) {
-			parts.push(el('div', { class: 'notice neutral' }, `${sys.label || sys.system}: ${(sys.records || []).length} record(s)`));
-			parts.push(renderGenericTable((sys.records || []).slice(0, 30).map((r) => ({ key: r.key, status: r.status, summary: r.summary, data: JSON.stringify(r.data || {}) })), ['key', 'status', 'summary', 'data'], 'System records'));
+			parts.push(el('div', { class: 'notice neutral' }, `${sys.label || sys.system}: 레코드 ${(sys.records || []).length}건`));
+			parts.push(renderGenericTable((sys.records || []).slice(0, 30).map((r) => ({ key: r.key, status: r.status, summary: r.summary, data: JSON.stringify(r.data || {}) })), ['key', 'status', 'summary', 'data'], '시스템 레코드'));
 		}
 	}
 	setChildren(out, ...parts);
@@ -586,14 +586,14 @@ function renderPlan() {
 	const contract = $('#plan-contract');
 	if (contract) {
 		const rows = [
-			['POST /api/agent/plan', 'implemented', 'Creates a durable server-hashed CommandPlan.'],
-			['GET /api/agent/plan/:id', 'implemented', 'Reloads plan state after refresh or job completion.'],
-			['POST /api/agent/plan/:id/dry-run', 'implemented', 'Stores reviewed target set and queues deterministic dry-run.'],
-			['POST /api/agent/plan/:id/confirm', 'implemented', 'Requires session/origin gate, dry-run pass, target hash, and human confirmation.'],
-			['GET /api/agent/plan/:id/events', 'implemented', 'Durable command event timeline.'],
-			['GET /api/jobs/:id/result', 'implemented', 'Structured job result; UI no longer parses approve logs.'],
+			['POST /api/agent/plan', '구현됨', '서버 해시 기반의 영속 커맨드 플랜을 생성합니다.'],
+			['GET /api/agent/plan/:id', '구현됨', '새로고침 또는 작업 완료 후 플랜 상태를 다시 불러옵니다.'],
+			['POST /api/agent/plan/:id/dry-run', '구현됨', '검토된 대상 집합을 저장하고 결정론적 모의실행을 큐에 넣습니다.'],
+			['POST /api/agent/plan/:id/confirm', '구현됨', '세션/오리진 게이트, 모의실행 통과, 대상 해시, 사람 확인을 요구합니다.'],
+			['GET /api/agent/plan/:id/events', '구현됨', '영속 커맨드 이벤트 타임라인.'],
+			['GET /api/jobs/:id/result', '구현됨', '구조화된 작업 결과. UI는 더 이상 결재 로그를 파싱하지 않습니다.'],
 		];
-		setChildren(contract, renderRowsTable(rows, ['Contract', 'State', 'Operational impact']));
+		setChildren(contract, renderRowsTable(rows, ['계약', '상태', '운영 영향']));
 	}
 }
 
@@ -606,20 +606,20 @@ function renderSystems() {
 function renderSystemsTable() {
 	const box = $('#systems-table');
 	if (!box) return;
-	if (state.systemsError) return setChildren(box, errorBox(`Systems API error: ${state.systemsError}`));
-	if (!state.systems.length) return setChildren(box, empty('No registered systems. Save a system to begin onboarding.'));
+	if (state.systemsError) return setChildren(box, errorBox(`시스템 API 오류: ${state.systemsError}`));
+	if (!state.systems.length) return setChildren(box, empty('등록된 시스템이 없습니다. 온보딩을 시작하려면 시스템을 저장하세요.'));
 	const table = el('table', {},
 		el('thead', {}, el('tr', {},
-			el('th', { class: 'col-key' }, 'System'),
-			el('th', {}, 'Target URL'),
-			el('th', { class: 'col-short' }, 'Records'),
-			el('th', { class: 'col-status' }, 'Recipe'),
-			el('th', { class: 'col-actions' }, 'Action'),
+			el('th', { class: 'col-key' }, '시스템'),
+			el('th', {}, '대상 URL'),
+			el('th', { class: 'col-short' }, '레코드'),
+			el('th', { class: 'col-status' }, '레시피'),
+			el('th', { class: 'col-actions' }, '액션'),
 		)),
 	);
 	const body = el('tbody');
 	for (const s of state.systems) {
-		const btn = el('button', { class: 'btn small', type: 'button' }, 'Open');
+		const btn = el('button', { class: 'btn small', type: 'button' }, '열기');
 		btn.addEventListener('click', () => selectSystem(s.name));
 		body.append(el('tr', { class: state.selectedSystem === s.name ? 'row-selected' : '' },
 			el('td', { class: 'col-key', title: s.name }, s.label || s.name),
@@ -647,7 +647,7 @@ function renderSystemForm() {
 	const sys = selectedSystemObj();
 	const badgeNode = $('#sys-selected-badge');
 	if (!badgeNode) return;
-	badgeNode.textContent = sys ? sys.name : 'new system';
+	badgeNode.textContent = sys ? sys.name : '새 시스템';
 	badgeNode.className = `badge ${sys ? 'info' : 'neutral'}`;
 	if (!document.activeElement || !document.activeElement.closest('.systems-layout')) {
 		$('#sys-name').value = sys?.name || state.selectedSystem || '';
@@ -675,25 +675,25 @@ function systemFormBody() {
 
 async function saveSystem() {
 	let body;
-	try { body = systemFormBody(); } catch (e) { alert(`Recipe JSON is invalid: ${e.message}`); return; }
-	if (!body.name) { alert('System name is required.'); return; }
+	try { body = systemFormBody(); } catch (e) { alert(`레시피 JSON 형식이 올바르지 않습니다: ${e.message}`); return; }
+	if (!body.name) { alert('시스템 이름은 필수입니다.'); return; }
 	try {
 		await postJson('/api/systems', body);
 		state.selectedSystem = body.name;
 		await loadSystems();
 		renderSystems();
 	} catch (e) {
-		alert(`Save refused: ${e.message}`);
+		alert(`저장 거부됨: ${e.message}`);
 	}
 }
 
 async function runSystemAction(action) {
 	const name = $('#sys-name').value.trim() || state.selectedSystem;
-	if (!name) return alert('Select or enter a system first.');
-	if (action === 'delete' && !window.confirm(`Delete system ${name} and its records?`)) return;
+	if (!name) return alert('먼저 시스템을 선택하거나 입력하세요.');
+	if (action === 'delete' && !window.confirm(`${name} 시스템과 그 레코드를 삭제할까요?`)) return;
 	const log = $('#sys-log');
 	log.hidden = false;
-	log.textContent = `${action} requested...\n`;
+	log.textContent = `${action} 요청됨...\n`;
 	try {
 		const data = await postJson(`/api/systems/${encodeURIComponent(name)}/${action}`, {});
 		if (data.job) {
@@ -707,7 +707,7 @@ async function runSystemAction(action) {
 			renderSystems();
 		}
 	} catch (e) {
-		log.textContent += `Refused: ${e.message}\n`;
+		log.textContent += `거부됨: ${e.message}\n`;
 	}
 }
 
@@ -727,9 +727,9 @@ async function loadRecords() {
 function renderRecords() {
 	const box = $('#records-table');
 	if (!box) return;
-	if (!state.selectedSystem) return setChildren(box, empty('Select a system to view records.'));
+	if (!state.selectedSystem) return setChildren(box, empty('레코드를 보려면 시스템을 선택하세요.'));
 	if (state.recordsError) return setChildren(box, errorBox(state.recordsError));
-	if (!state.records.length) return setChildren(box, empty(`${state.selectedSystem}: no records for the current filter.`));
+	if (!state.records.length) return setChildren(box, empty(`${state.selectedSystem}: 현재 필터에 해당하는 레코드가 없습니다.`));
 	const rows = state.records.map((r) => ({
 		key: r.key,
 		status: r.status,
@@ -737,7 +737,7 @@ function renderRecords() {
 		fetched_at: r.fetched_at,
 		data: Object.entries(r.data || {}).slice(0, 6).map(([k, v]) => `${k}: ${v}`).join(' / '),
 	}));
-	setChildren(box, renderGenericTable(rows, ['key', 'data', 'summary', 'status', 'fetched_at'], 'Records'));
+	setChildren(box, renderGenericTable(rows, ['key', 'data', 'summary', 'status', 'fetched_at'], '레코드'));
 }
 
 function renderActions() {
@@ -749,9 +749,9 @@ function renderActions() {
 		action: a.action,
 		risk: a.riskClass,
 		state: a.state || (a.enabled ? 'enabled' : 'disabled'),
-		requirements: a.disabledReason || [a.permission, a.dryRunRequired ? 'dry-run' : '', a.humanConfirmRequired ? 'human confirm' : ''].filter(Boolean).join(' / '),
+		requirements: a.disabledReason || [a.permission, a.dryRunRequired ? '모의실행' : '', a.humanConfirmRequired ? '사람 확인' : ''].filter(Boolean).join(' / '),
 	}));
-	setChildren(box, renderGenericTable(rows, ['system', 'action', 'risk', 'state', 'requirements'], 'Actions'));
+	setChildren(box, renderGenericTable(rows, ['system', 'action', 'risk', 'state', 'requirements'], '액션'));
 }
 
 function renderQueueGlobal() {
@@ -761,8 +761,8 @@ function renderQueueGlobal() {
 	const title = $('#side-queue-title');
 	const sub = $('#side-queue-sub');
 	if (dot) dot.className = `health-dot ${q.busy ? 'busy' : 'idle'}`;
-	if (title) title.textContent = q.busy ? `Running ${q.running?.id || ''}` : 'Queue idle';
-	if (sub) sub.textContent = q.busy ? (q.running?.label || 'browser job running') : `${q.pending?.length || 0} pending / ${q.recent?.length || 0} recent`;
+	if (title) title.textContent = q.busy ? `실행 중 ${q.running?.id || ''}` : '큐 유휴';
+	if (sub) sub.textContent = q.busy ? (q.running?.label || '브라우저 작업 실행 중') : `대기 ${q.pending?.length || 0}개 / 최근 ${q.recent?.length || 0}개`;
 	renderQueueMini('#cc-queue');
 }
 
@@ -770,18 +770,18 @@ function renderQueueMini(selector) {
 	const box = $(selector);
 	if (!box) return;
 	const q = state.queue;
-	if (!q) return setChildren(box, empty('Queue API not loaded.'));
+	if (!q) return setChildren(box, empty('큐 API를 불러오지 못했습니다.'));
 	const rows = [
-		['Busy', q.busy ? 'yes' : 'no'],
-		['Running', q.running ? `${q.running.id} / ${q.running.label}` : 'none'],
-		['Pending', String(q.pending?.length || 0)],
-		['Recent', String(q.recent?.length || 0)],
+		['실행 여부', q.busy ? 'yes' : 'no'],
+		['실행 중', q.running ? `${q.running.id} / ${q.running.label}` : 'none'],
+		['대기', String(q.pending?.length || 0)],
+		['최근', String(q.recent?.length || 0)],
 	];
-	setChildren(box, renderRowsTable(rows, ['Field', 'Value']));
+	setChildren(box, renderRowsTable(rows, ['항목', '값']));
 }
 
 function jobResultLabel(job) {
-	if (!job || !job.result) return job?.status === 'done' ? 'no result' : '-';
+	if (!job || !job.result) return job?.status === 'done' ? '결과 없음' : '-';
 	if (Array.isArray(job.result.results)) {
 		const counts = job.result.results.reduce((m, r) => {
 			const k = r.status || 'unknown';
@@ -790,7 +790,7 @@ function jobResultLabel(job) {
 		}, {});
 		return Object.entries(counts).map(([k, v]) => `${k}:${v}`).join(' ');
 	}
-	return job.result.status || 'result';
+	return job.result.status || '결과';
 }
 
 function renderQueueView() {
@@ -798,28 +798,28 @@ function renderQueueView() {
 	if (!box) return;
 	const q = state.queue;
 	if (state.queueError) return setChildren(box, errorBox(state.queueError));
-	if (!q) return setChildren(box, empty('Queue API not loaded.'));
+	if (!q) return setChildren(box, empty('큐 API를 불러오지 못했습니다.'));
 	const jobs = [];
 	if (q.running) jobs.push(q.running);
 	jobs.push(...(q.pending || []), ...(q.recent || []));
 	const seen = new Set();
 	const unique = jobs.filter((j) => j && !seen.has(j.id) && seen.add(j.id));
-	if (!unique.length) return setChildren(box, empty('No jobs in memory.'));
+	if (!unique.length) return setChildren(box, empty('메모리에 작업이 없습니다.'));
 	const table = el('table', {},
 		el('thead', {}, el('tr', {},
-			el('th', { class: 'col-key' }, 'Job'),
-			el('th', {}, 'Label'),
-			el('th', { class: 'col-short' }, 'Kind'),
-			el('th', { class: 'col-status' }, 'Status'),
-			el('th', { class: 'col-status' }, 'Result'),
-			el('th', { class: 'col-actions' }, 'Actions'),
+			el('th', { class: 'col-key' }, '작업'),
+			el('th', {}, '레이블'),
+			el('th', { class: 'col-short' }, '종류'),
+			el('th', { class: 'col-status' }, '상태'),
+			el('th', { class: 'col-status' }, '결과'),
+			el('th', { class: 'col-actions' }, '액션'),
 		)),
 	);
 	const body = el('tbody');
 	for (const j of unique) {
-		const open = el('button', { class: 'btn small', type: 'button' }, 'Log');
+		const open = el('button', { class: 'btn small', type: 'button' }, '로그');
 		open.addEventListener('click', () => openJobLog(j.id, j.label));
-		const cancel = el('button', { class: 'btn small quiet', type: 'button' }, 'Cancel');
+		const cancel = el('button', { class: 'btn small quiet', type: 'button' }, '취소');
 		cancel.disabled = ['done', 'failed', 'cancelled'].includes(j.status);
 		cancel.addEventListener('click', async () => { await cancelJob(j.id); await loadQueue(); renderQueueView(); });
 		body.append(el('tr', {},
@@ -850,16 +850,16 @@ function renderAudit() {
 	if (state.auditError) return setChildren(box, errorBox(state.auditError));
 	const q = ($('#audit-filter')?.value || '').toLowerCase().trim();
 	const rows = state.audit.filter((a) => !q || JSON.stringify(a).toLowerCase().includes(q));
-	if (!rows.length) return setChildren(box, empty('No audit rows for the current filter.'));
+	if (!rows.length) return setChildren(box, empty('현재 필터에 해당하는 감사 레코드가 없습니다.'));
 	const mapped = rows.map((a) => ({
 		at: a.at,
 		doc_id: a.doc_id || '-',
 		stage: a.stage || '-',
-		mode: a.live === true ? 'LIVE' : 'dry',
+		mode: a.live === true ? '실제' : '모의',
 		actor: a.actor || a.by || '-',
 		detail: a.detail || '',
 	}));
-	setChildren(box, renderGenericTable(mapped, ['at', 'doc_id', 'stage', 'mode', 'actor', 'detail'], `Audit rows (${rows.length}/${state.auditTotal || rows.length})`));
+	setChildren(box, renderGenericTable(mapped, ['at', 'doc_id', 'stage', 'mode', 'actor', 'detail'], `감사 레코드 (${rows.length}/${state.auditTotal || rows.length})`));
 }
 
 async function renderApprovalState() {
@@ -873,16 +873,16 @@ async function renderApprovalState() {
 			data.loggedIn ? '🔐 결재 재로그인' : '🔐 결재 로그인');
 		setChildren(box,
 			el('div', { class: 'metric-grid' },
-				metric('App', data.app || app, 'selected'),
-				metric('Logged in', data.loggedIn ? 'yes' : 'no', 'approve/*.pw-state.json'),
-				metric('Recipe', data.hasApproveRecipe ? 'ready' : 'missing', `recipes/${app}.json`),
-				metric('List URL', data.listUrl ? 'configured' : 'missing', 'pending inbox'),
+				metric('앱', data.app || app, '선택됨'),
+				metric('로그인 여부', data.loggedIn ? 'yes' : 'no', 'approve/*.pw-state.json'),
+				metric('레시피', data.hasApproveRecipe ? 'ready' : 'missing', `recipes/${app}.json`),
+				metric('목록 URL', data.listUrl ? 'configured' : 'missing', '결재 대기함'),
 			),
 			el('div', { class: 'row' }, loginBtn),
 			loginLog,
 			data.loggedIn && data.hasApproveRecipe && data.listUrl
-				? warnBox('Reviewed approval can dry-run. Live still requires human confirmation and server-side session/origin gate.')
-				: warnBox('Approval action is disabled until login state, recipe, and list URL are all present.'),
+				? warnBox('검토된 결재는 모의실행할 수 있습니다. 실제 결재는 여전히 사람 확인과 서버 측 세션/오리진 게이트를 요구합니다.')
+				: warnBox('로그인 상태, 레시피, 목록 URL이 모두 갖춰질 때까지 결재 액션은 비활성화됩니다.'),
 		);
 	} catch (e) {
 		setChildren(box, errorBox(e.message));
@@ -911,14 +911,14 @@ async function runApproveLogin(app, btn, log) {
 }
 
 async function requestKillSwitch() {
-	if (!window.confirm('Request approve kill-switch? A running live batch should stop before the next document.')) return;
+	if (!window.confirm('결재 긴급 중단을 요청할까요? 실행 중인 실제 배치는 다음 문서 전에 멈춥니다.')) return;
 	try {
 		await postJson('/api/approve/stop', {});
-		alert('Kill-switch requested.');
+		alert('긴급 중단을 요청했습니다.');
 		await loadAudit();
 		renderAudit();
 	} catch (e) {
-		alert(`Kill-switch failed: ${e.message}`);
+		alert(`긴급 중단 실패: ${e.message}`);
 	}
 }
 
@@ -926,7 +926,7 @@ async function runSuite() {
 	const glob = $('#run-glob').value.trim();
 	const log = $('#run-log');
 	log.hidden = false;
-	log.textContent = 'run requested...\n';
+	log.textContent = '실행 요청됨...\n';
 	try {
 		const data = await postJson('/api/run', { glob });
 		if (data.job) {
@@ -939,7 +939,7 @@ async function runSuite() {
 			renderAll();
 		}
 	} catch (e) {
-		log.textContent += `Refused: ${e.message}\n`;
+		log.textContent += `거부됨: ${e.message}\n`;
 	}
 }
 
@@ -947,12 +947,12 @@ function renderDiagnosticsLinks() {
 	const box = $('#workspace-links');
 	if (!box) return;
 	const links = [
-		['Queue API', '/api/queue', 'Current job serialization state'],
-		['Systems API', '/api/systems', 'Registered systems and record counts'],
-		['Approvals API', '/api/approvals', 'Pending approval records'],
-		['Audit API', '/api/approve/audit?limit=300', 'Append-only approve leaf audit'],
-		['Runs API', '/api/runs', 'Historical run reports'],
-		['Flows API', '/api/flows', 'Recorded declarative flows'],
+		['큐 API', '/api/queue', '현재 작업 직렬화 상태'],
+		['시스템 API', '/api/systems', '등록된 시스템과 레코드 수'],
+		['결재 API', '/api/approvals', '결재 대기 레코드'],
+		['감사 API', '/api/approve/audit?limit=300', '추가 전용 결재 리프 감사'],
+		['실행 API', '/api/runs', '과거 실행 리포트'],
+		['플로우 API', '/api/flows', '녹화된 선언적 플로우'],
 	];
 	setChildren(box, el('div', { class: 'link-grid' }, ...links.map(([title, href, desc]) =>
 		el('a', { class: 'link-card', href, target: '_blank', rel: 'noreferrer' }, el('strong', {}, title), el('span', {}, desc)),
@@ -963,18 +963,18 @@ function renderDiagnostics() {
 	const box = $('#diagnostics-table');
 	if (!box) return;
 	const rows = [
-		{ area: 'Runs', count: state.runs.length, state: state.runs.length ? `${state.runs[0].runId || 'loaded'}` : 'no records', endpoint: '/api/runs' },
-		{ area: 'Flows', count: state.flows.length, state: state.flows.some((f) => f.needsReview) ? 'needs review' : 'loaded', endpoint: '/api/flows' },
-		{ area: 'Auth states', count: state.auth.length, state: state.auth.length ? state.auth.join(', ') : 'none', endpoint: '/api/auth' },
-		{ area: 'Preflight', count: '-', state: 'CLI only', endpoint: 'bash lib/preflight.sh' },
-		{ area: 'Full suite', count: '-', state: 'available through POST /api/run', endpoint: 'bash run.sh' },
+		{ area: '실행', count: state.runs.length, state: state.runs.length ? `${state.runs[0].runId || 'loaded'}` : '레코드 없음', endpoint: '/api/runs' },
+		{ area: '플로우', count: state.flows.length, state: state.flows.some((f) => f.needsReview) ? '검토 필요' : '로드됨', endpoint: '/api/flows' },
+		{ area: '인증 상태', count: state.auth.length, state: state.auth.length ? state.auth.join(', ') : '없음', endpoint: '/api/auth' },
+		{ area: '프리플라이트', count: '-', state: 'CLI 전용', endpoint: 'bash lib/preflight.sh' },
+		{ area: '전체 스위트', count: '-', state: 'POST /api/run 로 실행 가능', endpoint: 'bash run.sh' },
 	];
-	setChildren(box, renderGenericTable(rows, ['area', 'count', 'state', 'endpoint'], 'Diagnostics'));
+	setChildren(box, renderGenericTable(rows, ['area', 'count', 'state', 'endpoint'], '진단'));
 }
 
 function renderGenericTable(rows, columns, label) {
-	if (!rows.length) return empty(`No rows for ${label || 'table'}.`);
-	const table = el('table', { 'aria-label': label || 'data table' },
+	if (!rows.length) return empty(`${label || '테이블'}에 표시할 행이 없습니다.`);
+	const table = el('table', { 'aria-label': label || '데이터 테이블' },
 		el('thead', {}, el('tr', {}, ...columns.map((c) => el('th', { class: columnClass(c) }, c.replaceAll('_', ' '))))),
 	);
 	const body = el('tbody');
@@ -991,7 +991,7 @@ function renderGenericTable(rows, columns, label) {
 
 function renderRowsTable(rows, columns) {
 	const mapped = rows.map((r) => Object.fromEntries(columns.map((c, i) => [c, r[i]])));
-	return renderGenericTable(mapped, columns, 'rows');
+	return renderGenericTable(mapped, columns, '행');
 }
 
 function columnClass(name) {

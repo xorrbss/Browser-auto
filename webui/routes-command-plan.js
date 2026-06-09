@@ -119,7 +119,7 @@ function normalizeAction(body, intent) {
 	if (a === 'review' || a === 'approve') return 'approve';
 	if (a === 'summarize') return 'enrich';
 	if (a === 'sync' || a === 'query') return a;
-	return /approve|approval|review|confirm/i.test(String(body.text || '')) ? 'approve' : 'query';
+	return /approve|approval|review|confirm|결재|승인|검토|확정/i.test(String(body.text || '')) ? 'approve' : 'query';
 }
 
 async function createPlan(body) {

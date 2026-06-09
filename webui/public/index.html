@@ -1,39 +1,39 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>AQA RPA Control Plane</title>
+	<title>AQA RPA 컨트롤 플레인</title>
 	<link rel="icon" href="data:," />
 	<link rel="stylesheet" href="/app.css" />
 </head>
 <body data-view="command-center">
 	<div class="app-shell">
-		<aside class="sidebar" aria-label="Primary">
+		<aside class="sidebar" aria-label="주 메뉴">
 			<div class="brand">
 				<div class="brand-mark" aria-hidden="true">AQA</div>
 				<div class="brand-copy">
-					<strong>RPA Control Plane</strong>
-					<span>Local NL automation console</span>
+					<strong>RPA 컨트롤 플레인</strong>
+					<span>로컬 자연어 자동화 콘솔</span>
 				</div>
 			</div>
 			<nav class="nav-list" id="nav-list">
-				<button type="button" class="nav-item active" data-view-target="command-center"><span class="nav-icon">CC</span><span>Command Center</span></button>
-				<button type="button" class="nav-item" data-view-target="nl-command"><span class="nav-icon">NL</span><span>Natural Language</span></button>
-				<button type="button" class="nav-item" data-view-target="command-plan"><span class="nav-icon">CP</span><span>CommandPlan</span></button>
-				<button type="button" class="nav-item" data-view-target="target-review"><span class="nav-icon">TR</span><span>Target Review</span></button>
-				<button type="button" class="nav-item" data-view-target="systems"><span class="nav-icon">SR</span><span>System Registry</span></button>
-				<button type="button" class="nav-item" data-view-target="actions"><span class="nav-icon">AR</span><span>Action Registry</span></button>
-				<button type="button" class="nav-item" data-view-target="queue"><span class="nav-icon">QJ</span><span>Queue / Jobs</span></button>
-				<button type="button" class="nav-item" data-view-target="audit"><span class="nav-icon">AL</span><span>Audit Log</span></button>
-				<button type="button" class="nav-item" data-view-target="approval-state"><span class="nav-icon">AS</span><span>Approval State</span></button>
-				<button type="button" class="nav-item" data-view-target="diagnostics"><span class="nav-icon">DX</span><span>Diagnostics / Links</span></button>
+				<button type="button" class="nav-item active" data-view-target="command-center"><span class="nav-icon">CC</span><span>커맨드 센터</span></button>
+				<button type="button" class="nav-item" data-view-target="nl-command"><span class="nav-icon">NL</span><span>자연어</span></button>
+				<button type="button" class="nav-item" data-view-target="command-plan"><span class="nav-icon">CP</span><span>커맨드플랜</span></button>
+				<button type="button" class="nav-item" data-view-target="target-review"><span class="nav-icon">TR</span><span>대상 검토</span></button>
+				<button type="button" class="nav-item" data-view-target="systems"><span class="nav-icon">SR</span><span>시스템 레지스트리</span></button>
+				<button type="button" class="nav-item" data-view-target="actions"><span class="nav-icon">AR</span><span>액션 레지스트리</span></button>
+				<button type="button" class="nav-item" data-view-target="queue"><span class="nav-icon">QJ</span><span>큐 / 작업</span></button>
+				<button type="button" class="nav-item" data-view-target="audit"><span class="nav-icon">AL</span><span>감사 로그</span></button>
+				<button type="button" class="nav-item" data-view-target="approval-state"><span class="nav-icon">AS</span><span>결재 상태</span></button>
+				<button type="button" class="nav-item" data-view-target="diagnostics"><span class="nav-icon">DX</span><span>진단 / 링크</span></button>
 			</nav>
 			<div class="sidebar-status">
 				<span id="side-queue-dot" class="health-dot idle"></span>
 				<div>
-					<strong id="side-queue-title">Queue idle</strong>
-					<span id="side-queue-sub">No browser job running</span>
+					<strong id="side-queue-title">큐 대기 중</strong>
+					<span id="side-queue-sub">실행 중인 브라우저 작업 없음</span>
 				</div>
 			</div>
 		</aside>
@@ -41,17 +41,17 @@
 		<div class="main-shell">
 			<header class="topbar">
 				<div class="page-title">
-					<h1 id="page-title">Command Center</h1>
+					<h1 id="page-title">커맨드 센터</h1>
 					<div class="page-meta">
-						<span class="pill">actor: local-operator</span>
-						<span class="pill">host: 127.0.0.1:4310</span>
-						<span id="top-plan-pill" class="pill muted">plan: none</span>
+						<span class="pill">작업자: local-operator</span>
+						<span class="pill">호스트: 127.0.0.1:4310</span>
+						<span id="top-plan-pill" class="pill muted">플랜: 없음</span>
 					</div>
 				</div>
 				<div class="top-actions">
-					<button id="global-refresh" class="icon-button" type="button" title="Refresh data">R</button>
-					<a class="link-button" href="/api/queue" target="_blank" rel="noreferrer">Queue API</a>
-					<a class="link-button" href="/api/systems" target="_blank" rel="noreferrer">Systems API</a>
+					<button id="global-refresh" class="icon-button" type="button" title="데이터 새로고침">R</button>
+					<a class="link-button" href="/api/queue" target="_blank" rel="noreferrer">큐 API</a>
+					<a class="link-button" href="/api/systems" target="_blank" rel="noreferrer">시스템 API</a>
 				</div>
 			</header>
 
@@ -59,30 +59,30 @@
 				<section class="view active" data-view="command-center">
 					<div class="command-strip">
 						<label class="input-wrap">
-							<span>Natural language command</span>
-							<input id="cc-command" autocomplete="off" spellcheck="false" value="Prepare reviewed approval" />
+							<span>자연어 명령</span>
+							<input id="cc-command" autocomplete="off" spellcheck="false" value="검토된 결재 준비" />
 						</label>
 						<div class="button-row">
-							<button id="cc-create-plan" class="btn primary" type="button">Create Plan Preview</button>
-							<button id="cc-dry-run" class="btn" type="button" disabled>Dry-run Selected</button>
-							<button id="cc-confirm" class="btn danger" type="button" disabled>Confirm Live (0)</button>
+							<button id="cc-create-plan" class="btn primary" type="button">플랜 미리보기 생성</button>
+							<button id="cc-dry-run" class="btn" type="button" disabled>선택 항목 모의실행</button>
+							<button id="cc-confirm" class="btn danger" type="button" disabled>실제 확정 (0)</button>
 						</div>
 					</div>
 					<div class="layout two-col">
 						<div class="stack">
 							<section class="panel">
 								<div class="panel-head">
-									<h2>Command Center</h2>
+									<h2>커맨드 센터</h2>
 									<div id="cc-badges" class="badge-row"></div>
 								</div>
 								<div id="cc-summary" class="panel-body"></div>
 							</section>
 							<section class="panel">
 								<div class="panel-head">
-									<h2>Target Review</h2>
+									<h2>대상 검토</h2>
 									<div class="panel-actions">
-										<button id="cc-select-all" class="btn small" type="button">Select visible</button>
-										<button id="cc-clear-selection" class="btn small quiet" type="button">Clear</button>
+										<button id="cc-select-all" class="btn small" type="button">보이는 항목 선택</button>
+										<button id="cc-clear-selection" class="btn small quiet" type="button">선택 해제</button>
 									</div>
 								</div>
 								<div id="cc-targets" class="table-wrap"></div>
@@ -90,15 +90,15 @@
 						</div>
 						<aside class="stack">
 							<section class="panel">
-								<div class="panel-head"><h2>Execution Gates</h2></div>
+								<div class="panel-head"><h2>실행 게이트</h2></div>
 								<div id="cc-gates" class="panel-body"></div>
 							</section>
 							<section class="panel">
-								<div class="panel-head"><h2>Timeline</h2></div>
+								<div class="panel-head"><h2>타임라인</h2></div>
 								<div id="cc-timeline" class="timeline"></div>
 							</section>
 							<section class="panel">
-								<div class="panel-head"><h2>Queue Snapshot</h2></div>
+								<div class="panel-head"><h2>큐 현황</h2></div>
 								<div id="cc-queue" class="panel-body"></div>
 							</section>
 						</aside>
@@ -109,18 +109,18 @@
 					<div class="layout single">
 						<section class="panel">
 							<div class="panel-head">
-								<h2>Natural Language Command</h2>
-								<span class="badge warning">Legacy route</span>
+								<h2>자연어 명령</h2>
+								<span class="badge warning">레거시 경로</span>
 							</div>
 							<div class="panel-body stack compact">
-								<div class="notice warning">`/api/agent` remains as the compatibility route. Use Command Center for durable plan, dry-run, and confirm gates.</div>
+								<div class="notice warning">`/api/agent` 는 호환용 경로로 남아 있습니다. 영속 플랜·모의실행·확정 게이트는 커맨드 센터를 사용하세요.</div>
 								<label class="input-wrap">
-									<span>Command text</span>
-									<input id="nl-command-input" autocomplete="off" spellcheck="false" placeholder="query, summarize, sync, review, approve candidates" />
+									<span>명령 텍스트</span>
+									<input id="nl-command-input" autocomplete="off" spellcheck="false" placeholder="조회, 요약, 동기화, 검토, 결재 후보" />
 								</label>
 								<div class="button-row">
-									<button id="nl-run" class="btn primary" type="button">Run /api/agent</button>
-									<button id="nl-use-plan" class="btn" type="button">Copy to Plan Preview</button>
+									<button id="nl-run" class="btn primary" type="button">/api/agent 실행</button>
+									<button id="nl-use-plan" class="btn" type="button">플랜 미리보기로 복사</button>
 								</div>
 							</div>
 							<div id="nl-output" class="panel-body border-top"></div>
@@ -132,15 +132,15 @@
 					<div class="layout two-col">
 						<section class="panel">
 							<div class="panel-head">
-								<h2>CommandPlan</h2>
+								<h2>커맨드플랜</h2>
 								<div id="plan-badges" class="badge-row"></div>
 							</div>
 							<div id="plan-detail" class="panel-body"></div>
 						</section>
 						<section class="panel">
-							<div class="panel-head"><h2>Plan Contract</h2></div>
+							<div class="panel-head"><h2>플랜 계약</h2></div>
 							<div class="panel-body stack compact">
-								<div class="notice warning">Durable CommandPlan routes are connected. Irreversible confirm remains disabled until target review and dry-run pass.</div>
+								<div class="notice warning">영속 커맨드플랜 경로가 연결되어 있습니다. 되돌릴 수 없는 확정은 대상 검토와 모의실행을 통과할 때까지 비활성화됩니다.</div>
 								<div id="plan-contract"></div>
 							</div>
 						</section>
@@ -151,12 +151,12 @@
 					<div class="layout single">
 						<section class="panel">
 							<div class="panel-head">
-								<h2>Target Review</h2>
+								<h2>대상 검토</h2>
 								<div class="panel-actions">
-									<button id="tr-refresh" class="btn small" type="button">Refresh</button>
-									<button id="tr-select-all" class="btn small" type="button">Select visible</button>
-									<button id="tr-dry-run" class="btn small" type="button" disabled>Dry-run</button>
-									<button id="tr-confirm" class="btn small danger" type="button" disabled>Confirm Live (0)</button>
+									<button id="tr-refresh" class="btn small" type="button">새로고침</button>
+									<button id="tr-select-all" class="btn small" type="button">보이는 항목 선택</button>
+									<button id="tr-dry-run" class="btn small" type="button" disabled>모의실행</button>
+									<button id="tr-confirm" class="btn small danger" type="button" disabled>실제 확정 (0)</button>
 								</div>
 							</div>
 							<div id="target-review-table" class="table-wrap"></div>
@@ -168,32 +168,32 @@
 					<div class="layout two-col systems-layout">
 						<section class="panel">
 							<div class="panel-head">
-								<h2>System Registry</h2>
-								<div class="panel-actions"><button id="sys-refresh" class="btn small" type="button">Refresh</button></div>
+								<h2>시스템 레지스트리</h2>
+								<div class="panel-actions"><button id="sys-refresh" class="btn small" type="button">새로고침</button></div>
 							</div>
 							<div id="systems-table" class="table-wrap"></div>
 						</section>
 						<section class="panel">
 							<div class="panel-head">
-								<h2>System Operations</h2>
-								<span id="sys-selected-badge" class="badge neutral">none selected</span>
+								<h2>시스템 작업</h2>
+								<span id="sys-selected-badge" class="badge neutral">선택 안 됨</span>
 							</div>
 							<div class="panel-body stack compact">
 								<div class="form-grid">
-									<label class="input-wrap"><span>Name</span><input id="sys-name" autocomplete="off" spellcheck="false" /></label>
-									<label class="input-wrap"><span>Label</span><input id="sys-label" autocomplete="off" spellcheck="false" /></label>
+									<label class="input-wrap"><span>이름</span><input id="sys-name" autocomplete="off" spellcheck="false" /></label>
+									<label class="input-wrap"><span>라벨</span><input id="sys-label" autocomplete="off" spellcheck="false" /></label>
 								</div>
-								<label class="input-wrap"><span>Login URL</span><input id="sys-login" autocomplete="off" spellcheck="false" /></label>
-								<label class="input-wrap"><span>Success URL glob</span><input id="sys-success" autocomplete="off" spellcheck="false" /></label>
-								<label class="input-wrap"><span>Target URL</span><input id="sys-target" autocomplete="off" spellcheck="false" /></label>
-								<label class="input-wrap"><span>Recipe JSON</span><textarea id="sys-recipe" rows="8" spellcheck="false"></textarea></label>
+								<label class="input-wrap"><span>로그인 URL</span><input id="sys-login" autocomplete="off" spellcheck="false" /></label>
+								<label class="input-wrap"><span>성공 URL 글롭</span><input id="sys-success" autocomplete="off" spellcheck="false" /></label>
+								<label class="input-wrap"><span>대상 URL</span><input id="sys-target" autocomplete="off" spellcheck="false" /></label>
+								<label class="input-wrap"><span>레시피 JSON</span><textarea id="sys-recipe" rows="8" spellcheck="false"></textarea></label>
 								<div class="button-row">
-									<button id="sys-save" class="btn primary" type="button">Save</button>
-									<button id="sys-auth" class="btn" type="button">Auth</button>
-									<button id="sys-analyze" class="btn" type="button">Analyze</button>
-									<button id="sys-sync" class="btn" type="button">Sync</button>
-									<button id="sys-enrich" class="btn" type="button">Enrich</button>
-									<button id="sys-delete" class="btn danger" type="button">Delete</button>
+									<button id="sys-save" class="btn primary" type="button">저장</button>
+									<button id="sys-auth" class="btn" type="button">인증</button>
+									<button id="sys-analyze" class="btn" type="button">분석</button>
+									<button id="sys-sync" class="btn" type="button">동기화</button>
+									<button id="sys-enrich" class="btn" type="button">상세·요약</button>
+									<button id="sys-delete" class="btn danger" type="button">삭제</button>
 								</div>
 								<pre id="sys-log" class="joblog" hidden></pre>
 							</div>
@@ -201,10 +201,10 @@
 					</div>
 					<section class="panel">
 						<div class="panel-head">
-							<h2>Records</h2>
+							<h2>레코드</h2>
 							<div class="panel-actions">
-								<input id="records-query" class="inline-input" autocomplete="off" spellcheck="false" placeholder="Filter records" />
-								<button id="records-refresh" class="btn small" type="button">Search</button>
+								<input id="records-query" class="inline-input" autocomplete="off" spellcheck="false" placeholder="레코드 필터" />
+								<button id="records-refresh" class="btn small" type="button">검색</button>
 							</div>
 						</div>
 						<div id="records-table" class="table-wrap"></div>
@@ -215,8 +215,8 @@
 					<div class="layout single">
 						<section class="panel">
 							<div class="panel-head">
-								<h2>Action Registry</h2>
-								<button id="actions-refresh" class="btn small" type="button">Refresh</button>
+								<h2>액션 레지스트리</h2>
+								<button id="actions-refresh" class="btn small" type="button">새로고침</button>
 							</div>
 							<div id="actions-table" class="table-wrap"></div>
 						</section>
@@ -227,15 +227,15 @@
 					<div class="layout two-col">
 						<section class="panel">
 							<div class="panel-head">
-								<h2>Queue / Jobs</h2>
-								<button id="queue-refresh" class="btn small" type="button">Refresh</button>
+								<h2>큐 / 작업</h2>
+								<button id="queue-refresh" class="btn small" type="button">새로고침</button>
 							</div>
 							<div id="queue-table" class="table-wrap"></div>
 						</section>
 						<section class="panel">
 							<div class="panel-head">
-								<h2>Job Log</h2>
-								<span id="job-log-badge" class="badge neutral">no job</span>
+								<h2>작업 로그</h2>
+								<span id="job-log-badge" class="badge neutral">작업 없음</span>
 							</div>
 							<pre id="job-log" class="joblog fixed"></pre>
 						</section>
@@ -246,10 +246,10 @@
 					<div class="layout single">
 						<section class="panel">
 							<div class="panel-head">
-								<h2>Audit Log</h2>
+								<h2>감사 로그</h2>
 								<div class="panel-actions">
-									<input id="audit-filter" class="inline-input" autocomplete="off" spellcheck="false" placeholder="Filter doc, stage, detail" />
-									<button id="audit-refresh" class="btn small" type="button">Refresh</button>
+									<input id="audit-filter" class="inline-input" autocomplete="off" spellcheck="false" placeholder="문서·단계·상세 필터" />
+									<button id="audit-refresh" class="btn small" type="button">새로고침</button>
 								</div>
 							</div>
 							<div id="audit-table" class="table-wrap"></div>
@@ -260,26 +260,26 @@
 				<section class="view" data-view="approval-state">
 					<div class="layout two-col">
 						<section class="panel">
-							<div class="panel-head"><h2>Approval State</h2></div>
+							<div class="panel-head"><h2>결재 상태</h2></div>
 							<div class="panel-body stack compact">
-								<label class="input-wrap"><span>App</span><input id="approval-app" autocomplete="off" spellcheck="false" value="hiworks" /></label>
+								<label class="input-wrap"><span>앱</span><input id="approval-app" autocomplete="off" spellcheck="false" value="hiworks" /></label>
 								<div class="button-row">
-									<button id="approval-state-refresh" class="btn primary" type="button">Check State</button>
-									<button id="approval-stop" class="btn danger" type="button">Request Kill Switch</button>
+									<button id="approval-state-refresh" class="btn primary" type="button">상태 확인</button>
+									<button id="approval-stop" class="btn danger" type="button">킬 스위치 요청</button>
 								</div>
 								<div id="approval-state-card"></div>
 							</div>
 						</section>
 						<section class="panel">
-							<div class="panel-head"><h2>Irreversible Gate</h2></div>
+							<div class="panel-head"><h2>되돌릴 수 없는 게이트</h2></div>
 							<div class="panel-body">
 								<ul class="gate-list">
-									<li><span class="gate-marker on"></span> Plan preview must exist.</li>
-									<li><span class="gate-marker on"></span> Dry-run is required before live confirmation.</li>
-									<li><span class="gate-marker on"></span> Targets are selected by a human in the review table.</li>
-									<li><span class="gate-marker on"></span> Plan hash is shown before confirmation.</li>
-									<li><span class="gate-marker on"></span> Same-origin session gate is enforced by `/api/approve/run`.</li>
-									<li><span class="gate-marker on"></span> Leaf audit is read from `data/approve-audit.jsonl`.</li>
+									<li><span class="gate-marker on"></span> 플랜 미리보기가 존재해야 합니다.</li>
+									<li><span class="gate-marker on"></span> 실제 확정 전에 모의실행이 필수입니다.</li>
+									<li><span class="gate-marker on"></span> 대상은 검토 표에서 사람이 직접 선택합니다.</li>
+									<li><span class="gate-marker on"></span> 확정 전에 플랜 해시가 표시됩니다.</li>
+									<li><span class="gate-marker on"></span> 동일 출처 세션 게이트가 `/api/approve/run` 에 의해 강제됩니다.</li>
+									<li><span class="gate-marker on"></span> 리프 감사는 `data/approve-audit.jsonl` 에서 읽습니다.</li>
 								</ul>
 							</div>
 						</section>
@@ -290,27 +290,27 @@
 					<div class="layout two-col">
 						<section class="panel">
 							<div class="panel-head">
-								<h2>Diagnostics</h2>
-								<span class="badge neutral">control-plane tools</span>
+								<h2>진단</h2>
+								<span class="badge neutral">컨트롤 플레인 도구</span>
 							</div>
 							<div class="panel-body stack compact">
 								<div class="form-grid">
-									<label class="input-wrap"><span>Run glob</span><input id="run-glob" autocomplete="off" spellcheck="false" placeholder="optional test glob" /></label>
-									<div class="button-row align-end"><button id="run-suite" class="btn primary" type="button">Run Suite</button></div>
+									<label class="input-wrap"><span>실행 글롭</span><input id="run-glob" autocomplete="off" spellcheck="false" placeholder="선택적 테스트 글롭" /></label>
+									<div class="button-row align-end"><button id="run-suite" class="btn primary" type="button">스위트 실행</button></div>
 								</div>
-								<div class="notice neutral">Preflight is a CLI gate (`bash lib/preflight.sh`) and has no web route yet.</div>
+								<div class="notice neutral">프리플라이트는 CLI 게이트(`bash lib/preflight.sh`)이며 아직 웹 경로가 없습니다.</div>
 								<pre id="run-log" class="joblog" hidden></pre>
 							</div>
 						</section>
 						<section class="panel">
-							<div class="panel-head"><h2>Workspace Links</h2></div>
+							<div class="panel-head"><h2>작업공간 링크</h2></div>
 							<div id="workspace-links" class="panel-body"></div>
 						</section>
 					</div>
 					<section class="panel">
 						<div class="panel-head">
-							<h2>Runs, Auth, Flows</h2>
-							<button id="diagnostics-refresh" class="btn small" type="button">Refresh</button>
+							<h2>실행 · 인증 · 플로우</h2>
+							<button id="diagnostics-refresh" class="btn small" type="button">새로고침</button>
 						</div>
 						<div id="diagnostics-table" class="table-wrap"></div>
 					</section>
