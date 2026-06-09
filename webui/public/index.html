@@ -1,252 +1,323 @@
-<!DOCTYPE html>
-<html lang="ko">
+<!doctype html>
+<html lang="en">
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>agent-qa</title>
+	<title>AQA RPA Control Plane</title>
+	<link rel="icon" href="data:," />
 	<link rel="stylesheet" href="/app.css" />
 </head>
-<body data-view="runs">
-	<header>
-		<h1>agent-qa</h1>
-		<span class="sub">웹 UI</span>
-		<nav class="nav">
-			<button id="nav-runs" type="button" class="active">실행</button>
-			<button id="nav-approvals" type="button">결재</button>
-			<button id="nav-systems" type="button">시스템</button>
-			<button id="nav-flows" type="button">플로우</button>
-			<button id="nav-trends" type="button">추세</button>
-			<button id="nav-auth" type="button">인증</button>
-			<button id="nav-jobs" type="button">작업</button>
-		</nav>
-		<span id="qstatus" class="qstatus">대기</span>
-		<button id="refresh" type="button" title="새로고침">↻</button>
-	</header>
-
-	<div class="runbar">
-		<input id="glob" type="text" autocomplete="off" spellcheck="false"
-			placeholder="테스트 glob (선택) — 예: login 또는 nav-*" />
-		<button id="run" type="button">▶ 스위트 실행</button>
-	</div>
-
-	<main>
-		<!-- Runs view -->
-		<div class="view view-runs">
-			<aside id="runs" class="runs"><div class="hint">실행 목록 로딩 중…</div></aside>
-			<section id="detail" class="detail"><div class="placeholder">왼쪽에서 실행을 선택하세요.</div></section>
-		</div>
-
-		<!-- Approvals view -->
-		<div class="view view-approvals">
-			<section class="pane">
-				<div class="approvals-head">
-					<h3>결재 미결함</h3>
-					<input id="sync-app" placeholder="앱 (선택, 캐시된 인증)" autocomplete="off" spellcheck="false" />
-					<button id="sync-btn" type="button">⟳ 동기화</button>
-					<button id="sync-cancel" type="button" class="cancel-btn" hidden>✕ 취소</button>
+<body data-view="command-center">
+	<div class="app-shell">
+		<aside class="sidebar" aria-label="Primary">
+			<div class="brand">
+				<div class="brand-mark" aria-hidden="true">AQA</div>
+				<div class="brand-copy">
+					<strong>RPA Control Plane</strong>
+					<span>Local NL automation console</span>
 				</div>
-				<p class="note">그룹웨어에 로그인해 미결 결재를 스크랩·요약해 보여줍니다. 아래 목록에서 결재할 항목을
-					<b>체크</b>하고 <b>[선택 항목 결재]</b>를 누르면 한 번에 자동 결재됩니다(요약·내용을 보고 사람이 직접 선택).
-					브라우저 작업은 한 번에 하나씩.</p>
-				<div class="agent-box">
-					<input id="agent-cmd" placeholder="명령을 한국어로… 예: 관리팀 출장 관련 조회 / 최근 10건 요약 / 미결 새로고침" autocomplete="off" spellcheck="false" />
-					<button id="agent-run" type="button">▶ 실행</button>
+			</div>
+			<nav class="nav-list" id="nav-list">
+				<button type="button" class="nav-item active" data-view-target="command-center"><span class="nav-icon">CC</span><span>Command Center</span></button>
+				<button type="button" class="nav-item" data-view-target="nl-command"><span class="nav-icon">NL</span><span>Natural Language</span></button>
+				<button type="button" class="nav-item" data-view-target="command-plan"><span class="nav-icon">CP</span><span>CommandPlan</span></button>
+				<button type="button" class="nav-item" data-view-target="target-review"><span class="nav-icon">TR</span><span>Target Review</span></button>
+				<button type="button" class="nav-item" data-view-target="systems"><span class="nav-icon">SR</span><span>System Registry</span></button>
+				<button type="button" class="nav-item" data-view-target="actions"><span class="nav-icon">AR</span><span>Action Registry</span></button>
+				<button type="button" class="nav-item" data-view-target="queue"><span class="nav-icon">QJ</span><span>Queue / Jobs</span></button>
+				<button type="button" class="nav-item" data-view-target="audit"><span class="nav-icon">AL</span><span>Audit Log</span></button>
+				<button type="button" class="nav-item" data-view-target="approval-state"><span class="nav-icon">AS</span><span>Approval State</span></button>
+				<button type="button" class="nav-item" data-view-target="diagnostics"><span class="nav-icon">DX</span><span>Diagnostics / Links</span></button>
+			</nav>
+			<div class="sidebar-status">
+				<span id="side-queue-dot" class="health-dot idle"></span>
+				<div>
+					<strong id="side-queue-title">Queue idle</strong>
+					<span id="side-queue-sub">No browser job running</span>
 				</div>
-				<div id="agent-out" class="agent-out" hidden></div>
+			</div>
+		</aside>
 
-				<div class="approve-panel">
-					<h3>⚡ 자동 승인 (고급 — 문서번호 직접입력)</h3>
-					<p class="note warn">⚠ <b>효과적</b>: 실제 결재를 <b>사람 확인 없이 자동 승인</b>합니다(되돌릴 수 없음). 항상 먼저 <b>미리보기(dry-run)</b>로 확인하세요. <b>동기화된 문서만</b> 가능(제목으로 내용 대조). 가드(전부 fail-closed): 유일 문서번호·제목 일치·금액 상한(선택)·결재선 승인전이 확인. 실제 승인엔 <b>최대 건수 필수</b>. Playwright 로그인 필요: <code>node approve/auth-pw.mjs "&lt;login&gt;" "dashboard.office.hiworks.com" approve/hiworks.pw-state.json</code></p>
-					<input id="approve-app" placeholder="앱 (예: hiworks)" autocomplete="off" spellcheck="false" value="hiworks" />
-					<textarea id="approve-docs" rows="3" placeholder="문서번호 — 한 줄에 하나 (동기화된 미결 문서, 예: IB-품의-20260508-0002)" spellcheck="false"></textarea>
-					<div class="approve-row">
-						<label><input id="approve-dry" type="checkbox" checked /> 미리보기(dry-run, 승인 안 함)</label>
-						<input id="approve-max" type="number" min="1" placeholder="최대 건수(실제 승인 시 필수)" />
-						<input id="approve-maxamt" type="number" min="0" placeholder="건당 최대 금액(원, 선택)" />
-						<button id="approve-run" type="button">▶ 실행</button>
-						<button id="approve-stop" type="button" class="cancel-btn" hidden>🛑 일괄 중지</button>
-						<button id="approve-cancel" type="button" class="cancel-btn" hidden>✕ 강제중지</button>
+		<div class="main-shell">
+			<header class="topbar">
+				<div class="page-title">
+					<h1 id="page-title">Command Center</h1>
+					<div class="page-meta">
+						<span class="pill">actor: local-operator</span>
+						<span class="pill">host: 127.0.0.1:4310</span>
+						<span id="top-plan-pill" class="pill muted">plan: none</span>
 					</div>
-					<div id="approve-status" class="approve-status"></div>
-					<div id="approve-results"></div>
-					<pre id="approve-log" class="joblog" hidden></pre>
 				</div>
+				<div class="top-actions">
+					<button id="global-refresh" class="icon-button" type="button" title="Refresh data">R</button>
+					<a class="link-button" href="/api/queue" target="_blank" rel="noreferrer">Queue API</a>
+					<a class="link-button" href="/api/systems" target="_blank" rel="noreferrer">Systems API</a>
+				</div>
+			</header>
 
-				<div class="audit-panel">
-						<div class="audit-head"><h3>🧾 승인 감사 로그</h3><button id="audit-refresh" type="button">↻ 새로고침</button></div>
-						<p class="note">자동 승인 leaf가 매 단계 append-only로 기록한 감사 추적(<code>data/approve-audit.jsonl</code>) — 무엇을 요청/클릭/승인/건너뜀/재조정했는지의 출처. 최신순.</p>
-						<div id="audit-list"><div class="hint">↻ 새로고침으로 감사 로그를 불러옵니다.</div></div>
-					</div>
-
-				<div class="capture-panel">
-					<h3>🔧 결재 캡처 — dry-run 테스트 (Gate-B)</h3>
-					<p class="note">새 시스템/양식(예: <b>합의</b>)의 결재 동작을 <b>폐기용 문서</b>로 검증합니다. action(또는 직접 붙여넣은 블록)을 <b>임시 미리보기 레시피</b>로 dry-run하고 <b>가드별 통과/실패</b>를 보여줍니다 — <b>승인하지 않습니다</b>(확인 전 정지). 레시피에 <b>기록/활성화하지 않음</b>(다음 단계). 비활성(<code>enabled:false</code>) action도 테스트 가능.</p>
-					<div class="cap-row">
-						<input id="cap-app" placeholder="앱 (예: hiworks)" autocomplete="off" spellcheck="false" value="hiworks" />
-						<input id="cap-doc" placeholder="폐기용 문서번호 (예: IB-…)" autocomplete="off" spellcheck="false" />
-						<input id="cap-action" placeholder="action (기본 approve)" autocomplete="off" spellcheck="false" value="approve" />
-					</div>
-					<details class="cap-assemble">
-						<summary>📥 녹화 플로우 → action 블록 조립 (Phase 1b)</summary>
-						<p class="note">먼저 <b>플로우 탭</b>에서 폐기용 문서로 결재 동작을 녹화하세요([열기→결재→승인→의견], <b>확인 전 정지</b>). 그 플로우 이름과 아래 항목을 입력하면 <code>actions.&lt;form&gt;</code> 블록을 만들어 아래 블록 칸을 채웁니다(검토 후 dry-run; <code>enabled:false</code>로 저장 안 함).</p>
-						<div class="cap-row">
-							<input id="cap-flowname" placeholder="녹화 플로우 이름 (예: approve-hiworks-합의)" autocomplete="off" spellcheck="false" />
-							<input id="cap-confirm" placeholder="확인 버튼 이름 (기본 확인)" autocomplete="off" spellcheck="false" value="확인" />
+			<main class="workspace">
+				<section class="view active" data-view="command-center">
+					<div class="command-strip">
+						<label class="input-wrap">
+							<span>Natural language command</span>
+							<input id="cc-command" autocomplete="off" spellcheck="false" value="Prepare reviewed approval" />
+						</label>
+						<div class="button-row">
+							<button id="cc-create-plan" class="btn primary" type="button">Create Plan Preview</button>
+							<button id="cc-dry-run" class="btn" type="button" disabled>Dry-run Selected</button>
+							<button id="cc-confirm" class="btn danger" type="button" disabled>Confirm Live (0)</button>
 						</div>
-						<div class="cap-row">
-							<input id="cap-formtype" placeholder="양식명 (예: 합의 / 지출결의서(거래처)) — 선택" autocomplete="off" spellcheck="false" />
-							<input id="cap-amtlabel" placeholder="금액 라벨 (예: 총 금액) — 선택" autocomplete="off" spellcheck="false" />
-							<button id="cap-assemble" type="button">📥 블록 조립</button>
+					</div>
+					<div class="layout two-col">
+						<div class="stack">
+							<section class="panel">
+								<div class="panel-head">
+									<h2>Command Center</h2>
+									<div id="cc-badges" class="badge-row"></div>
+								</div>
+								<div id="cc-summary" class="panel-body"></div>
+							</section>
+							<section class="panel">
+								<div class="panel-head">
+									<h2>Target Review</h2>
+									<div class="panel-actions">
+										<button id="cc-select-all" class="btn small" type="button">Select visible</button>
+										<button id="cc-clear-selection" class="btn small quiet" type="button">Clear</button>
+									</div>
+								</div>
+								<div id="cc-targets" class="table-wrap"></div>
+							</section>
 						</div>
-					</details>
-					<input id="cap-title" placeholder="문서 제목 (미동기화 폐기용 문서면 직접 입력 — 콘텐츠 바인딩 가드)" autocomplete="off" spellcheck="false" />
-					<textarea id="cap-block" rows="4" placeholder="(선택) action 블록 JSON을 붙여넣어 테스트 — 비우면 레시피의 기존 action을 테스트" spellcheck="false"></textarea>
-					<div class="cap-row">
-						<button id="cap-dry" type="button">▶ dry-run 미리보기</button>
-						<button id="cap-flows" type="button">↻ 캡처된 플로우</button>
+						<aside class="stack">
+							<section class="panel">
+								<div class="panel-head"><h2>Execution Gates</h2></div>
+								<div id="cc-gates" class="panel-body"></div>
+							</section>
+							<section class="panel">
+								<div class="panel-head"><h2>Timeline</h2></div>
+								<div id="cc-timeline" class="timeline"></div>
+							</section>
+							<section class="panel">
+								<div class="panel-head"><h2>Queue Snapshot</h2></div>
+								<div id="cc-queue" class="panel-body"></div>
+							</section>
+						</aside>
 					</div>
-					<div id="cap-status" class="approve-status"></div>
-					<div id="cap-guards"></div>
-					<details class="cap-enable">
-						<summary>🔓 라이브 검증 → 활성화 (Phase 2 — 실제 승인 / 되돌릴 수 없음)</summary>
-						<p class="note warn">⚠ <b>라이브 검증</b>은 위 문서를 <b>실제로 승인</b>합니다(확인 클릭, 되돌릴 수 없음) — <b>반드시 폐기용 문서</b>로만. 성공(승인 스탬프+대기 이탈)을 직접 확인한 뒤에만 활성화하세요. <b>활성화</b>는 위 블록을 레시피에 <code>enabled:true</code>로 기록해 일괄 결재에서 쓰입니다.</p>
-						<div class="cap-row"><button id="cap-verify" type="button">▶ 라이브 검증 (실제 승인, 폐기용만)</button></div>
-						<label class="cap-confirmrow"><input id="cap-confirmed" type="checkbox" /> 라이브 검증에서 <b>승인 스탬프 + 대기 이탈</b>을 직접 확인했습니다</label>
-						<div class="cap-row">
-							<input id="cap-notes" placeholder="메모 (선택) — 캡처 검증 기록" autocomplete="off" spellcheck="false" />
-							<button id="cap-enable" type="button">✅ 저장 &amp; 활성화</button>
+				</section>
+
+				<section class="view" data-view="nl-command">
+					<div class="layout single">
+						<section class="panel">
+							<div class="panel-head">
+								<h2>Natural Language Command</h2>
+								<span class="badge warning">Legacy route</span>
+							</div>
+							<div class="panel-body stack compact">
+								<div class="notice warning">`/api/agent` remains as the compatibility route. Use Command Center for durable plan, dry-run, and confirm gates.</div>
+								<label class="input-wrap">
+									<span>Command text</span>
+									<input id="nl-command-input" autocomplete="off" spellcheck="false" placeholder="query, summarize, sync, review, approve candidates" />
+								</label>
+								<div class="button-row">
+									<button id="nl-run" class="btn primary" type="button">Run /api/agent</button>
+									<button id="nl-use-plan" class="btn" type="button">Copy to Plan Preview</button>
+								</div>
+							</div>
+							<div id="nl-output" class="panel-body border-top"></div>
+						</section>
+					</div>
+				</section>
+
+				<section class="view" data-view="command-plan">
+					<div class="layout two-col">
+						<section class="panel">
+							<div class="panel-head">
+								<h2>CommandPlan</h2>
+								<div id="plan-badges" class="badge-row"></div>
+							</div>
+							<div id="plan-detail" class="panel-body"></div>
+						</section>
+						<section class="panel">
+							<div class="panel-head"><h2>Plan Contract</h2></div>
+							<div class="panel-body stack compact">
+								<div class="notice warning">Durable CommandPlan routes are connected. Irreversible confirm remains disabled until target review and dry-run pass.</div>
+								<div id="plan-contract"></div>
+							</div>
+						</section>
+					</div>
+				</section>
+
+				<section class="view" data-view="target-review">
+					<div class="layout single">
+						<section class="panel">
+							<div class="panel-head">
+								<h2>Target Review</h2>
+								<div class="panel-actions">
+									<button id="tr-refresh" class="btn small" type="button">Refresh</button>
+									<button id="tr-select-all" class="btn small" type="button">Select visible</button>
+									<button id="tr-dry-run" class="btn small" type="button" disabled>Dry-run</button>
+									<button id="tr-confirm" class="btn small danger" type="button" disabled>Confirm Live (0)</button>
+								</div>
+							</div>
+							<div id="target-review-table" class="table-wrap"></div>
+						</section>
+					</div>
+				</section>
+
+				<section class="view" data-view="systems">
+					<div class="layout two-col systems-layout">
+						<section class="panel">
+							<div class="panel-head">
+								<h2>System Registry</h2>
+								<div class="panel-actions"><button id="sys-refresh" class="btn small" type="button">Refresh</button></div>
+							</div>
+							<div id="systems-table" class="table-wrap"></div>
+						</section>
+						<section class="panel">
+							<div class="panel-head">
+								<h2>System Operations</h2>
+								<span id="sys-selected-badge" class="badge neutral">none selected</span>
+							</div>
+							<div class="panel-body stack compact">
+								<div class="form-grid">
+									<label class="input-wrap"><span>Name</span><input id="sys-name" autocomplete="off" spellcheck="false" /></label>
+									<label class="input-wrap"><span>Label</span><input id="sys-label" autocomplete="off" spellcheck="false" /></label>
+								</div>
+								<label class="input-wrap"><span>Login URL</span><input id="sys-login" autocomplete="off" spellcheck="false" /></label>
+								<label class="input-wrap"><span>Success URL glob</span><input id="sys-success" autocomplete="off" spellcheck="false" /></label>
+								<label class="input-wrap"><span>Target URL</span><input id="sys-target" autocomplete="off" spellcheck="false" /></label>
+								<label class="input-wrap"><span>Recipe JSON</span><textarea id="sys-recipe" rows="8" spellcheck="false"></textarea></label>
+								<div class="button-row">
+									<button id="sys-save" class="btn primary" type="button">Save</button>
+									<button id="sys-auth" class="btn" type="button">Auth</button>
+									<button id="sys-analyze" class="btn" type="button">Analyze</button>
+									<button id="sys-sync" class="btn" type="button">Sync</button>
+									<button id="sys-enrich" class="btn" type="button">Enrich</button>
+									<button id="sys-delete" class="btn danger" type="button">Delete</button>
+								</div>
+								<pre id="sys-log" class="joblog" hidden></pre>
+							</div>
+						</section>
+					</div>
+					<section class="panel">
+						<div class="panel-head">
+							<h2>Records</h2>
+							<div class="panel-actions">
+								<input id="records-query" class="inline-input" autocomplete="off" spellcheck="false" placeholder="Filter records" />
+								<button id="records-refresh" class="btn small" type="button">Search</button>
+							</div>
 						</div>
-					</details>
-					<div id="cap-flowlist" class="note"></div>
-				</div>
-
-				<div class="review-bar">
-					<div class="review-head">
-						<h3>✅ 검토 후 일괄 결재</h3>
-						<label><input id="rev-all" type="checkbox" /> 전체 선택</label>
-						<label><input id="rev-dry" type="checkbox" checked /> 미리보기(dry-run)</label>
-						<button id="rev-approve" type="button">✅ 선택 항목 결재 (0)</button>
-						<button id="rev-stop" type="button" class="cancel-btn" hidden>🛑 일괄 중지</button>
-						<button id="rev-cancel" type="button" class="cancel-btn" hidden>✕ 강제중지</button>
-					</div>
-					<p class="note">아래 미결 목록에서 결재할 항목을 <b>체크</b> → <b>[선택 항목 결재]</b>. 요약·내용을 보고 직접 선택하므로 <b>사람이 금액·내용을 통제</b>합니다(혼합 양식 가능). 신원/제목/승인-라디오/완료검증 가드는 항상 적용(fail-closed). 항상 먼저 <b>미리보기(dry-run)</b>로 확인하세요.</p>
-					<div id="rev-status" class="approve-status"></div>
-					<div id="rev-results"></div>
-					<pre id="rev-log" class="joblog" hidden></pre>
-				</div>
-
-				<div id="approvals-list"><div class="hint">결재 목록 로딩 중…</div></div>
-				<pre id="sync-log" class="joblog" hidden></pre>
-			</section>
-		</div>
-
-		<!-- Systems (RPA registry) view -->
-		<div class="view view-systems">
-			<section class="pane">
-				<h3>시스템 등록 (RPA — 어떤 시스템이든)</h3>
-				<p class="note">대상 시스템의 이름·URL을 등록하고 → 인증(1회 로그인) → 구조분석(레시피 자동 제안) → 동기화하면, 그 목록을 가져와 조회합니다.</p>
-				<div class="sys-form">
-					<div class="sys-row"><input id="sys-name" placeholder="이름 (예: daou) — [A-Za-z0-9_-]" autocomplete="off" spellcheck="false" /><input id="sys-label" placeholder="표시명 (예: 다우오피스 결재)" autocomplete="off" spellcheck="false" /></div>
-					<input id="sys-login" placeholder="로그인 URL" autocomplete="off" spellcheck="false" />
-					<input id="sys-success" placeholder="로그인 성공 URL glob (예: **/main)" autocomplete="off" spellcheck="false" />
-					<input id="sys-target" placeholder="대상(목록) URL — 가져올 목록 페이지" autocomplete="off" spellcheck="false" />
-					<div class="sys-btns">
-						<button id="sys-save" type="button">저장</button>
-						<button id="sys-auth" type="button">🔑 인증</button>
-						<button id="sys-analyze" type="button">🔍 구조분석</button>
-						<button id="sys-sync" type="button">⟳ 동기화</button>
-						<button id="sys-enrich" type="button">📝 상세·요약</button>
-						<button id="sys-delete" type="button" class="cancel-btn">✕ 삭제</button>
-					</div>
-					<textarea id="sys-recipe" rows="6" placeholder="레시피 JSON — [구조분석]이 자동으로 채웁니다. 검토·수정 후 [저장]하세요." spellcheck="false"></textarea>
-					<pre id="sys-log" class="joblog" hidden></pre>
-				</div>
-				<p class="note">등록된 시스템: <span id="sys-list" class="sys-list">—</span></p>
-				<div class="sys-records-head"><h3>조회</h3><input id="sys-q" placeholder="검색어 (제목·내용·요약)" autocomplete="off" spellcheck="false" /></div>
-				<div class="review-bar" id="sys-review-bar" hidden>
-					<div class="review-head">
-						<h3>✅ 검토 후 결재</h3>
-						<label><input id="sys-rev-all" type="checkbox" /> 전체 선택</label>
-						<label><input id="sys-rev-dry" type="checkbox" checked /> 미리보기(dry-run)</label>
-						<button id="sys-rev-approve" type="button">✅ 선택 항목 결재 (0)</button>
-						<button id="sys-rev-cancel" type="button" class="cancel-btn" hidden>✕ 강제중지</button>
-					</div>
-					<div id="sys-rev-note" class="note"></div>
-					<div id="sys-rev-status" class="approve-status"></div>
-					<div id="sys-rev-results"></div>
-					<pre id="sys-rev-log" class="joblog" hidden></pre>
-				</div>
-				<div id="sys-records"><div class="placeholder">위에서 시스템을 선택하세요.</div></div>
-			</section>
-		</div>
-		<!-- Flows view -->
-		<div class="view view-flows">
-			<section class="flows-pane">
-				<div class="recorder">
-					<h3>여정 녹화</h3>
-					<p class="note">실제 헤디드 Chrome을 (record.cmd로) 열고 N초 후 자동 정지합니다.
-						사용자가 페이지를 조작하면 레코더가 플로우를 만듭니다. 브라우저 작업은 한 번에 하나씩.</p>
-					<div class="rec-form">
-						<input id="rec-name" placeholder="플로우 이름 (예: checkout)" autocomplete="off" spellcheck="false" />
-						<input id="rec-url" placeholder="https://app.example.com/start" autocomplete="off" spellcheck="false" />
-						<input id="rec-app" placeholder="앱 (선택, 캐시된 인증)" autocomplete="off" spellcheck="false" />
-						<input id="rec-seconds" type="number" min="5" max="1800" value="120" title="자동 정지 초" />
-						<button id="rec-btn" type="button">● 녹화</button>
-						<button id="rec-stop" type="button" class="stop-btn" hidden>■ 지금 종료</button>
-						<button id="rec-cancel" type="button" class="cancel-btn" hidden>✕ 취소</button>
-					</div>
-					<pre id="rec-log" class="joblog" hidden></pre>
-				</div>
-				<div class="flows-main">
-					<aside id="flows-list" class="runs"><div class="hint">플로우 로딩 중…</div></aside>
-					<section class="editor-col">
-						<div id="flow-editor"><div class="placeholder">편집할 플로우를 선택하세요.</div></div>
-						<div id="flow-jobbar" hidden><button id="flow-cancel" type="button" class="cancel-btn">✕ 취소</button></div>
-						<pre id="flow-log" class="joblog" hidden></pre>
-						<pre id="compile-out" class="compile-out" hidden></pre>
+						<div id="records-table" class="table-wrap"></div>
 					</section>
-				</div>
-			</section>
-		</div>
+				</section>
 
-		<!-- Trends view -->
-		<div class="view view-trends">
-			<section class="pane">
-				<h3>통과율 추세</h3>
-				<div id="trends"><div class="hint">추세 로딩 중…</div></div>
-			</section>
-		</div>
+				<section class="view" data-view="actions">
+					<div class="layout single">
+						<section class="panel">
+							<div class="panel-head">
+								<h2>Action Registry</h2>
+								<button id="actions-refresh" class="btn small" type="button">Refresh</button>
+							</div>
+							<div id="actions-table" class="table-wrap"></div>
+						</section>
+					</div>
+				</section>
 
-		<!-- Auth view -->
-		<div class="view view-auth">
-			<section class="pane">
-				<h3>앱 인증 (1회 OTP 로그인)</h3>
-				<p class="note">실제 헤디드 Chrome 창을 엽니다. 로그인과 OTP를 직접 완료하세요.
-					스크립트가 성공 URL에 도달할 때까지 기다린 뒤
-					<code>fixtures/auth/&lt;app&gt;.state.json</code>을 캐시해 테스트가 로그인 상태로
-					재생됩니다. 브라우저 작업은 한 번에 하나씩.</p>
-				<div class="rec-form">
-					<input id="auth-app" placeholder="앱 (예: myapp)" autocomplete="off" spellcheck="false" />
-					<input id="auth-login" placeholder="https://app.example.com/login" autocomplete="off" spellcheck="false" />
-					<input id="auth-success" placeholder="성공 URL glob — 예: **/dashboard" autocomplete="off" spellcheck="false" />
-					<button id="auth-btn" type="button">🔑 인증</button>
-					<button id="auth-cancel" type="button" class="cancel-btn" hidden>✕ 취소</button>
-				</div>
-				<p class="note">캐시된 상태: <span id="auth-list">—</span></p>
-				<pre id="auth-log" class="joblog" hidden></pre>
-			</section>
-		</div>
+				<section class="view" data-view="queue">
+					<div class="layout two-col">
+						<section class="panel">
+							<div class="panel-head">
+								<h2>Queue / Jobs</h2>
+								<button id="queue-refresh" class="btn small" type="button">Refresh</button>
+							</div>
+							<div id="queue-table" class="table-wrap"></div>
+						</section>
+						<section class="panel">
+							<div class="panel-head">
+								<h2>Job Log</h2>
+								<span id="job-log-badge" class="badge neutral">no job</span>
+							</div>
+							<pre id="job-log" class="joblog fixed"></pre>
+						</section>
+					</div>
+				</section>
 
-		<!-- Jobs view -->
-		<div class="view view-jobs">
-			<aside id="jobs-list" class="runs"><div class="hint">작업 로딩 중…</div></aside>
-			<section class="editor-col">
-				<div id="jobs-detail"><div class="placeholder">로그를 볼 작업을 선택하세요.</div></div>
-				<pre id="jobs-log" class="joblog" hidden></pre>
-			</section>
-		</div>
-	</main>
+				<section class="view" data-view="audit">
+					<div class="layout single">
+						<section class="panel">
+							<div class="panel-head">
+								<h2>Audit Log</h2>
+								<div class="panel-actions">
+									<input id="audit-filter" class="inline-input" autocomplete="off" spellcheck="false" placeholder="Filter doc, stage, detail" />
+									<button id="audit-refresh" class="btn small" type="button">Refresh</button>
+								</div>
+							</div>
+							<div id="audit-table" class="table-wrap"></div>
+						</section>
+					</div>
+				</section>
 
+				<section class="view" data-view="approval-state">
+					<div class="layout two-col">
+						<section class="panel">
+							<div class="panel-head"><h2>Approval State</h2></div>
+							<div class="panel-body stack compact">
+								<label class="input-wrap"><span>App</span><input id="approval-app" autocomplete="off" spellcheck="false" value="hiworks" /></label>
+								<div class="button-row">
+									<button id="approval-state-refresh" class="btn primary" type="button">Check State</button>
+									<button id="approval-stop" class="btn danger" type="button">Request Kill Switch</button>
+								</div>
+								<div id="approval-state-card"></div>
+							</div>
+						</section>
+						<section class="panel">
+							<div class="panel-head"><h2>Irreversible Gate</h2></div>
+							<div class="panel-body">
+								<ul class="gate-list">
+									<li><span class="gate-marker on"></span> Plan preview must exist.</li>
+									<li><span class="gate-marker on"></span> Dry-run is required before live confirmation.</li>
+									<li><span class="gate-marker on"></span> Targets are selected by a human in the review table.</li>
+									<li><span class="gate-marker on"></span> Plan hash is shown before confirmation.</li>
+									<li><span class="gate-marker on"></span> Same-origin session gate is enforced by `/api/approve/run`.</li>
+									<li><span class="gate-marker on"></span> Leaf audit is read from `data/approve-audit.jsonl`.</li>
+								</ul>
+							</div>
+						</section>
+					</div>
+				</section>
+
+				<section class="view" data-view="diagnostics">
+					<div class="layout two-col">
+						<section class="panel">
+							<div class="panel-head">
+								<h2>Diagnostics</h2>
+								<span class="badge neutral">control-plane tools</span>
+							</div>
+							<div class="panel-body stack compact">
+								<div class="form-grid">
+									<label class="input-wrap"><span>Run glob</span><input id="run-glob" autocomplete="off" spellcheck="false" placeholder="optional test glob" /></label>
+									<div class="button-row align-end"><button id="run-suite" class="btn primary" type="button">Run Suite</button></div>
+								</div>
+								<div class="notice neutral">Preflight is a CLI gate (`bash lib/preflight.sh`) and has no web route yet.</div>
+								<pre id="run-log" class="joblog" hidden></pre>
+							</div>
+						</section>
+						<section class="panel">
+							<div class="panel-head"><h2>Workspace Links</h2></div>
+							<div id="workspace-links" class="panel-body"></div>
+						</section>
+					</div>
+					<section class="panel">
+						<div class="panel-head">
+							<h2>Runs, Auth, Flows</h2>
+							<button id="diagnostics-refresh" class="btn small" type="button">Refresh</button>
+						</div>
+						<div id="diagnostics-table" class="table-wrap"></div>
+					</section>
+				</section>
+			</main>
+		</div>
+	</div>
 	<script type="module" src="/app.js"></script>
 </body>
 </html>

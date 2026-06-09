@@ -12,7 +12,8 @@ pass/fail gate.
 - Git Bash (`C:\Program Files\Git\bin\bash.exe`)
 - `agent-browser` 0.27.0 — `npm i -g agent-browser && agent-browser install`
 - `jq`, `ffmpeg` (video) — `winget install jqlang.jq Gyan.FFmpeg`
-- `node`
+- `node` >= 22.5 (Node 24 verified; `lib/db.js` uses built-in `node:sqlite`)
+- System Chrome for the Playwright approve leaf (`approve/approve-run.mjs`)
 
 `lib/preflight.sh` resolves ffmpeg's absolute path automatically and hard-fails if
 video cannot record, so a missing/stale ffmpeg PATH can never silently drop videos.
@@ -27,6 +28,48 @@ bash tests/login.test.sh   # run a single test standalone (no suite/report)
 
 Artifacts (video, screenshots, report) land in `artifacts/<run-id>/` (gitignored).
 `report.json` + `report.junit.xml` are written per run.
+
+## Internal open checklist
+
+Before calling a checkout an openable release candidate:
+
+```bash
+git status --short --untracked-files=all
+git rev-list --left-right --count origin/master...HEAD
+
+node --check webui/public/app.js
+node --check webui/server.js
+node --check webui/routes-command-plan.js
+node --check webui/routes-rpa.js
+node --check webui/routes-approve.js
+node --check webui/jobs.js
+node --check webui/systems.js
+node --check lib/db.js
+
+bash tests/agent-plan-unit.test.sh
+bash tests/jobs-result-unit.test.sh
+bash tests/systems-capabilities-unit.test.sh
+bash tests/approve-session-gate-unit.test.sh
+bash lib/preflight.sh
+bash run.sh
+```
+
+Then start the local console (`node webui/server.js`) and smoke the web UI on loopback:
+Command Center, Target Review, Systems, Action Registry, Queue, Audit, Approval State, and
+Diagnostics. Check desktop and mobile layout, console errors, and document-level horizontal overflow.
+
+Open posture remains local/single-user unless it is fronted by an authenticated tunnel or reverse proxy.
+For exposed Docker/noVNC use, keep host publishing on `127.0.0.1`, set `WEBUI_ALLOWED_HOSTS` to the
+fronting host, and do not expose the process-spawning webui directly.
+
+External dependencies that must be ready for real operation:
+
+- `fixtures/auth/<app>.state.json` for agent-browser sync/enrich.
+- `approve/<app>.pw-state.json`, `recipes/<app>.json`, and a pending-list URL for approve-like actions.
+- `data/approvals.config` for the legacy Hiworks approval inbox path.
+- A private/TLS on-prem OpenAI-compatible endpoint for summaries/classification; set
+  `LLM_REQUIRE_PRIVATE=1` once the endpoint is hardened.
+- Operational test data or staged/disposable approval documents for live verification.
 
 ## Docker recording server (Linux)
 
@@ -207,8 +250,9 @@ New pieces (no new stack):
   accessible name, matched normalized-exact — exactly one match or fail loud), `columns`
   (`{db_field: "header text"}`, header-anchored), optional `strip` (`{db_field: "literal suffix"}` for
   UI noise like Hiworks' `첨부 파일 표시`), optional `ready.{text,timeout}` (an in-batch `wait --text`
-  settle gate for async lists). `doc_id` is mandatory; reserved seams `steps/detail/summarize/approve`
-  are documented, not yet built.
+  settle gate for async lists). `doc_id` is mandatory. Detail, summarize, and approve-like behavior now
+  lives in explicit `detail`, `summarize`, and `actions.<name>` recipe blocks; actions that are absent or
+  `enabled:false` are surfaced as disabled/needs implementation, never as mock success.
 - `bin/fetch-approvals.sh` — generic driver: resolve `recipes/<app>.json` → launch (`AB_AUTH open`) →
   `navigate` inbox → optional `ready` gate → snapshot → `extract-approvals.js <recipe>` →
   `store-approvals.js`. fd-hang-guarded (`</dev/null`, no inline pipe), with a generic
@@ -316,9 +360,49 @@ If the on-prem model is unreachable, every command safely degrades to `clarify` 
 actions** — both the safety and feasibility reviews rejected an LLM→click path on live approval pages;
 the model stays a classifier, effectful actions stay deterministic + human-gated.
 
-**Summarization is intentionally out of P0**: the approval body can be confidential/PII, so sending
-it to an external LLM is a policy decision. P0 stores/displays the raw text only; a policy-gated
-`bin/summarize.js` can fill the `summary` column later.
+**Summarization is intentionally separate from the fast P0 list sync**: the approval body can be
+confidential/PII, so model transport is a policy and infrastructure decision. Detail-only enrich stores
+raw text without model egress; summary generation is enabled only when a local/on-prem endpoint is
+configured.
+
+## CommandPlan operator workflow
+
+The durable NL control plane turns a command into a server-validated plan before any irreversible work:
+
+```text
+natural language -> CommandPlan -> reviewed targets -> dry-run -> human confirm -> queued deterministic driver -> audit/result
+```
+
+Implemented contract:
+
+- `POST /api/agent/plan` creates a persisted plan with a server hash and no side effect.
+- `GET /api/agent/plan/:id`, `/events`, and `/result` reload plan state, command events, and current result.
+- `POST /api/agent/plan/:id/targets` stores a reviewed target set and target-set hash.
+- `POST /api/agent/plan/:id/dry-run` requires the plan hash, revalidates targets/action/recipe, then queues the deterministic dry-run.
+- `POST /api/agent/plan/:id/confirm` requires same-origin session gate, exact plan hash, exact target-set hash, passing dry-run hash, explicit human confirmation, and an unconfirmed `awaiting_confirmation` plan.
+- `GET /api/actions`, `/api/systems/:name/state`, and `/api/systems/:name/actions` expose readiness and disabled reasons.
+- `GET /api/jobs/:id/result` exposes structured job result data; logs are observability, not the product contract.
+
+Daily workflow:
+
+1. Register or select a system, run auth/analyze/sync/enrich as needed, and verify records exist.
+2. Create a CommandPlan from the Command Center.
+3. Review the target table; every irreversible target must be selected by the operator.
+4. Run dry-run and inspect per-target `dry-ok` plus the command event timeline.
+5. Confirm live only while supervised and only after the server shows the dry-run/hash gates as satisfied.
+6. Monitor Queue and Audit. `data/approve-audit.jsonl` is the source of truth for irreversible work.
+
+Approval runbook:
+
+- Prerequisites: synced records with titles, `recipes/<app>.json`, `fixtures/auth/<app>.state.json`,
+  `approve/<app>.pw-state.json`, pending-list URL, and no active `data/approve-STOP` kill switch.
+- Dry-run must pass every selected target before live. A changed reviewed target set invalidates the prior dry-run.
+- Live confirm is single-use for a plan. Re-running live requires a new plan and a new dry-run.
+- Audit confirmation for dry-run should include `requested`, `identity_ok`, and `dry_ok`. Live confirmation
+  should include `requested`, `identity_ok`, `clicked`, and `confirmed`, with actor/stamp/departure evidence.
+- There is no rollback for a live approval. Cancel/STOP only prevents future documents from being clicked.
+  Recovery means reconcile stranded `clicked` rows, resync, inspect audit, and use the business system's
+  reversal process outside this tool if needed.
 
 ## Safety model
 
@@ -393,13 +477,15 @@ only); the irreversible-click counter (`clicksIssued`) binds the cap; a **kill-s
 present same-origin **Origin/Referer + a session cookie** (`webui/session.js`); it is only safe on a
 **single-user, operator-controlled host**.
 
-**Operating posture — SUPERVISED + BOUNDED, not yet unattended-at-scale.** Run dry-run first, a small
-`--max`, a value ceiling, on a single-user host. **Unattended/scheduled LIVE approve stays FORBIDDEN
-(fail-closed; `bin/scheduled-task.sh` refuses `--live`)** until three operator-accompanied prerequisites
-clear: (1) a **live end-to-end** approval verification, (2) a **Gate-B amount-cell capture** (so the value
-ceiling is exactly pinned, not heuristic), and (3) agreed **auto-approve criteria**. Read/sync/enrich carry
-no financial risk and may be scheduled freely. Approval bodies stay **on-prem**; harden transport before
-prod. Tests use **staged/disposable docs only — never a real financial approval.**
+**Operating posture — SUPERVISED + BOUNDED, not yet unattended-at-scale.** Run dry-run first on a
+single-user host. For the recommended reviewed batch, the operator's target review is the amount/content
+control and the count cap is the checked-item count. For typed/full-auto runs, keep a small `--max` and a
+value ceiling or an explicit owner opt-out. **Unattended/scheduled LIVE approve stays FORBIDDEN
+(fail-closed; `bin/scheduled-task.sh` refuses `--live`)** until operator-accompanied live verification and
+signed auto-approve criteria exist. Gate-B amount-cell capture remains relevant for typed/unattended
+amount-dependent policies, but is not required for the reviewed-batch flow. Read/sync/enrich carry no
+financial risk and may be scheduled freely. Approval bodies stay **on-prem**; harden transport before prod.
+Tests use **staged/disposable docs only — never a real financial approval.**
 
 ### Scheduling (unattended periodic tasks)
 

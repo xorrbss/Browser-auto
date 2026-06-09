@@ -38,13 +38,14 @@ import { pipeline } from 'node:stream';
 import path from 'node:path';
 import os from 'node:os';
 import { listRuns, getRun, getTrends, pruneArtifacts, ARTIFACTS_DIR } from './index.js';
-import { enqueue, jobStatus, subscribe, queueState, cancel, stop, killRunning } from './jobs.js';
+import { enqueue, jobStatus, jobResult, subscribe, queueState, cancel, stop, killRunning } from './jobs.js';
 import { gitBash, recordCmd, nodeLeaf } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
 import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 import { listApprovalsView } from './approvals.js';
 import { rpaPost, rpaGet } from './routes-rpa.js';
 import { approvePost, approveGet } from './routes-approve.js';
+import { commandPlanPost, commandPlanGet, recordCommandGateRefusal } from './routes-command-plan.js';
 import { issueSessionIfNeeded, approveGate } from './session.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
@@ -243,7 +244,13 @@ const server = http.createServer(async (req, res) => {
 			// The EFFECTFUL auto-approve route clicks a REAL 확인 with no human, so it is gated STRICTER
 			// than the general guard above: a PRESENT host-matching Origin/Referer (no absent-fall-through —
 			// red-team R1/T8) AND a valid server session cookie (DESIGN §5). See webui/session.js.
-			if (p.startsWith('/api/approve/') && approveGate(req, res, ALLOWED_HOSTS, sendJson)) return;
+			const commandConfirm = /^\/api\/agent\/plans?\/[^/]+\/confirm$/.test(p);
+			if ((p.startsWith('/api/approve/') || commandConfirm) && approveGate(req, res, ALLOWED_HOSTS, sendJson)) {
+				if (commandConfirm) {
+					recordCommandGateRefusal(p, res.statusCode === 401 ? 'session_missing' : 'origin_or_referer_required', { httpStatus: res.statusCode });
+				}
+				return;
+			}
 			if (p === '/api/run') {
 				let body;
 				try {
@@ -342,6 +349,7 @@ const server = http.createServer(async (req, res) => {
 			}
 
 				// 결재/RPA routes (sync, NL command router, system registry) — see webui/routes-rpa.js.
+				if (await commandPlanPost(p, bodyJson, res, { sendJson, enqueue, gitBash, nodeLeaf })) return;
 				if (approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf })) return;
 				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash })) return;
 
@@ -449,6 +457,7 @@ const server = http.createServer(async (req, res) => {
 		}
 
 		if (approveGet(p, url, res, { sendJson })) return;
+		if (commandPlanGet(p, url, res, { sendJson })) return;
 		if (rpaGet(p, url, res, { sendJson, notFound })) return;
 
 		if (p === '/api/flows') {
@@ -465,6 +474,12 @@ const server = http.createServer(async (req, res) => {
 			}
 			const flow = await getFlow(name);
 			return flow ? sendJson(res, 200, flow) : notFound(res, 'no such flow');
+		}
+
+		const mJobResult = /^\/api\/jobs\/([^/]+?)\/result$/.exec(p);
+		if (mJobResult) {
+			const jr = jobResult(mJobResult[1]);
+			return jr ? sendJson(res, 200, jr) : notFound(res, 'no such job');
 		}
 
 		const mJob = /^\/api\/jobs\/([^/]+?)(\/stream)?$/.exec(p);

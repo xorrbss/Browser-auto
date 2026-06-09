@@ -47,14 +47,19 @@ function publicJob(job) {
 		id: job.id,
 		kind: job.kind,
 		label: job.label,
+		meta: job.meta || {},
 		status: job.status, // queued | running | done | failed | cancelled
 		exitCode: job.exitCode,
 		cancelled: job.cancelled,
+		timedOut: job.timedOut,
 		enqueuedAt: job.enqueuedAt,
 		startedAt: job.startedAt,
 		endedAt: job.endedAt,
+		durationMs: job.startedAt && job.endedAt ? job.endedAt - job.startedAt : null,
 		pid: job.pid,
 		runId: job.runId, // for kind:'run', filled from the [run] RUN_ID= line
+		result: job.result,
+		error: job.error,
 	};
 }
 
@@ -72,7 +77,22 @@ function pushLine(job, line) {
 		const m = /RUN_ID=(\d{8}-\d{6}-\d+)/.exec(line);
 		if (m) job.runId = m[1];
 	}
+	captureStructuredResult(job, line);
 	for (const res of job.subscribers) writeSse(res, 'line', { line });
+}
+
+function captureStructuredResult(job, line) {
+	const t = String(line || '').trim();
+	let raw = '';
+	if (t.startsWith('AQA_JOB_RESULT=')) raw = t.slice('AQA_JOB_RESULT='.length);
+	else if (t.startsWith('{') && t.includes('"results"')) raw = t;
+	if (!raw) return;
+	try {
+		const obj = JSON.parse(raw);
+		if (obj && typeof obj === 'object') job.result = obj;
+	} catch {
+		job.error = job.error || 'malformed structured job result';
+	}
 }
 
 // Split a child stream into lines, feeding pushLine (buffering a partial trailing line).
@@ -149,6 +169,7 @@ async function runJob(job) {
 	} catch (e) {
 		job.exitCode = -1;
 		job.status = 'failed';
+		job.error = String((e && e.message) || e);
 		pushLine(job, `[webui] job error: ${(e && e.message) || e}`);
 	} finally {
 		if (timer) clearTimeout(timer);
@@ -156,6 +177,10 @@ async function runJob(job) {
 		const wasKilled = job.cancelled || job.timedOut; // SIGKILL path skipped the driver's cleanup trap
 		job.child = null;
 		job.endedAt = Date.now();
+		if (typeof job.onFinish === 'function') {
+			try { job.onFinish(publicJob(job)); }
+			catch (e) { pushLine(job, `[webui] onFinish error: ${(e && e.message) || e}`); }
+		}
 		runningId = null;
 		finishJob(job);
 		// Reap a leaked daemon BEFORE the chain advances, so the next job starts on a clean daemon.
@@ -163,13 +188,14 @@ async function runJob(job) {
 	}
 }
 
-// enqueue({kind, label, spawnFn}) -> public job record. spawnFn() must return a ChildProcess.
-export function enqueue({ kind, label, spawnFn, stopFile }) {
+// enqueue({kind, label, spawnFn, meta?, onFinish?}) -> public job record. spawnFn() must return a ChildProcess.
+export function enqueue({ kind, label, spawnFn, stopFile, meta, onFinish }) {
 	const id = `j${++seq}`;
 	const job = {
 		id,
 		kind,
 		label: label || kind,
+		meta: meta && typeof meta === 'object' ? meta : {},
 		status: 'queued',
 		exitCode: null,
 		enqueuedAt: Date.now(),
@@ -180,7 +206,10 @@ export function enqueue({ kind, label, spawnFn, stopFile }) {
 		child: null,
 		cancelled: false,
 		timedOut: false,
+		error: null,
+		result: null,
 		stopFile: stopFile || null,
+		onFinish: typeof onFinish === 'function' ? onFinish : null,
 		spawnFn,
 		log: [],
 		subscribers: new Set(),
@@ -195,6 +224,22 @@ export function enqueue({ kind, label, spawnFn, stopFile }) {
 export function jobStatus(id) {
 	const job = jobs.get(id);
 	return job ? publicJob(job) : null;
+}
+
+export function jobResult(id) {
+	const job = jobs.get(id);
+	if (!job) return null;
+	return {
+		id: job.id,
+		status: job.status,
+		exitCode: job.exitCode,
+		result: job.result,
+		error: job.error,
+		meta: job.meta || {},
+		startedAt: job.startedAt,
+		endedAt: job.endedAt,
+		durationMs: job.startedAt && job.endedAt ? job.endedAt - job.startedAt : null,
+	};
 }
 
 // cancel(id): if running, tree-kill its child (the ensuing 'close' frees the slot and advances

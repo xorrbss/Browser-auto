@@ -15,9 +15,10 @@ human-gated safety. Korean operator; **on-prem** model; Windows + Git Bash (and 
 **Git topology (corrected 2026-06-07 — earlier notes said "unmerged"; that is stale):** work is on
 `master`. `feat/approval-automation` (eaa84b6) was merged into master (`ce7ff3a`), and
 `feat/linux-docker-support` was merged (`6487e3d`, PR #1) — so **M5's "reconcile with linux-docker" is
-already done**. M2 work (16e1b76, cf99053) is committed directly on master after the merge. Local
-`master` is **22 commits ahead of `origin/master`, 0 behind** — pushing to origin is the external ship
-step (needs user approval). Continuing commits land on `master` (matching the post-merge pattern).
+already done**. M2 work (16e1b76, cf99053) is committed directly on master after the merge. Continuing
+commits land on `master` (matching the post-merge pattern). Before any ship/push, re-check current
+topology with `git status --short --branch` and `git rev-list --left-right --count origin/master...HEAD`;
+do not trust historical ahead/behind counts.
 
 Commits (newest first): `9017850` file-split <500 · `433d39f` enrich fail-loud + queue daemon reaper ·
 `2e46258` NL spans records · `d3f8a8d` lib/aria.js dedup · `cabdb4e` generic goldens + recipe SCHEMA ·
@@ -43,6 +44,10 @@ Verified working:
   contradiction; AMOUNT-SHADOW-1; FP-BODYDIGEST-TRUNC-1; TOCTOU-I6-NOREFP-1; AUTHORITY-2 wording;
   PRESENCE-4). **Gate B staged capture still NOT done; approval implementation remains
   forbidden/fail-closed.**
+- **Current correction for the release-candidate work:** later owner-override entries supersede the early
+  "implementation remains forbidden" note above. The reviewed-batch approve path is built with deterministic
+  guards, Playwright trusted-click leaf, session/origin gate, audit, and scheduler live-refusal. Uncaptured
+  or disabled actions still remain fail-closed/needs implementation.
 
 Recovery note (env): agent-browser daemon wedge (os 10060) = stale `~/.agent-browser` session files;
 fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,pid,port,stream,version}`
@@ -261,26 +266,53 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
   enrich schedulable, unattended LIVE approve refused (`--live` + `AQA_SCHEDULED_NO_LIVE` both block it).
 
 ### M5 — Ship  [P1]
-- README: full RPA registry + 시스템 UI + recipe SCHEMA + the safety model. **IN PROGRESS** — added
-  the "RPA — register any web system (generic data collection)" section (register→인증→구조분석→동기화→
-  상세·요약→조회 table + CLI) and the "Safety model" section (no-LLM-in-gate, on-prem bodies, Phase-2
-  I1–I7 + Gate A/B status). recipe SCHEMA already in `recipes/SCHEMA.md`.
+- README: full RPA registry + 시스템 UI + recipe SCHEMA + the safety model. **RC DOCS UPDATED** —
+  includes the generic RPA lifecycle, CommandPlan operator workflow, approval dry-run/live runbook,
+  audit confirmation, rollback/recovery limits, external dependencies, and the internal open checklist.
+  recipe SCHEMA already lives in `recipes/SCHEMA.md`.
 - ~~Reconcile with `feat/linux-docker-support`~~ — **DONE** (already merged into master, PR #1 `6487e3d`).
 - ~~PR `feat/approval-automation` → `master`~~ — **DONE locally** (merged `ce7ff3a`). Remaining external
-  step: **`git push origin master`** (22 ahead) — needs user approval (publishes the work).
-- **Done when:** `master` has the full product, `run.sh` green, docs complete, pushed to origin.
+  step: **push only after user approval** (publishes the work).
+- **Done when:** dirty work is reviewed, full validation is green, docs are complete, release decision is
+  recorded, and the user approves any external push/deploy step.
+
+### M6 — NL-driven RPA productization  [P1, RELEASE-CANDIDATE IMPLEMENTED 2026-06-09]
+- **Design added/updated:** `dev/active/nl-rpa-product/DESIGN.md`.
+- Purpose: turn the current NL command box from "classify then route" into a durable product flow:
+  **natural language → validated CommandPlan → dry-run/preview → human confirmation → queued deterministic
+  driver → durable web result**.
+- Keeps the core invariant: the model may classify/select/filter, but it never authors browser steps, never
+  clicks, and never reaches a live effectful route directly.
+- **Implemented:** durable `command_plans`/`command_events` tables; `POST /api/agent/plan`;
+  `GET /api/agent/plan(s)/:id`; `POST /api/agent/plan(s)/:id/targets`; `POST /dry-run`;
+  `POST /confirm`; `GET /events`; `GET /result`; `GET /api/jobs/:id/result`; `GET /api/actions`;
+  `GET /api/systems/:name/state`; and `GET /api/systems/:name/actions`.
+- **Gate status:** confirm requires exact plan hash, exact reviewed target-set hash, passing dry-run bound
+  to the same plan/target hash, explicit human confirmation, unconfirmed `awaiting_confirmation` state,
+  and the existing same-origin session gate. Target changes invalidate prior dry-run state.
+- **Partial by design:** `/api/agent` remains a compatibility route and can still enqueue read-only legacy
+  sync/summarize jobs. `/api/agent/plan/:id/result` returns the durable plan/dry-run/confirmation summary;
+  detailed per-target irreversible evidence remains in `data/approve-audit.jsonl` and job results.
+- **Not yet implemented:** exact `GET /api/systems/:name/capabilities` alias/schema, recorded non-approval
+  write actions through `approve/flow-runner.mjs`, and real multi-user auth/roles.
+- **Remaining external dependencies:** private/TLS on-prem model endpoint (`LLM_REQUIRE_PRIVATE=1` once
+  available), Playwright approve login state + list URL per effectful app, synced/staged operational data,
+  disposable live verification docs, operator policy for live criteria, and future multi-user roles.
 
 ---
 
 ## Non-negotiable safety gates (carry forward)
-1. **Phase 2 approve:** no implementation before re-red-team **safe-to-implement** AND staged capture.
-   Fail-closed on anything uncaptured.
+1. **Effectful actions:** fail-closed on anything uncaptured/disabled. New write actions require capture,
+   dry-run, disposable live verification, and explicit enablement before they appear as live-capable.
 2. **Confidential bodies stay on-prem;** harden transport (M4) before any non-local model use in prod.
 3. **The model never** touches the pass/fail gate or the approve click path (structural, not convention).
-4. **Per-item human approval only; no batch auto-approve; no shared/multi-user host** for the approve path.
+4. **CommandPlan live gate:** irreversible live execution requires reviewed targets, plan hash, target-set
+   hash, dry-run hash, human confirmation, session/origin gate, and durable audit/event records.
+5. **Deployment posture:** reviewed live approve is supervised + bounded on a single-user operator host.
+   Unattended/scheduled live approve remains forbidden until signed criteria and staged live evidence exist.
 
 ## Suggested order
-M1 + M3-Gate A (re-red-team) first → M2 / M4 → M3 implementation (after both gates) → M5 ship.
+M1 + M3-Gate A (re-red-team) first → M2 / M4 → M3 implementation (after both gates) → M6 NL productization → M5 ship.
 
 ## File map (orient fast)
 - Engine: `lib/db.js` (approvals + systems/records), `lib/aria.js` (shared parser), `lib/llm.js`

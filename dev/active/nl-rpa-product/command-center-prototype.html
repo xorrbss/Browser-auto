@@ -1,0 +1,967 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AQA Command Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <style>
+    :root {
+      --bg: #f5f7f9;
+      --surface: #ffffff;
+      --surface-2: #f9fbfc;
+      --ink: #17202a;
+      --muted: #667085;
+      --line: #d8e0e7;
+      --line-strong: #b8c4ce;
+      --nav: #263238;
+      --nav-2: #31424a;
+      --teal: #147d8f;
+      --teal-2: #e8f5f7;
+      --blue: #2d6cdf;
+      --green: #207a4b;
+      --green-2: #e8f5ee;
+      --amber: #a86605;
+      --amber-2: #fff4dc;
+      --red: #b42318;
+      --red-2: #fff0ee;
+      --shadow: 0 10px 28px rgba(25, 38, 52, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .app {
+      min-height: 100%;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      background: var(--nav);
+      color: #edf3f5;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      min-width: 0;
+      border-right: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .brand {
+      height: 66px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: #e8f5f7;
+      color: var(--teal);
+    }
+
+    .brand-title { font-size: 15px; font-weight: 700; letter-spacing: 0; }
+    .brand-sub { color: #a9bac1; font-size: 12px; margin-top: 1px; }
+
+    .nav-section { padding: 12px 10px; }
+    .nav-label {
+      padding: 8px 10px;
+      color: #9eb2bb;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .nav-item {
+      width: 100%;
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border-radius: 6px;
+      color: #dce8ec;
+      border: 1px solid transparent;
+    }
+
+    .nav-item:hover { background: rgba(255,255,255,0.06); }
+    .nav-item.active {
+      background: #e8f5f7;
+      color: #0f5662;
+      border-color: rgba(20,125,143,0.24);
+      font-weight: 700;
+    }
+
+    .nav-item i, .brand-mark i, .icon-btn i, .btn i, .chip i { width: 16px; height: 16px; flex: 0 0 16px; }
+
+    .side-footer {
+      margin-top: auto;
+      padding: 14px 14px 16px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .status-tile {
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.04);
+      padding: 12px;
+    }
+
+    .status-tile strong { display: block; font-size: 13px; }
+    .status-tile span { display: block; color: #a9bac1; margin-top: 4px; font-size: 12px; }
+
+    .main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .topbar {
+      height: 66px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .crumbs {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .crumbs h1 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .env-pill {
+      height: 26px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: var(--surface-2);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .top-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .link-btn, .icon-btn {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .link-btn:hover, .icon-btn:hover { border-color: var(--teal); color: #0f5662; }
+    .icon-btn { width: 34px; padding: 0; }
+
+    .workspace {
+      flex: 1;
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 16px;
+      padding: 18px 24px 24px;
+    }
+
+    .command-bar {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) auto;
+      gap: 12px;
+      padding: 14px;
+      align-items: center;
+    }
+
+    .command-input {
+      height: 46px;
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 0 14px;
+      color: var(--ink);
+      background: var(--surface-2);
+      outline: none;
+    }
+
+    .command-input:focus {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(20,125,143,0.12);
+      background: var(--surface);
+    }
+
+    .command-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .btn {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 8px 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .btn.primary {
+      background: var(--teal);
+      border-color: var(--teal);
+      color: #ffffff;
+    }
+
+    .btn.blue {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #ffffff;
+    }
+
+    .btn.danger {
+      background: var(--red);
+      border-color: var(--red);
+      color: #ffffff;
+    }
+
+    .btn:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.42fr) minmax(320px, .58fr);
+      gap: 16px;
+      min-height: 0;
+    }
+
+    .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      min-height: 52px;
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      min-width: 0;
+    }
+
+    .panel-title i { width: 17px; height: 17px; color: var(--teal); }
+    .panel-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .panel-body { padding: 14px; }
+    .dense {
+      padding: 0;
+      overflow-x: auto;
+    }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(130px, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      min-height: 78px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .metric label { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .metric strong { font-size: 22px; line-height: 1; }
+    .metric span { font-size: 12px; color: var(--muted); }
+
+    .plan-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .field {
+      min-height: 66px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 10px 11px;
+    }
+
+    .field label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 6px;
+    }
+
+    .field strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chips {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      min-height: 26px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .chip.ok { color: var(--green); background: var(--green-2); border-color: #bfe5cf; }
+    .chip.warn { color: var(--amber); background: var(--amber-2); border-color: #f2d69b; }
+    .chip.risk { color: var(--red); background: var(--red-2); border-color: #fac8c2; }
+    .chip.info { color: #175cd3; background: #eff4ff; border-color: #c7d7fe; }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      table-layout: fixed;
+    }
+
+    th, td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      background: var(--surface-2);
+      font-weight: 800;
+    }
+
+    tbody tr:hover td { background: #fbfdfe; }
+    tbody tr:last-child td { border-bottom: 0; }
+
+    .col-check { width: 46px; }
+    .col-id { width: 180px; }
+    .col-owner { width: 110px; }
+    .col-date { width: 116px; }
+    .col-status { width: 132px; }
+
+    .check {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--teal);
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .status.ok { background: var(--green-2); color: var(--green); }
+    .status.wait { background: var(--amber-2); color: var(--amber); }
+    .status.dry { background: #eff4ff; color: #175cd3; }
+    .status.fail { background: var(--red-2); color: var(--red); }
+
+    .timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .event {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .event:last-child { border-bottom: 0; }
+
+    .event-dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      color: #ffffff;
+      background: var(--teal);
+      margin-top: 1px;
+    }
+
+    .event-dot i { width: 13px; height: 13px; }
+    .event h3 {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.3;
+    }
+    .event p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .queue-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .queue-row:last-child { border-bottom: 0; }
+    .queue-row strong { display: block; font-size: 13px; }
+    .queue-row span { color: var(--muted); font-size: 12px; }
+
+    .registry {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .registry-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 12px;
+      min-height: 122px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .registry-item h3 {
+      margin: 0 0 4px;
+      font-size: 14px;
+    }
+
+    .registry-item p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .quick-link {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      min-height: 58px;
+    }
+
+    .quick-link:hover { border-color: var(--teal); color: #0f5662; }
+    .quick-link i { width: 18px; height: 18px; color: var(--teal); }
+
+    @media (max-width: 1180px) {
+      .grid { grid-template-columns: 1fr; }
+      .registry, .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 860px) {
+      .app { grid-template-columns: 1fr; }
+      .app, .sidebar, .main, .topbar, .workspace { max-width: 100vw; }
+      .sidebar { min-height: auto; overflow-x: hidden; }
+      .nav-section { display: flex; gap: 6px; overflow-x: auto; padding: 10px; }
+      .nav-item { width: auto; flex: 0 0 auto; }
+      .nav-label, .side-footer { display: none; }
+      .brand { height: 56px; }
+      .topbar { height: auto; align-items: flex-start; flex-direction: column; padding: 14px; }
+      .top-links { justify-content: flex-start; width: 100%; }
+      .link-btn { min-width: 0; }
+      .workspace { padding: 14px; overflow-x: hidden; }
+      .command-bar { grid-template-columns: 1fr; }
+      .command-actions { justify-content: flex-start; }
+      .command-actions .btn { flex: 1 1 118px; }
+      .kpis, .plan-grid, .registry, .footer-grid { grid-template-columns: 1fr; }
+      .dense table { min-width: 680px; }
+      .col-owner, .col-date { display: none; }
+      th.col-owner, td.col-owner, th.col-date, td.col-date { display: none; }
+    }
+
+    @media (max-width: 480px) {
+      .brand { padding: 0 12px; }
+      .topbar { padding: 12px; }
+      .workspace { padding: 12px; }
+      .command-actions { display: grid; grid-template-columns: 1fr; }
+      .command-actions .btn { width: 100%; }
+      .crumbs { flex-wrap: wrap; }
+      .crumbs h1 { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><i data-lucide="workflow"></i></div>
+        <div>
+          <div class="brand-title">AQA Command Center</div>
+          <div class="brand-sub">NL RPA Control Plane</div>
+        </div>
+      </div>
+
+      <nav class="nav-section" aria-label="Main">
+        <div class="nav-label">Workspace</div>
+        <a class="nav-item active" href="#command"><i data-lucide="terminal-square"></i>명령</a>
+        <a class="nav-item" href="#targets"><i data-lucide="list-checks"></i>검토</a>
+        <a class="nav-item" href="#systems"><i data-lucide="database"></i>시스템</a>
+        <a class="nav-item" href="#actions"><i data-lucide="mouse-pointer-click"></i>액션</a>
+        <a class="nav-item" href="#audit"><i data-lucide="file-clock"></i>감사</a>
+        <a class="nav-item" href="#links"><i data-lucide="link"></i>링크</a>
+      </nav>
+
+      <div class="side-footer">
+        <div class="status-tile">
+          <strong>Queue idle</strong>
+          <span>agent-browser daemon warm</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="crumbs">
+          <h1>명령 실행</h1>
+          <span class="env-pill"><i data-lucide="shield-check"></i>Local operator</span>
+          <span class="env-pill"><i data-lucide="server"></i>127.0.0.1:4310</span>
+        </div>
+        <div class="top-links">
+          <a class="link-btn" href="http://127.0.0.1:4310" target="_blank" rel="noreferrer"><i data-lucide="external-link"></i>WebUI</a>
+          <a class="link-btn" href="http://127.0.0.1:4310/api/queue" target="_blank" rel="noreferrer"><i data-lucide="activity"></i>Queue API</a>
+          <a class="link-btn" href="DESIGN.md"><i data-lucide="file-text"></i>Design</a>
+          <button class="icon-btn" type="button" title="Refresh"><i data-lucide="refresh-cw"></i></button>
+        </div>
+      </header>
+
+      <section class="workspace" id="command">
+        <div class="command-bar">
+          <input id="commandInput" class="command-input" value="미결 지출 10건 요약하고 결재 준비해줘" aria-label="Command" />
+          <div class="command-actions">
+            <button id="planBtn" class="btn primary" type="button"><i data-lucide="sparkles"></i>Plan</button>
+            <button id="dryRunBtn" class="btn blue" type="button" disabled><i data-lucide="play-circle"></i>Dry-run</button>
+            <button id="confirmBtn" class="btn danger" type="button" disabled><i data-lucide="check-circle-2"></i>Confirm</button>
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="stack">
+            <section class="panel">
+              <div class="panel-head">
+                <div class="panel-title"><i data-lucide="layout-dashboard"></i><span>CommandPlan</span></div>
+                <div class="chips">
+                  <span id="planState" class="chip warn"><i data-lucide="clock-3"></i>planned</span>
+                  <span class="chip risk"><i data-lucide="lock-keyhole"></i>irreversible</span>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="kpis">
+                  <div class="metric"><label>Targets</label><strong id="metricTargets">10</strong><span>selected records</span></div>
+                  <div class="metric"><label>Dry-run</label><strong id="metricDry">required</strong><span>before confirm</span></div>
+                  <div class="metric"><label>Action</label><strong>approve</strong><span>reviewed mode</span></div>
+                  <div class="metric"><label>Policy</label><strong>human</strong><span>session gated</span></div>
+                </div>
+              </div>
+              <div class="panel-body" style="border-top:1px solid var(--line)">
+                <div class="plan-grid">
+                  <div class="field"><label>System</label><strong>hiworks</strong></div>
+                  <div class="field"><label>Intent</label><strong>prepare_action</strong></div>
+                  <div class="field"><label>Permission</label><strong>actions.approve.live</strong></div>
+                  <div class="field"><label>Source</label><strong id="planSource">미결 지출 10건 요약하고 결재 준비해줘</strong></div>
+                  <div class="field"><label>Plan ID</label><strong id="planId">cmd_20260608_001</strong></div>
+                  <div class="field"><label>Plan hash</label><strong id="planHash">a4d9-71c2-f0e8</strong></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel" id="targets">
+              <div class="panel-head">
+                <div class="panel-title"><i data-lucide="list-checks"></i><span>Target review</span></div>
+                <div class="chips">
+                  <span class="chip info"><i data-lucide="database"></i>records</span>
+                  <span id="targetState" class="chip warn"><i data-lucide="scan-search"></i>awaiting dry-run</span>
+                </div>
+              </div>
+              <div class="dense">
+                <table aria-label="Target review">
+                  <thead>
+                    <tr>
+                      <th class="col-check"></th>
+                      <th class="col-id">Key</th>
+                      <th>Title</th>
+                      <th class="col-owner">Drafter</th>
+                      <th class="col-date">Submitted</th>
+                      <th class="col-status">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="targetRows"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel" id="systems">
+              <div class="panel-head">
+                <div class="panel-title"><i data-lucide="database"></i><span>System registry</span></div>
+                <a class="link-btn" href="http://127.0.0.1:4310/api/systems" target="_blank" rel="noreferrer"><i data-lucide="external-link"></i>Systems API</a>
+              </div>
+              <div class="dense">
+                <table aria-label="System registry">
+                  <thead>
+                    <tr>
+                      <th>System</th>
+                      <th>Recipe</th>
+                      <th>Records</th>
+                      <th class="col-status">State</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>hiworks</td>
+                      <td>recipes/hiworks.json</td>
+                      <td>177</td>
+                      <td class="col-status"><span class="status ok"><i data-lucide="check"></i>ready</span></td>
+                    </tr>
+                    <tr>
+                      <td>daou</td>
+                      <td>recipes/daou.json</td>
+                      <td>sample</td>
+                      <td class="col-status"><span class="status dry"><i data-lucide="flask-conical"></i>verified</span></td>
+                    </tr>
+                    <tr>
+                      <td>erp-demo</td>
+                      <td>registry draft</td>
+                      <td>0</td>
+                      <td class="col-status"><span class="status wait"><i data-lucide="clock-3"></i>analyze</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel" id="actions">
+              <div class="panel-head">
+                <div class="panel-title"><i data-lucide="mouse-pointer-click"></i><span>Action registry</span></div>
+                <a class="link-btn" href="http://127.0.0.1:4310/api/approve/state?app=hiworks" target="_blank" rel="noreferrer"><i data-lucide="external-link"></i>State API</a>
+              </div>
+              <div class="panel-body">
+                <div class="registry">
+                  <div class="registry-item">
+                    <div>
+                      <h3>approve</h3>
+                      <p>irreversible · reviewedOnly</p>
+                    </div>
+                    <span class="status ok"><i data-lucide="check"></i>enabled</span>
+                  </div>
+                  <div class="registry-item">
+                    <div>
+                      <h3>reject</h3>
+                      <p>irreversible · Gate-B pending</p>
+                    </div>
+                    <span class="status wait"><i data-lucide="pause-circle"></i>disabled</span>
+                  </div>
+                  <div class="registry-item">
+                    <div>
+                      <h3>status-change</h3>
+                      <p>reversible-partial · captured flow</p>
+                    </div>
+                    <span class="status dry"><i data-lucide="flask-conical"></i>dry-run</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <aside class="stack">
+            <section class="panel">
+              <div class="panel-head">
+                <div class="panel-title"><i data-lucide="route"></i><span>Event timeline</span></div>
+                <span id="eventBadge" class="chip info">4 events</span>
+              </div>
+              <div id="timeline" class="timeline"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div class="panel-title"><i data-lucide="radio-tower"></i><span>Queue</span></div>
+                <span id="queueBadge" class="chip ok">idle</span>
+              </div>
+              <div id="queueRows"></div>
+            </section>
+
+            <section class="panel" id="audit">
+              <div class="panel-head">
+                <div class="panel-title"><i data-lucide="file-clock"></i><span>Audit</span></div>
+                <a class="link-btn" href="http://127.0.0.1:4310/api/approve/audit?limit=300" target="_blank" rel="noreferrer"><i data-lucide="external-link"></i>Audit API</a>
+              </div>
+              <div class="panel-body">
+                <div class="chips">
+                  <span class="chip ok"><i data-lucide="check-check"></i>fsync leaf audit</span>
+                  <span class="chip info"><i data-lucide="history"></i>command events</span>
+                  <span class="chip warn"><i data-lucide="user-check"></i>human confirm</span>
+                </div>
+              </div>
+            </section>
+          </aside>
+        </div>
+
+        <section class="panel" id="links">
+          <div class="panel-head">
+            <div class="panel-title"><i data-lucide="link"></i><span>Workspace links</span></div>
+          </div>
+          <div class="panel-body">
+            <div class="footer-grid">
+              <a class="quick-link" href="http://127.0.0.1:4310" target="_blank" rel="noreferrer"><i data-lucide="monitor-dot"></i>Local WebUI</a>
+              <a class="quick-link" href="../../product-completion/GOAL.md"><i data-lucide="flag"></i>Product Goal</a>
+              <a class="quick-link" href="../general-action-rpa/DESIGN.md"><i data-lucide="workflow"></i>Action RPA</a>
+              <a class="quick-link" href="DESIGN.md"><i data-lucide="file-text"></i>NL Design</a>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const targets = [
+      ["IB-EXP-20260608-0012", "출장비 정산", "김민수", "2026-06-08"],
+      ["IB-EXP-20260608-0011", "거래처 식대 정산", "박서연", "2026-06-08"],
+      ["IB-EXP-20260607-0044", "교육비 지출 결의", "이정훈", "2026-06-07"],
+      ["IB-EXP-20260607-0039", "소프트웨어 구독 갱신", "최유진", "2026-06-07"],
+      ["IB-EXP-20260606-0021", "현장 교통비 정산", "정하늘", "2026-06-06"],
+      ["IB-EXP-20260606-0018", "비품 구매 지출", "한지민", "2026-06-06"]
+    ];
+
+    const events = [
+      ["sparkles", "Plan created", "intent=prepare_action · system=hiworks · action=approve"],
+      ["database", "Targets resolved", "records query returned 10 candidates"],
+      ["shield-check", "Guards attached", "dry-run required · session gate required"],
+      ["clock-3", "Waiting", "operator dry-run pending"]
+    ];
+
+    const queue = [
+      ["sync hiworks", "done · 177 records"],
+      ["enrich hiworks", "done · summaries updated"],
+      ["approve reviewed batch", "not queued"]
+    ];
+
+    function icon(name) {
+      return `<i data-lucide="${name}"></i>`;
+    }
+
+    function renderTargets(mode) {
+      const body = document.querySelector("#targetRows");
+      body.innerHTML = targets.map((t, index) => {
+        const status = mode === "confirmed"
+          ? `<span class="status ok">${icon("check")}queued</span>`
+          : mode === "dry"
+            ? `<span class="status dry">${icon("check-circle-2")}dry-ok</span>`
+            : `<span class="status wait">${icon("clock-3")}pending</span>`;
+        return `
+          <tr>
+            <td class="col-check"><input class="check" type="checkbox" ${index < 4 ? "checked" : ""} /></td>
+            <td class="col-id" title="${t[0]}">${t[0]}</td>
+            <td title="${t[1]}">${t[1]}</td>
+            <td class="col-owner">${t[2]}</td>
+            <td class="col-date">${t[3]}</td>
+            <td class="col-status">${status}</td>
+          </tr>
+        `;
+      }).join("");
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function renderEvents(items) {
+      const timeline = document.querySelector("#timeline");
+      timeline.innerHTML = items.map((e) => `
+        <div class="event">
+          <div class="event-dot">${icon(e[0])}</div>
+          <div><h3>${e[1]}</h3><p>${e[2]}</p></div>
+        </div>
+      `).join("");
+      document.querySelector("#eventBadge").textContent = `${items.length} events`;
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function renderQueue(mode) {
+      const rows = document.querySelector("#queueRows");
+      const list = mode === "confirmed"
+        ? [["approve reviewed batch", "running · j42"], ["sync hiworks", "done · 177 records"], ["enrich hiworks", "done · summaries updated"]]
+        : queue;
+      rows.innerHTML = list.map((q) => `
+        <div class="queue-row">
+          <div><strong>${q[0]}</strong><span>${q[1]}</span></div>
+          <span class="chip ${q[1].startsWith("running") ? "warn" : q[1].startsWith("done") ? "ok" : "info"}">${q[1].split(" · ")[0]}</span>
+        </div>
+      `).join("");
+      document.querySelector("#queueBadge").className = mode === "confirmed" ? "chip warn" : "chip ok";
+      document.querySelector("#queueBadge").textContent = mode === "confirmed" ? "running" : "idle";
+    }
+
+    document.querySelector("#planBtn").addEventListener("click", () => {
+      const text = document.querySelector("#commandInput").value.trim() || "미결 문서 조회";
+      document.querySelector("#planSource").textContent = text;
+      document.querySelector("#planId").textContent = "cmd_" + new Date().toISOString().slice(0,10).replaceAll("-", "") + "_002";
+      document.querySelector("#planHash").textContent = Math.random().toString(16).slice(2, 6) + "-71c2-f0e8";
+      document.querySelector("#planState").className = "chip warn";
+      document.querySelector("#planState").innerHTML = `${icon("clock-3")}planned`;
+      document.querySelector("#dryRunBtn").disabled = false;
+      document.querySelector("#confirmBtn").disabled = true;
+      document.querySelector("#metricDry").textContent = "required";
+      document.querySelector("#targetState").className = "chip warn";
+      document.querySelector("#targetState").innerHTML = `${icon("scan-search")}awaiting dry-run`;
+      renderTargets("planned");
+      renderEvents(events);
+      renderQueue("idle");
+    });
+
+    document.querySelector("#dryRunBtn").addEventListener("click", () => {
+      document.querySelector("#planState").className = "chip info";
+      document.querySelector("#planState").innerHTML = `${icon("flask-conical")}dry-run passed`;
+      document.querySelector("#metricDry").textContent = "passed";
+      document.querySelector("#targetState").className = "chip info";
+      document.querySelector("#targetState").innerHTML = `${icon("check-circle-2")}dry-ok`;
+      document.querySelector("#confirmBtn").disabled = false;
+      renderTargets("dry");
+      renderEvents([...events, ["flask-conical", "Dry-run passed", "identity/title/completion guards green"]]);
+    });
+
+    document.querySelector("#confirmBtn").addEventListener("click", () => {
+      document.querySelector("#planState").className = "chip ok";
+      document.querySelector("#planState").innerHTML = `${icon("check-check")}confirmed`;
+      document.querySelector("#targetState").className = "chip ok";
+      document.querySelector("#targetState").innerHTML = `${icon("radio-tower")}queued`;
+      renderTargets("confirmed");
+      renderEvents([...events, ["flask-conical", "Dry-run passed", "identity/title/completion guards green"], ["user-check", "Confirmed", "session + same-origin gate accepted"], ["radio-tower", "Job queued", "approve reviewed batch · j42"]]);
+      renderQueue("confirmed");
+    });
+
+    renderTargets("planned");
+    renderEvents(events);
+    renderQueue("idle");
+    if (window.lucide) window.lucide.createIcons();
+  </script>
+</body>
+</html>

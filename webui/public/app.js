@@ -1,704 +1,1019 @@
-// webui/public/app.js — entry module. Runs view (dashboard + run trigger) + view switching +
-// global queue status. Flows view lives in flows.js. Shared helpers in util.js.
+// webui/public/app.js -- NL RPA Control Plane shell.
+// Zero-dependency browser app over the existing localhost APIs.
 
-import { $, el, getJson, fmtMs, fmtTime, statusKo, streamJob, cancelJob } from './util.js';
-import { initFlows, loadFlows, reconcileFlowJob } from './flows.js';
-import { initSystems, loadSystems, reconcileSysJob, renderRecordCard } from './systems-view.js';
+import { $, el, getJson, fmtTime, streamJob, cancelJob } from './util.js';
 
-// ---------- Runs dashboard ----------
+const VIEW_TITLES = {
+	'command-center': 'Command Center',
+	'nl-command': 'Natural Language Command',
+	'command-plan': 'CommandPlan',
+	'target-review': 'Target Review',
+	systems: 'System Registry',
+	actions: 'Action Registry',
+	queue: 'Queue / Jobs',
+	audit: 'Audit Log',
+	'approval-state': 'Approval State',
+	diagnostics: 'Diagnostics / Workspace Links',
+};
 
-let selectedRunId = null;
+const state = {
+	view: 'command-center',
+	approvals: [],
+	systems: [],
+	records: [],
+	queue: null,
+	audit: [],
+	runs: [],
+	flows: [],
+	auth: [],
+	actionStates: new Map(),
+	actions: [],
+	selectedTargets: new Set(),
+	selectedSystem: '',
+	plan: null,
+	planEvents: [],
+	dryRunPassed: false,
+	dryRunSummary: null,
+	activeApproveJob: null,
+	activeSystemJob: null,
+	activeRunJob: null,
+};
 
-async function loadRuns() {
-	const list = $('#runs');
-	try {
-		const { runs } = await getJson('/api/runs');
-		list.replaceChildren();
-		if (!runs.length) {
-			list.append(el('div', { class: 'hint' }, '아직 실행이 없습니다. 위에서 스위트를 실행하세요.'));
-			return;
-		}
-		for (const r of runs) {
-			const ok = r.failed === 0;
-			list.append(
-				el(
-					'button',
-					{ class: 'run-row' + (r.runId === selectedRunId ? ' active' : ''), type: 'button', dataset: { runId: r.runId }, onclick: () => selectRun(r.runId) },
-					el('span', { class: 'badge ' + (ok ? 'pass' : 'fail') }, ok ? 'PASS' : 'FAIL'),
-					el(
-						'span',
-						{ class: 'run-meta' },
-						el('span', { class: 'run-id' }, r.runId),
-						el('span', { class: 'run-sub' }, `${r.passed}/${r.total} • ${fmtMs(r.durationMs)} • ${fmtTime(r.startedAt)}`),
-					),
-				),
-			);
-		}
-	} catch (e) {
-		list.replaceChildren(el('div', { class: 'error' }, `실행 목록을 불러오지 못했습니다: ${e.message}`));
-	}
+const empty = (message) => el('div', { class: 'empty' }, message);
+const errorBox = (message) => el('div', { class: 'notice danger' }, message);
+const warnBox = (message) => el('div', { class: 'notice warning' }, message);
+
+function badge(label, kind = 'neutral') {
+	return el('span', { class: `badge ${kind}` }, label);
 }
 
-async function selectRun(runId) {
-	selectedRunId = runId;
-	for (const b of document.querySelectorAll('#runs .run-row')) b.classList.toggle('active', b.dataset.runId === runId);
-	const detail = $('#detail');
-	detail.replaceChildren(el('div', { class: 'placeholder' }, '로딩 중…'));
-	try {
-		renderDetail(await getJson(`/api/runs/${encodeURIComponent(runId)}`));
-	} catch (e) {
-		detail.replaceChildren(el('div', { class: 'error' }, `실행을 불러오지 못했습니다: ${e.message}`));
-	}
+function safeText(value, fallback = '') {
+	if (value == null || value === '') return fallback;
+	return String(value);
 }
 
-function renderDetail(run) {
-	const ok = run.failed === 0;
-	const head = el(
-		'div',
-		{ class: 'detail-head' },
-		el('span', { class: 'badge ' + (ok ? 'pass' : 'fail') }, ok ? 'PASS' : 'FAIL'),
-		el('h2', {}, run.runId),
-		el('span', { class: 'detail-sub' }, `통과 ${run.passed}/${run.total} • 실패 ${run.failed} • ${fmtMs(run.durationMs)} • ${fmtTime(run.startedAt)}`),
-	);
-	const links = el('div', { class: 'links' });
-	if (run.hasReport) links.append(el('a', { href: `/artifacts/${run.runId}/report.json`, target: '_blank' }, 'report.json'));
-	if (run.hasJunit) links.append(el('a', { href: `/artifacts/${run.runId}/report.junit.xml`, target: '_blank' }, 'report.junit.xml'));
-
-	const tests = el('div', { class: 'tests' });
-	for (const t of run.tests) {
-		const card = el(
-			'div',
-			{ class: 'test' },
-			el(
-				'div',
-				{ class: 'test-head' },
-				el('span', { class: 'badge sm ' + (t.status === 'pass' ? 'pass' : 'fail') }, statusKo(t.status)),
-				el('span', { class: 'test-name' }, t.name),
-				el('span', { class: 'test-dur' }, fmtMs(t.durationMs)),
-			),
-		);
-		if (t.hasVideo) {
-			card.append(el('video', { class: 'video', controls: '', preload: 'metadata', src: `/artifacts/${run.runId}/${encodeURIComponent(t.name)}/video.webm` }));
-		} else {
-			card.append(el('div', { class: 'no-video' }, '비디오 없음 (브라우저 미사용 테스트)'));
-		}
-		tests.append(card);
-	}
-	$('#detail').replaceChildren(head, links, tests);
+function statusKind(value) {
+	const s = String(value || '').toLowerCase();
+	if (['done', 'pass', 'passed', 'ready', 'ok', 'success', 'succeeded', 'approved', 'confirmed', 'synced', 'verified', 'dry-ok', 'implemented', 'enabled'].includes(s)) return 'success';
+	if (['running', 'queued', 'pending', 'planned', 'dry-running', 'dry'].includes(s)) return 'info';
+	if (['needs implementation', 'needs-review', 'needs_review', 'skipped', 'stale-auth', 'awaiting-confirmation', 'disabled', 'not queued'].includes(s)) return 'warning';
+	if (['failed', 'fail', 'refused', 'blocked', 'cancelled', 'guard-failed', 'unavailable'].includes(s)) return 'danger';
+	return 'neutral';
 }
 
-// ---------- Run trigger (job + SSE log) ----------
-
-function renderJobPanel(job) {
-	const log = el('pre', { class: 'joblog', id: 'joblog' });
-	$('#detail').replaceChildren(
-		el(
-			'div',
-			{ class: 'job' },
-			el(
-				'div',
-				{ class: 'detail-head' },
-				el('span', { class: 'badge run', id: 'job-badge' }, statusKo(job.status || 'running')),
-				el('h2', {}, job.label || job.kind),
-				el('span', { class: 'detail-sub', id: 'job-sub' }, job.id),
-				el('button', { class: 'cancel-btn', id: 'job-cancel', type: 'button', onclick: () => cancelJob(job.id).then(refreshQueue) }, '✕ 취소'),
-			),
-			log,
-		),
-	);
-	return log;
+function statusBadge(value, override) {
+	const label = safeText(value, 'unknown');
+	return badge(label, override || statusKind(label));
 }
 
-async function runSuite() {
-	const glob = $('#glob').value.trim();
-	let resp;
-	try {
-		resp = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ glob }) });
-	} catch (e) {
-		$('#detail').replaceChildren(el('div', { class: 'error' }, `실행 요청 실패: ${e.message}`));
-		return;
-	}
-	if (!resp.ok) {
-		const e = await resp.json().catch(() => ({ error: resp.statusText }));
-		$('#detail').replaceChildren(el('div', { class: 'error' }, `실행 거부됨: ${e.error || resp.status}`));
-		return;
-	}
-	const { job } = await resp.json();
-	const log = renderJobPanel(job);
-	streamJob(job.id, log, (done) => {
-		const badge = $('#job-badge');
-		if (badge) {
-			badge.textContent = statusKo(done.status);
-			badge.className = 'badge ' + (done.status === 'done' ? 'pass' : 'fail');
-		}
-		const sub = $('#job-sub');
-		if (sub) sub.textContent = `${done.id} • 종료 ${done.exitCode}`;
-		const cb = $('#job-cancel');
-		if (cb) cb.remove();
-		loadRuns();
-		if (done.runId) selectRun(done.runId);
-		refreshQueue();
+async function postJson(url, body) {
+	const r = await fetch(url, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body || {}),
 	});
-	refreshQueue();
+	const data = await r.json().catch(() => ({}));
+	if (!r.ok) throw new Error(data.error || `${r.status} ${r.statusText}`);
+	return data;
 }
 
-async function refreshQueue() {
-	try {
-		const q = await getJson('/api/queue');
-		const node = $('#qstatus');
-		if (q.busy) {
-			node.textContent = `실행중 ${q.running.id}` + (q.pending.length ? ` • 대기 ${q.pending.length}` : '');
-			node.className = 'qstatus busy';
-		} else {
-			node.textContent = q.pending.length ? `대기 ${q.pending.length}` : '대기';
-			node.className = 'qstatus';
-		}
-		// Self-heal per-view job controls: the shared single SSE stream (util.js) can be
-		// pre-empted when another view starts a job, so a view's own onEnd may never fire.
-		// Reconcile against the queue here (runs every 2s) so stuck cancel buttons clear and
-		// lists refresh once a job is no longer running/pending.
-		const activeIds = new Set([q.running && q.running.id, ...q.pending.map((p) => p.id)].filter(Boolean));
-		if (syncJob && !activeIds.has(syncJob)) {
-			syncJob = null;
-			$('#sync-cancel').hidden = true;
-			loadApprovals(); // a finished sync may have written new rows
-		}
-		if (authJob && !activeIds.has(authJob)) {
-			authJob = null;
-			$('#auth-cancel').hidden = true;
-			loadAuth(); // a finished auth may have saved a new state
-		}
-		reconcileSysJob(activeIds);
-		reconcileFlowJob(activeIds);
-	} catch {
-		/* leave last status */
-	}
+async function refreshPlan(id = state.plan?.id) {
+	if (!id) return null;
+	const [{ plan }, ev] = await Promise.all([
+		getJson(`/api/agent/plan/${encodeURIComponent(id)}`),
+		getJson(`/api/agent/plan/${encodeURIComponent(id)}/events`).catch(() => ({ events: [] })),
+	]);
+	state.plan = plan;
+	state.planEvents = ev.events || [];
+	state.dryRunPassed = !!(plan?.dryRun && plan.dryRun.status === 'passed' && plan.dryRun.planHash === plan.hash && plan.dryRun.targetSetHash === plan.targetSetHash);
+	state.dryRunSummary = plan?.dryRun?.result || null;
+	updatePlanPill();
+	return plan;
 }
 
-// ---------- P3: trends (read-only) ----------
-
-async function loadTrends() {
-	const box = $('#trends');
-	try {
-		const { runs, tests } = await getJson('/api/trends');
-		box.replaceChildren();
-		if (!runs.length) {
-			box.append(el('div', { class: 'hint' }, '아직 실행이 없습니다.'));
-			return;
-		}
-		const table = el('table', { class: 'trend-table' });
-		const head = el('tr', {}, el('th', { class: 'tname' }, '테스트'));
-		runs.forEach((r) => head.append(el('th', { class: r.total === 0 ? 'none' : r.failed === 0 ? 'pass' : 'fail', title: `${r.runId} — ${r.passed}/${r.total}` }, `${r.passRate}%`)));
-		table.append(head);
-		for (const name of Object.keys(tests).sort()) {
-			const byRun = Object.fromEntries(tests[name].map((h) => [h.runId, h.status]));
-			const row = el('tr', {}, el('td', { class: 'tname' }, name));
-			runs.forEach((r) => {
-				const st = byRun[r.runId] || 'none';
-				row.append(el('td', {}, el('span', { class: 'dot ' + st, title: `${name} @ ${r.runId}: ${st}` })));
-			});
-			table.append(row);
-		}
-		box.append(el('div', { class: 'trend-sub' }, `실행 ${runs.length}개, 과거 → 최신. 최신 통과율: ${runs[runs.length - 1].passRate}%`), table);
-	} catch (e) {
-		box.replaceChildren(el('div', { class: 'error' }, `추세를 불러오지 못했습니다: ${e.message}`));
-	}
+function setChildren(node, ...children) {
+	node.replaceChildren(...children.filter(Boolean));
 }
 
-// ---------- P3: auth (control-plane wrapper over setup/auth.sh) ----------
-
-let authJob = null;
-
-async function loadAuth() {
-	const node = $('#auth-list');
-	try {
-		const { apps } = await getJson('/api/auth');
-		node.replaceChildren();
-		if (!apps.length) {
-			node.append(document.createTextNode('(없음)'));
-			return;
-		}
-		for (const a of apps) {
-			node.append(el('span', { class: 'auth-chip' }, a, el('button', { class: 'chip-x', type: 'button', title: 'delete cached state', onclick: () => deleteAuth(a) }, '✕')));
-		}
-	} catch {
-		node.textContent = '(오류)';
-	}
+function selectedDocs() {
+	return [...state.selectedTargets].filter(Boolean);
 }
 
-async function deleteAuth(app) {
-	if (!confirm(`"${app}" 앱의 캐시된 인증 상태를 삭제할까요? 이 앱을 쓰는 테스트는 재인증이 필요합니다.`)) return;
-	try {
-		await fetch(`/api/auth/${encodeURIComponent(app)}/delete`, { method: 'POST' });
-	} catch {
-		/* ignore; loadAuth re-syncs */
-	}
-	loadAuth();
-}
-
-async function startAuth() {
-	if (authJob) return; // one auth in flight at a time (avoid orphaning the tracked job)
-	const app = $('#auth-app').value.trim();
-	const loginUrl = $('#auth-login').value.trim();
-	const successUrl = $('#auth-success').value.trim();
-	const log = $('#auth-log');
-	log.hidden = false;
-	log.textContent = '인증 시작 중…';
-	let resp;
-	try {
-		resp = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, loginUrl, successUrl }) });
-	} catch (e) {
-		log.textContent = `인증 실패: ${e.message}`;
-		return;
-	}
-	if (!resp.ok) {
-		const e = await resp.json().catch(() => ({ error: resp.statusText }));
-		log.textContent = `인증 거부됨: ${e.error || resp.status}`;
-		return;
-	}
-	const { job } = await resp.json();
-	authJob = job.id;
-	$('#auth-cancel').hidden = false;
-	streamJob(job.id, log, () => {
-		authJob = null;
-		$('#auth-cancel').hidden = true;
-		loadAuth(); // a new state file may now exist
-	});
-	refreshQueue();
-}
-
-// ---------- jobs history (uses existing /api/queue + /api/jobs/:id/stream) ----------
-
-async function loadJobs() {
-	const list = $('#jobs-list');
-	try {
-		const q = await getJson('/api/queue');
-		const ordered = [];
-		const seen = new Set();
-		for (const j of [q.running, ...q.pending, ...q.recent]) {
-			if (j && !seen.has(j.id)) {
-				seen.add(j.id);
-				ordered.push(j);
-			}
-		}
-		list.replaceChildren();
-		if (!ordered.length) {
-			list.append(el('div', { class: 'hint' }, '아직 작업이 없습니다.'));
-			return;
-		}
-		for (const j of ordered) {
-			const cls = j.status === 'done' ? 'pass' : j.status === 'failed' || j.status === 'cancelled' ? 'fail' : 'run';
-			list.append(
-				el(
-					'button',
-					{ class: 'run-row', type: 'button', dataset: { job: j.id }, onclick: () => openJob(j.id) },
-					el('span', { class: 'badge ' + cls }, statusKo(j.status)),
-					el(
-						'span',
-						{ class: 'run-meta' },
-						el('span', { class: 'run-id' }, j.label || j.kind || j.id),
-						el('span', { class: 'run-sub' }, `${j.id} • ${j.kind}${j.exitCode != null ? ` • 종료 ${j.exitCode}` : ''}`),
-					),
-				),
-			);
-		}
-	} catch (e) {
-		list.replaceChildren(el('div', { class: 'error' }, `작업 목록을 불러오지 못했습니다: ${e.message}`));
-	}
-}
-
-function openJob(id) {
-	for (const b of document.querySelectorAll('#jobs-list .run-row')) b.classList.toggle('active', b.dataset.job === id);
-	const log = $('#jobs-log');
-	log.hidden = false;
-	$('#jobs-detail').replaceChildren(el('div', { class: 'detail-head' }, el('h2', {}, `작업 ${id}`)));
-	// replays the buffered log (and streams live if still running); refresh the list at end.
-	streamJob(id, log, () => loadJobs());
-}
-
-// ---------- approvals (결재 미결함) — read/display only (P0; approve is P1) ----------
-
-let syncJob = null;
-
-// one approval card. `selectable` adds a결재-선택 checkbox (the 결재 list passes true; NL results don't).
-function renderApprovalCard(a, selectable = false) {
-	const head = el('div', { class: 'approval-head' });
-	if (selectable && a.status !== 'approved') head.append(el('input', { type: 'checkbox', class: 'rev-chk', title: '결재 선택', dataset: { doc: a.doc_id }, onchange: updateRevCount }));
-	head.append(
-		el('span', { class: 'badge sm ' + (a.status === 'approved' ? 'pass' : 'run') }, statusKo(a.status)),
-		el('span', { class: 'approval-title' }, a.title || '(제목 없음)'),
-		el('span', { class: 'approval-id' }, a.doc_id),
-	);
-	const card = el('div', { class: 'approval' }, head,
-		el('div', { class: 'approval-meta' }, [a.drafter, a.dept, a.submitted_at, a.amount ? a.amount + '원' : null].filter(Boolean).join(' • ')),
-	);
-	if (a.summary) card.append(el('div', { class: 'approval-summary' }, a.summary));
-	else if (a.raw_text) card.append(el('div', { class: 'approval-raw' }, a.raw_text));
-	else if (selectable) card.append(el('div', { class: 'approval-raw hint' }, '요약 없음 — 제목·메타만 확인 후 체크하세요(요약하려면 동기화 후 NL "요약").'));
-	return card;
-}
-
-// NL command box: POST /api/agent -> show the routed intent, then stream a job (sync/summarize)
-// or render rows (query/approve-candidates) or the clarify question. The model only classified;
-// the server did the routing. Approval EXECUTION is never triggered here (Phase 2, human-gated).
-async function runAgent() {
-	const text = $('#agent-cmd').value.trim();
-	if (!text) return;
-	const out = $('#agent-out');
-	out.hidden = false;
-	out.replaceChildren(el('div', { class: 'hint' }, '명령 분류 중…'));
-	let resp;
-	try {
-		resp = await fetch('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
-	} catch (e) {
-		out.replaceChildren(el('div', { class: 'error' }, `요청 실패: ${e.message}`));
-		return;
-	}
-	if (!resp.ok) {
-		const e = await resp.json().catch(() => ({ error: resp.statusText }));
-		out.replaceChildren(el('div', { class: 'error' }, `거부됨: ${e.error || resp.status}`));
-		return;
-	}
-	const data = await resp.json();
-	const intent = data.intent || {};
-	out.replaceChildren(el('div', { class: 'agent-head' }, el('span', { class: 'badge run' }, '의도: ' + (intent.action || '?')), el('span', { class: 'agent-echo' }, text)));
-	if (intent.action === 'clarify') { out.append(el('div', { class: 'note' }, intent.question || '무엇을 도와드릴까요?')); return; }
-	if (intent.action === 'sync' || intent.action === 'summarize') {
-		const log = el('pre', { class: 'joblog' });
-		out.append(log);
-		if (data.job) streamJob(data.job.id, log, () => loadApprovals());
-		return;
-	}
-	// review = the composite "prepare to approve" intent: (optionally) summarize, THEN surface the 결재
-	// checkbox review so the user checks + clicks 선택 항목 결재. The model only classified — it never approves.
-	if (intent.action === 'review') {
-		out.append(el('div', { class: 'note' }, '검토-결재 준비 — 아래 목록에서 결재할 항목을 체크하고 [✅ 선택 항목 결재]를 누르세요(사람이 직접 선택).'));
-		const after = () => { loadApprovals(); const rb = document.querySelector('.review-bar'); if (rb) rb.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
-		if (data.job) { const log = el('pre', { class: 'joblog' }); out.append(log); streamJob(data.job.id, log, after); }
-		else after();
-		return;
-	}
-	if (intent.action === 'query' || intent.action === 'approve') {
-		if (data.note) out.append(el('div', { class: 'note' }, data.note));
-		const rows = data.approvals || [];
-		out.append(el('div', { class: 'hint' }, `결재: ${rows.length}건`));
-		for (const a of rows) out.append(renderApprovalCard(a));
-		// generic registered-system matches (the RPA registry — reaches "any system", not just 결재)
-		for (const sys of (data.systems || [])) {
-			out.append(el('div', { class: 'hint' }, `${sys.label}: ${sys.records.length}건`));
-			for (const rec of sys.records) out.append(renderRecordCard(rec));
-		}
-	}
-}
-
-async function loadApprovals() {
-	const box = $('#approvals-list');
-	try {
-		const { approvals } = await getJson('/api/approvals');
-		box.replaceChildren();
-		if (!approvals.length) {
-			box.append(el('div', { class: 'hint' }, '저장된 결재가 없습니다. 위의 동기화를 실행하세요.'));
-			return;
-		}
-		for (const a of approvals) box.append(renderApprovalCard(a, true));
-		updateRevCount(); // fresh cards → reset the selected-count + 전체선택 state
-	} catch (e) {
-		box.replaceChildren(el('div', { class: 'error' }, `결재 목록을 불러오지 못했습니다: ${e.message}`));
-	}
-}
-
-// ---------- ✅ 검토 후 일괄 결재 (human-reviewed batch: check cards → approve all checked at once) ----------
-// The operator reads each summary and CHECKS the items to approve → the human is the content/amount control
-// (총 금액/총 합 계 labels are drafter-typed → unreliable). reviewed:true tells the leaf to relax the
-// full-auto-only form-homogeneity guard; identity/title/승인-radio/완료검증/audit still apply per item.
-let reviewJob = null;
-const revChecks = () => [...document.querySelectorAll('#approvals-list .rev-chk')];
-function updateRevCount() {
-	const boxes = revChecks();
-	const n = boxes.filter((c) => c.checked).length;
-	const btn = $('#rev-approve'); if (btn) btn.textContent = `✅ 선택 항목 결재 (${n})`;
-	const all = $('#rev-all'); if (all) all.checked = boxes.length > 0 && boxes.every((c) => c.checked);
-}
-async function runReviewApprove() {
-	const checked = revChecks().filter((c) => c.checked).map((c) => c.dataset.doc).filter(Boolean);
-	const dryRun = $('#rev-dry').checked;
-	const status = $('#rev-status'), results = $('#rev-results'), log = $('#rev-log');
-	results.replaceChildren();
-	if (!checked.length) { status.replaceChildren(el('div', { class: 'error' }, '결재할 항목을 먼저 체크하세요.')); return; }
-	if (!dryRun && !window.confirm(`⚠ 체크한 ${checked.length}건을 실제로 자동 결재합니다(되돌릴 수 없음). 요약·내용을 확인하셨나요? 진행할까요?`)) return;
-	status.replaceChildren(el('div', { class: 'hint' }, (dryRun ? '미리보기(dry-run)' : '결재') + ` 실행 중… (${checked.length}건)`));
-	log.hidden = false;
-	let resp;
-	try {
-		const r = await fetch('/api/approve/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: 'hiworks', docs: checked, dryRun, reviewed: true }) });
-		resp = await r.json();
-	} catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
-	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '실행이 거부되었습니다.')); return; }
-	reviewJob = resp.job.id;
-	$('#rev-stop').hidden = dryRun; $('#rev-cancel').hidden = false;
-	streamJob(resp.job.id, log, () => {
-		$('#rev-stop').hidden = true; $('#rev-cancel').hidden = true; reviewJob = null;
-		renderApproveResults(log.textContent, status, results);
-		loadApprovals(); loadAudit(); // approved docs leave 대기; new audit rows
-	});
-}
-
-async function startSync() {
-	if (syncJob) return; // one sync in flight (avoid orphaning the tracked browser job)
-	const app = $('#sync-app').value.trim();
-	const log = $('#sync-log');
-	log.hidden = false;
-	log.textContent = '동기화 시작 중…';
-	let resp;
-	try {
-		resp = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app }) });
-	} catch (e) {
-		log.textContent = `동기화 실패: ${e.message}`;
-		return;
-	}
-	if (!resp.ok) {
-		const e = await resp.json().catch(() => ({ error: resp.statusText }));
-		log.textContent = `동기화 거부됨: ${e.error || resp.status}`;
-		return;
-	}
-	const { job } = await resp.json();
-	syncJob = job.id;
-	$('#sync-cancel').hidden = false;
-	streamJob(job.id, log, () => {
-		syncJob = null;
-		$('#sync-cancel').hidden = true;
-		loadApprovals(); // refresh once the scrape wrote the DB
-	});
-	refreshQueue();
-}
-
-// ---------- ⚡ auto-approve scenario (EFFECTFUL; the leaf approves real docs, no human click) ----------
-let approveJob = null;
-const APPROVE_ST = { approved: '✅ 승인', 'dry-ok': '👁 미리보기', failed: '✗ 실패', skipped: '⤼ 건너뜀' };
-
-async function runApprove() {
-	const app = ($('#approve-app').value || 'hiworks').trim();
-	const docs = $('#approve-docs').value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-	const dryRun = $('#approve-dry').checked;
-	const max = parseInt($('#approve-max').value, 10) || 0;
-	const maxAmount = parseInt($('#approve-maxamt').value, 10) || 0;
-	const status = $('#approve-status'), results = $('#approve-results'), log = $('#approve-log');
-	results.replaceChildren();
-	if (!docs.length) { status.replaceChildren(el('div', { class: 'error' }, '문서번호를 한 줄에 하나씩 입력하세요.')); return; }
-	// Live (non-dry) approve is irreversible AND human-gate-free — require an explicit count cap, a value
-	// ceiling (or an explicit no-ceiling opt-out), and a confirm.
-	let allowNoValueCeiling = false;
-	if (!dryRun) {
-		if (max < 1) { status.replaceChildren(el('div', { class: 'error' }, '실제 승인에는 최대 건수(≥1)가 필요합니다.')); return; }
-		if (maxAmount < 1) {
-			if (!window.confirm(`⚠⚠ 금액 상한 없이 자동 승인합니다 — 금액에 관계없이(고액 포함) 승인됩니다. 정말 진행하시겠습니까? (권장: 건당 최대 금액을 설정하세요)`)) return;
-			allowNoValueCeiling = true;
-		}
-		if (!window.confirm(`⚠ 실제 ${docs.length}건을 사람 확인 없이 자동 승인합니다(최대 ${max}건${maxAmount ? `, 건당 ≤${maxAmount}원` : ', 금액 상한 없음'}). 되돌릴 수 없습니다. 진행할까요?`)) return;
-	}
-	status.replaceChildren(el('div', { class: 'hint' }, (dryRun ? '미리보기(dry-run)' : '자동 승인') + ' 실행 중…'));
-	log.hidden = false;
-	let resp;
-	try {
-		const r = await fetch('/api/approve/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, docs, dryRun, max, maxAmount, allowNoValueCeiling }) });
-		resp = await r.json();
-	} catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
-	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '실행이 거부되었습니다.')); return; }
-	approveJob = resp.job.id;
-	$('#approve-cancel').hidden = false;
-	$('#approve-stop').hidden = dryRun; // graceful kill-switch is meaningful only for a live batch
-	streamJob(resp.job.id, log, () => {
-		$('#approve-cancel').hidden = true;
-		$('#approve-stop').hidden = true;
-		approveJob = null;
-		renderApproveResults(log.textContent, status, results);
-		loadApprovals(); // approved docs left the 대기 inbox
-		loadAudit();     // surface the new audit rows the run just appended
-	});
-}
-
-function renderApproveResults(logText, status, results) {
-	let summary = null;
-	for (const line of logText.split('\n')) {
-		const t = line.trim();
-		if (t.startsWith('{') && t.includes('"results"')) { try { summary = JSON.parse(t); } catch { /* keep scanning */ } }
-	}
-	if (!summary || !Array.isArray(summary.results)) { status.replaceChildren(el('div', { class: 'error' }, '결과 요약을 파싱하지 못했습니다 — 아래 로그를 확인하세요.')); return; }
-	const c = (s) => summary.results.filter((r) => r.status === s).length;
-	status.replaceChildren(el('div', { class: 'hint' }, `${summary.dry ? '미리보기' : '자동 승인'} 완료 — ✅승인 ${c('approved')} · 👁미리보기 ${c('dry-ok')} · ✗실패 ${c('failed')} · ⤼건너뜀 ${c('skipped')} / 총 ${summary.total}`));
-	const tbl = el('table', { class: 'approve-tbl' }, el('tr', {}, el('th', {}, '문서번호'), el('th', {}, '상태'), el('th', {}, '사유')));
-	for (const r of summary.results) tbl.append(el('tr', { class: 'st-' + r.status }, el('td', {}, r.doc_id), el('td', {}, APPROVE_ST[r.status] || r.status), el('td', {}, r.reason || '')));
-	results.replaceChildren(tbl);
-}
-
-// ---------- 🔧 approve capture (Gate-B) — DRY-RUN test only (Phase 1a; never approves, no recipe write) ----------
-const CAP_OKSTAGES = new Set(['requested', 'identity_ok', 'amount_ok', 'dry_ok', 'clicked', 'confirmed']);
-function _capInputs() {
-	const app = ($('#cap-app').value || 'hiworks').trim();
-	const docId = $('#cap-doc').value.trim();
-	const action = ($('#cap-action').value || 'approve').trim();
-	const title = $('#cap-title').value.trim();
-	const blockText = $('#cap-block').value.trim();
-	let block = null, err = null;
-	if (blockText) { try { block = JSON.parse(blockText); } catch (e) { err = '블록 JSON 파싱 오류: ' + e.message; } }
-	const body = { app, action, docId };
-	if (title) body.title = title;
-	if (block) body.block = block;
-	return { body, err };
-}
-async function captureLeafRun(endpoint, body, runningMsg) {
-	const status = $('#cap-status'), guards = $('#cap-guards');
-	guards.replaceChildren();
-	status.replaceChildren(el('div', { class: 'hint' }, runningMsg));
-	let resp;
-	try { const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); resp = await r.json(); }
-	catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
-	if (!resp.job) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '거부되었습니다.')); return; }
-	const startedAt = resp.startedAt, docId = body.docId;
-	const log = el('pre', { class: 'joblog' }); log.hidden = true; guards.append(log);
-	streamJob(resp.job.id, log, async () => {
-		let stages = [];
-		try { const a = await (await fetch('/api/approve/audit?limit=80')).json(); stages = (a.audit || []).filter((e) => e.doc_id === docId && e.at >= startedAt).reverse(); } catch {}
-		renderCaptureGuards(stages, status, guards, log);
-	});
-}
-async function runCaptureDryRun() {
-	const { body, err } = _capInputs();
-	if (!body.docId) { $('#cap-status').replaceChildren(el('div', { class: 'error' }, '폐기용 문서번호를 입력하세요.')); return; }
-	if (err) { $('#cap-status').replaceChildren(el('div', { class: 'error' }, err)); return; }
-	captureLeafRun('/api/approve/capture/dry-run', body, 'dry-run 미리보기 실행 중… (승인하지 않음)');
-}
-async function runCaptureVerify() {
-	const { body, err } = _capInputs();
-	if (!body.docId) { $('#cap-status').replaceChildren(el('div', { class: 'error' }, '폐기용 문서번호를 입력하세요.')); return; }
-	if (err) { $('#cap-status').replaceChildren(el('div', { class: 'error' }, err)); return; }
-	if (!window.confirm('⚠ 라이브 검증: 이 문서를 실제로 승인합니다(확인 클릭, 되돌릴 수 없음). 반드시 폐기용 문서여야 합니다. 진행할까요?')) return;
-	captureLeafRun('/api/approve/capture/verify', { ...body, confirm: true }, '라이브 검증 실행 중… (실제 승인 — 폐기용만)');
-}
-async function runCaptureEnable() {
-	const app = ($('#cap-app').value || 'hiworks').trim();
-	const action = ($('#cap-action').value || 'approve').trim();
-	const status = $('#cap-status');
-	if (!$('#cap-confirmed').checked) { status.replaceChildren(el('div', { class: 'error' }, '라이브 검증 성공(승인 스탬프+대기 이탈)을 직접 확인(체크)해야 활성화할 수 있습니다.')); return; }
-	let block; try { block = JSON.parse($('#cap-block').value.trim()); } catch (e) { status.replaceChildren(el('div', { class: 'error' }, '블록 JSON이 필요/유효해야 합니다: ' + e.message)); return; }
-	if (!window.confirm(`'${action}' action을 레시피에 enabled:true로 기록합니다 — 이후 일괄 결재에서 사용됩니다. 라이브 검증을 마쳤습니까?`)) return;
-	let resp;
-	try { const r = await fetch('/api/approve/capture/enable', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, action, block, confirmed: true, notes: $('#cap-notes').value.trim() }) }); resp = await r.json(); }
-	catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
-	if (!resp.ok) { status.replaceChildren(el('div', { class: 'error' }, resp.error || '활성화 실패')); return; }
-	status.replaceChildren(el('div', { class: 'hint' }, `✅ '${resp.action}' 활성화됨 (recipes/${app}.json 에 enabled:true 기록) — 이제 일괄 결재에서 사용 가능.`));
-}
-function renderCaptureGuards(stages, status, guards, log) {
-	guards.replaceChildren();
-	if (!stages.length) { status.replaceChildren(el('div', { class: 'error' }, '가드 단계를 읽지 못했습니다 — 🧾 감사 로그를 확인하세요.')); guards.append(log); return; }
-	const last = stages[stages.length - 1];
-	const ok = last.stage === 'dry_ok' || last.stage === 'confirmed';
-	const msg = last.stage === 'confirmed' ? '✅ 라이브 검증 성공 — 실제 승인 완료(스탬프+대기 이탈). 이제 🔓 활성화 가능' : (last.stage === 'dry_ok' ? '✅ dry-run 통과 — 확인 직전까지 모든 가드 OK (승인 안 함)' : '✗ ' + (AUDIT_ST[last.stage] || last.stage) + (last.detail ? ' — ' + last.detail : ''));
-	status.replaceChildren(el('div', { class: ok ? 'hint' : 'error' }, msg));
-	const list = el('div', { class: 'cap-guards' });
-	for (const e of stages) {
-		const good = CAP_OKSTAGES.has(e.stage);
-		list.append(el('div', { class: 'cap-guard ' + (good ? 'g-ok' : 'g-bad') }, (good ? '✓ ' : '✗ ') + (AUDIT_ST[e.stage] || e.stage) + (e.detail ? ' — ' + e.detail : '')));
-	}
-	guards.append(list, log);
-}
-async function runCaptureAssemble() {
-	const app = ($('#cap-app').value || 'hiworks').trim();
-	const flowName = $('#cap-flowname').value.trim();
-	const status = $('#cap-status');
-	if (!flowName) { status.replaceChildren(el('div', { class: 'error' }, '녹화 플로우 이름을 입력하세요 (플로우 탭에서 먼저 녹화).')); return; }
-	const facts = { confirmName: ($('#cap-confirm').value || '확인').trim(), success: 'leftInbox' };
-	const ft = $('#cap-formtype').value.trim(); if (ft) facts.formType = [ft];
-	const amt = $('#cap-amtlabel').value.trim(); if (amt) facts.amountLabel = amt;
-	let resp;
-	try { const r = await fetch('/api/approve/capture/assemble', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, flowName, facts }) }); resp = await r.json(); }
-	catch (e) { status.replaceChildren(el('div', { class: 'error' }, '요청 실패: ' + e.message)); return; }
-	if (!resp.block) { status.replaceChildren(el('div', { class: 'error' }, (resp.error || '조립 실패') + (resp.missing ? ' (' + resp.missing.join('; ') + ')' : ''))); return; }
-	$('#cap-block').value = JSON.stringify(resp.block, null, 2);
-	$('#cap-action').value = 'approve_capture';
-	status.replaceChildren(el('div', { class: 'hint' }, '✅ 블록 조립 완료 — 아래 블록을 검토하고 ▶ dry-run 미리보기로 테스트하세요 (enabled:false, 아직 저장 안 함).'));
-}
-async function loadCaptureFlows() {
-	const app = ($('#cap-app').value || 'hiworks').trim();
-	const box = $('#cap-flowlist');
-	try {
-		const r = await (await fetch('/api/approve/capture/flows?app=' + encodeURIComponent(app))).json();
-		if (!r.flows || !r.flows.length) { box.textContent = '캡처된 플로우 없음 (' + app + ') — 레코더 통합은 Phase 1b'; return; }
-		box.replaceChildren(el('span', {}, '캡처된 플로우: '), ...r.flows.map((f) => el('code', { style: 'margin-right:8px' }, f.name)));
-	} catch (e) { box.textContent = '플로우 조회 실패: ' + e.message; }
-}
-
-// ---------- 🧾 approve audit viewer (read-only; data/approve-audit.jsonl is the source of truth) ----------
-const AUDIT_ST = { requested: '요청', identity_ok: '신원확인', amount_ok: '금액확인', dry_ok: '👁 미리보기OK', clicked: '⚠ 클릭', confirmed: '✅ 승인', failed: '✗ 실패', skipped: '⤼ 건너뜀', 'reconciled-approved': '🔁 재조정:승인', 'reconciled-failed': '🔁 재조정:실패', 'reconcile-uncertain': '🔁 재조정:불확실', 'reconcile-error': '🔁 재조정:오류' };
-
-async function loadAudit() {
-	const box = $('#audit-list');
-	box.replaceChildren(el('div', { class: 'hint' }, '감사 로그 로딩 중…'));
-	try {
-		const { audit, total } = await getJson('/api/approve/audit?limit=300');
-		if (!audit.length) { box.replaceChildren(el('div', { class: 'hint' }, '감사 로그가 비어 있습니다 (아직 자동 승인 실행 없음).')); return; }
-		const tbl = el('table', { class: 'approve-tbl' }, el('tr', {}, el('th', {}, '시각'), el('th', {}, '문서번호'), el('th', {}, '단계'), el('th', {}, '모드'), el('th', {}, '상세')));
-		for (const a of audit) tbl.append(el('tr', { class: 'st-' + (a.stage || '') }, el('td', {}, fmtTime(a.at)), el('td', {}, a.doc_id || ''), el('td', {}, AUDIT_ST[a.stage] || a.stage || ''), el('td', {}, a.live === true ? 'LIVE' : 'dry'), el('td', {}, a.detail || '')));
-		box.replaceChildren(el('div', { class: 'hint' }, `총 ${total}건 (최근 ${audit.length} 표시)`), tbl);
-	} catch (e) { box.replaceChildren(el('div', { class: 'error' }, '감사 로그 로드 실패: ' + e.message)); }
-}
-
-// ---------- view switching ----------
-
-const NAV = { runs: '#nav-runs', approvals: '#nav-approvals', systems: '#nav-systems', flows: '#nav-flows', trends: '#nav-trends', auth: '#nav-auth', jobs: '#nav-jobs' };
-
-function loadView(view) {
-	if (view === 'flows') loadFlows();
-	else if (view === 'trends') loadTrends();
-	else if (view === 'auth') loadAuth();
-	else if (view === 'approvals') { loadApprovals(); loadAudit(); }
-	else if (view === 'systems') loadSystems();
-	else if (view === 'jobs') loadJobs();
-	else {
-		loadRuns();
-		if (selectedRunId) selectRun(selectedRunId);
-	}
+function pendingApprovals() {
+	return state.approvals.filter((a) => String(a.status || '').toLowerCase() !== 'approved');
 }
 
 function setView(view) {
+	state.view = view;
 	document.body.dataset.view = view;
-	for (const [v, sel] of Object.entries(NAV)) $(sel).classList.toggle('active', v === view);
+	$('.view.active')?.classList.remove('active');
+	document.querySelector(`.view[data-view="${view}"]`)?.classList.add('active');
+	document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.viewTarget === view));
+	$('#page-title').textContent = VIEW_TITLES[view] || 'Control Plane';
 	loadView(view);
 }
 
-for (const [v, sel] of Object.entries(NAV)) $(sel).addEventListener('click', () => setView(v));
-$('#run').addEventListener('click', runSuite);
-$('#auth-btn').addEventListener('click', startAuth);
-$('#sync-btn').addEventListener('click', startSync);
-$('#agent-run').addEventListener('click', runAgent);
-$('#agent-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent(); });
-$('#approve-run').addEventListener('click', runApprove);
-$('#cap-dry').addEventListener('click', runCaptureDryRun);
-$('#cap-verify').addEventListener('click', runCaptureVerify);
-$('#cap-enable').addEventListener('click', runCaptureEnable);
-$('#cap-assemble').addEventListener('click', runCaptureAssemble);
-$('#cap-flows').addEventListener('click', loadCaptureFlows);
-$('#audit-refresh').addEventListener('click', loadAudit);
-// ✅ 검토 후 일괄 결재 controls
-$('#rev-approve').addEventListener('click', runReviewApprove);
-$('#rev-all').addEventListener('change', () => { const c = $('#rev-all').checked; revChecks().forEach((b) => (b.checked = c)); updateRevCount(); });
-$('#rev-stop').addEventListener('click', async () => { try { await fetch('/api/approve/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); $('#rev-status').replaceChildren(el('div', { class: 'hint' }, '🛑 중지 요청됨 — 현재 문서까지 끝내고 멈춥니다…')); } catch (e) { $('#rev-status').replaceChildren(el('div', { class: 'error' }, '중지 요청 실패: ' + e.message)); } });
-$('#rev-cancel').addEventListener('click', () => reviewJob && cancelJob(reviewJob));
-// graceful kill-switch: stops the batch BEFORE the next doc (vs the hard tree-kill of 강제중지, which can
-// interrupt mid-approve). For an irreversible-money batch, prefer this.
-$('#approve-stop').addEventListener('click', async () => {
-	try { await fetch('/api/approve/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); $('#approve-status').replaceChildren(el('div', { class: 'hint' }, '🛑 중지 요청됨 — 현재 문서까지 끝내고 멈춥니다…')); }
-	catch (e) { $('#approve-status').replaceChildren(el('div', { class: 'error' }, '중지 요청 실패: ' + e.message)); }
-});
-$('#approve-cancel').addEventListener('click', () => approveJob && cancelJob(approveJob));
-$('#sync-cancel').addEventListener('click', () => syncJob && cancelJob(syncJob));
-$('#auth-cancel').addEventListener('click', () => authJob && cancelJob(authJob));
-$('#refresh').addEventListener('click', () => loadView(document.body.dataset.view));
+function updatePlanPill() {
+	const pill = $('#top-plan-pill');
+	if (!state.plan) {
+		pill.textContent = 'plan: none';
+		pill.className = 'pill muted';
+		return;
+	}
+	pill.textContent = `${state.plan.id} / ${state.plan.status}`;
+	pill.className = 'pill';
+}
 
-// ---------- init ----------
+function inferAction(text) {
+	const s = String(text || '');
+	if (/(approve|confirm|review|approval)/i.test(s)) return 'approve';
+	if (/(sync|refresh|fetch)/i.test(s)) return 'sync';
+	if (/(summarize|summary|digest|enrich)/i.test(s)) return 'enrich';
+	return '';
+}
 
-loadRuns();
-refreshQueue();
-setInterval(refreshQueue, 2000);
-initFlows();
-initSystems();
+async function makePlan(source) {
+	const text = String(source || '').trim() || 'Review selected pending approvals';
+	const body = { text, system: state.selectedSystem || 'hiworks', mode: 'reviewed' };
+	const action = inferAction(text);
+	if (action) body.action = action;
+	try {
+		const { plan, refusal } = await postJson('/api/agent/plan', body);
+		state.plan = plan;
+		state.planEvents = [];
+		state.dryRunPassed = false;
+		state.dryRunSummary = null;
+		await refreshPlan(plan.id);
+		if (plan?.action === 'approve') {
+			state.plan.targets = selectedDocs();
+			state.plan.targetCount = state.plan.targets.length;
+		}
+		if (refusal) addTimeline('Plan refused', `${refusal.reason}: ${refusal.detail || ''}`, 'danger');
+		renderAll();
+		return plan;
+	} catch (e) {
+		state.planError = e.message;
+		renderAll();
+		alert(`Plan creation refused: ${e.message}`);
+		return null;
+	}
+}
+
+function addTimeline(title, detail, kind = 'info') {
+	if (!state.plan) return;
+	state.plan.events = state.plan.events || [];
+	state.plan.events.push({ at: new Date().toISOString(), title, detail, kind });
+}
+
+async function loadCoreData() {
+	await Promise.allSettled([loadApprovals(), loadSystems(), loadQueue(), loadAudit()]);
+	renderAll();
+}
+
+async function loadApprovals() {
+	try {
+		const { approvals } = await getJson('/api/approvals');
+		state.approvals = Array.isArray(approvals) ? approvals : [];
+		for (const doc of selectedDocs()) {
+			if (!state.approvals.some((a) => a.doc_id === doc)) state.selectedTargets.delete(doc);
+		}
+		state.approvalsError = null;
+	} catch (e) {
+		state.approvalsError = e.message;
+	}
+}
+
+async function loadSystems() {
+	try {
+		const { systems } = await getJson('/api/systems');
+		state.systems = Array.isArray(systems) ? systems : [];
+		if (!state.selectedSystem) {
+			const preferred = state.systems.find((s) => s.name === 'hiworks') || state.systems[0];
+			state.selectedSystem = preferred ? preferred.name : 'hiworks';
+		}
+		state.systemsError = null;
+		await Promise.allSettled([loadActionStates(), loadActions()]);
+	} catch (e) {
+		state.systemsError = e.message;
+	}
+}
+
+async function loadActions() {
+	try {
+		const { actions } = await getJson('/api/actions');
+		state.actions = Array.isArray(actions) ? actions : [];
+		state.actionsError = null;
+	} catch (e) {
+		state.actionsError = e.message;
+	}
+}
+
+async function loadActionStates() {
+	const names = new Set(['hiworks', ...state.systems.map((s) => s.name).filter(Boolean)]);
+	const entries = await Promise.all([...names].map(async (name) => {
+		try {
+			const data = await getJson(`/api/approve/state?app=${encodeURIComponent(name)}`);
+			return [name, data];
+		} catch (e) {
+			return [name, { app: name, error: e.message }];
+		}
+	}));
+	state.actionStates = new Map(entries);
+}
+
+async function loadQueue() {
+	try {
+		state.queue = await getJson('/api/queue');
+		state.queueError = null;
+		renderQueueGlobal();
+	} catch (e) {
+		state.queueError = e.message;
+	}
+}
+
+async function loadAudit() {
+	try {
+		const { audit, total } = await getJson('/api/approve/audit?limit=300');
+		state.audit = Array.isArray(audit) ? audit : [];
+		state.auditTotal = total || state.audit.length;
+		state.auditError = null;
+	} catch (e) {
+		state.auditError = e.message;
+	}
+}
+
+async function loadDiagnostics() {
+	await Promise.allSettled([
+		getJson('/api/runs').then((d) => { state.runs = d.runs || []; }),
+		getJson('/api/flows').then((d) => { state.flows = d.flows || []; }),
+		getJson('/api/auth').then((d) => { state.auth = d.apps || []; }),
+	]);
+	renderDiagnostics();
+}
+
+function loadView(view) {
+	if (view === 'target-review') renderTargetsView();
+	if (view === 'systems') renderSystems();
+	if (view === 'actions') renderActions();
+	if (view === 'queue') renderQueueView();
+	if (view === 'audit') renderAudit();
+	if (view === 'approval-state') renderApprovalState();
+	if (view === 'diagnostics') loadDiagnostics();
+}
+
+function renderAll() {
+	renderCommandCenter();
+	renderPlan();
+	renderTargetsView();
+	renderSystems();
+	renderActions();
+	renderQueueGlobal();
+	renderQueueView();
+	renderAudit();
+	renderApprovalState();
+	renderDiagnosticsLinks();
+}
+
+function renderCommandCenter() {
+	renderPlanSummary('#cc-summary', true);
+	renderPlanBadges('#cc-badges');
+	renderTargetsTable('#cc-targets', state.approvals, { compact: true });
+	renderGates('#cc-gates');
+	renderTimeline('#cc-timeline');
+	renderQueueMini('#cc-queue');
+	updateActionButtons();
+}
+
+function renderPlanBadges(selector) {
+	const box = $(selector);
+	if (!box) return;
+	if (!state.plan) return setChildren(box, badge('no plan', 'neutral'));
+	const risk = state.plan.riskClass === 'irreversible' ? 'risk' : 'info';
+	setChildren(
+		box,
+		badge(state.plan.status, 'pending'),
+		badge(state.plan.action, 'info'),
+		badge(state.plan.riskClass, risk),
+		state.dryRunPassed ? badge('dry-run passed', 'success') : badge('dry-run required', state.plan.requirements.dryRun ? 'warning' : 'neutral'),
+	);
+}
+
+function renderPlanSummary(selector, includeMetrics = false) {
+	const box = $(selector);
+	if (!box) return;
+	if (!state.plan) return setChildren(box, empty('No plan preview has been created.'));
+	const metrics = includeMetrics ? el('div', { class: 'metric-grid' },
+		metric('Targets', state.plan.targetCount, 'selected or resolved'),
+		metric('Risk', state.plan.riskClass, state.plan.mode),
+		metric('Dry-run', state.plan.requirements.dryRun ? (state.dryRunPassed ? 'passed' : 'required') : 'not required', 'gate state'),
+		metric('Plan hash', state.plan.hash, 'server computed'),
+	) : null;
+	const kvs = el('div', { class: 'kv-grid' },
+		kv('Plan ID', state.plan.id),
+		kv('System', state.plan.system),
+		kv('Action', state.plan.action),
+		kv('Intent', state.plan.intent),
+		kv('Actor', state.plan.actor),
+		kv('Source text', state.plan.sourceText),
+		kv('Contract', state.plan.refusal ? `refused: ${state.plan.refusal.reason}` : 'durable server CommandPlan'),
+		kv('Created', fmtTime(state.plan.createdAt)),
+		kv('Hash', state.plan.hash),
+	);
+	setChildren(box, metrics, kvs);
+}
+
+function metric(label, value, sub) {
+	return el('div', { class: 'metric' }, el('span', {}, label), el('strong', {}, safeText(value, '-')), el('em', {}, sub || ''));
+}
+
+function kv(label, value) {
+	const content = String(value || '').length > 34 ? el('code', {}, safeText(value, '-')) : el('strong', { title: safeText(value, '-') }, safeText(value, '-'));
+	return el('div', { class: 'kv' }, el('span', {}, label), content);
+}
+
+function renderGates(selector) {
+	const box = $(selector);
+	if (!box) return;
+	if (!state.plan) return setChildren(box, empty('Create a plan preview to inspect gates.'));
+	const selected = selectedDocs().length;
+	const gates = [
+		['Plan preview', true, `id ${state.plan.id}`],
+		['Target review', state.plan.riskClass === 'read' || selected > 0, selected ? `${selected} selected` : 'select target rows'],
+		['Dry-run required', state.plan.riskClass === 'read' || state.dryRunPassed, state.plan.riskClass === 'read' ? 'read-only plan' : (state.dryRunPassed ? 'passed' : 'pending')],
+		['Plan hash visible', !!state.plan.hash, state.plan.hash],
+		['Human confirm', state.plan.riskClass === 'read' || state.dryRunPassed, state.plan.riskClass === 'read' ? 'not required' : 'enabled after dry-run'],
+		['Audit trail', true, 'approve audit API connected'],
+	];
+	const list = el('ul', { class: 'gate-list' });
+	for (const [name, ok, detail] of gates) {
+		list.append(el('li', {}, el('span', { class: `gate-marker ${ok ? 'on' : 'warn'}` }), el('span', {}, `${name}: ${detail}`)));
+	}
+	setChildren(box, list);
+}
+
+function renderTimeline(selector) {
+	const box = $(selector);
+	if (!box) return;
+	const events = (state.planEvents && state.planEvents.length)
+		? state.planEvents.map((e) => ({ at: e.at, title: e.type, detail: [e.status, e.reason, e.jobId].filter(Boolean).join(' / '), kind: e.status }))
+		: (state.plan && state.plan.events && state.plan.events.length)
+			? state.plan.events
+		: [{ at: new Date().toISOString(), title: 'Waiting for plan', detail: 'No command has been staged yet.', kind: 'neutral' }];
+	setChildren(box, ...events.slice(-8).reverse().map((ev, i) =>
+		el('div', { class: 'event' },
+			el('div', { class: 'event-dot' }, String(events.length - i).slice(0, 2)),
+			el('div', {}, el('strong', {}, ev.title), el('span', {}, `${fmtTime(ev.at)} / ${ev.detail || ''}`)),
+		),
+	));
+}
+
+function updateActionButtons() {
+	const selected = selectedDocs().length;
+	const editableStatuses = ['planned', 'dry_failed', 'dry_running', 'awaiting_confirmation'];
+	const canDry = !!state.plan && state.plan.action === 'approve' && editableStatuses.includes(state.plan.status) && selected > 0 && !state.activeApproveJob;
+	const canConfirm = canDry && state.dryRunPassed && state.plan.status === 'awaiting_confirmation' && !state.plan.confirmation;
+	for (const id of ['#cc-dry-run', '#tr-dry-run']) {
+		const btn = $(id);
+		if (btn) btn.disabled = !canDry;
+	}
+	for (const id of ['#cc-confirm', '#tr-confirm']) {
+		const btn = $(id);
+		if (btn) {
+			btn.disabled = !canConfirm;
+			btn.textContent = `Confirm Live (${selected})`;
+		}
+	}
+}
+
+function approvalTitle(a) {
+	return a.title || a.summary || '(no title)';
+}
+
+function renderTargetsTable(selector, rows, { compact = false } = {}) {
+	const box = $(selector);
+	if (!box) return;
+	if (state.approvalsError) return setChildren(box, errorBox(`Approvals API error: ${state.approvalsError}`));
+	if (!rows.length) return setChildren(box, empty('No approval records. Run sync before target review.'));
+	const table = el('table', {},
+		el('thead', {}, el('tr', {},
+			el('th', { class: 'col-check' }, ''),
+			el('th', { class: 'col-key' }, 'Doc key'),
+			el('th', {}, 'Title / summary'),
+			el('th', { class: 'col-short' }, 'Drafter'),
+			el('th', { class: 'col-short' }, 'Submitted'),
+			el('th', { class: 'col-status' }, 'Status'),
+		)),
+	);
+	const body = el('tbody');
+	for (const a of rows) {
+		const doc = safeText(a.doc_id);
+		const checked = state.selectedTargets.has(doc);
+		const cb = el('input', { type: 'checkbox', class: 'check', title: 'Select target', dataset: { doc } });
+		cb.checked = checked;
+		cb.addEventListener('change', () => {
+			if (cb.checked) state.selectedTargets.add(doc);
+			else state.selectedTargets.delete(doc);
+			if (state.plan && state.plan.action === 'approve') {
+				state.plan.targets = selectedDocs();
+				state.plan.targetCount = state.plan.targets.length;
+				state.plan.targetSetHash = null;
+				state.dryRunPassed = false;
+			}
+			renderAll();
+		});
+		body.append(el('tr', { class: checked ? 'row-selected' : '' },
+			el('td', { class: 'col-check' }, cb),
+			el('td', { class: 'col-key', title: doc }, doc || '-'),
+			el('td', { class: 'cell-wrap', title: approvalTitle(a) }, approvalTitle(a)),
+			el('td', { class: 'col-short', title: safeText(a.drafter) }, safeText(a.drafter, '-')),
+			el('td', { class: 'col-short', title: safeText(a.submitted_at) }, safeText(a.submitted_at, '-')),
+			el('td', { class: 'col-status' }, statusBadge(a.status || 'pending')),
+		));
+	}
+	table.append(body);
+	const selected = selectedDocs().length;
+	const caption = compact ? el('div', { class: 'panel-body border-top' }, `${rows.length} visible / ${selected} selected`) : null;
+	setChildren(box, table, caption);
+}
+
+function renderTargetsView() {
+	renderTargetsTable('#target-review-table', state.approvals);
+	updateActionButtons();
+}
+
+async function runDryRun() {
+	const docs = selectedDocs();
+	if (!docs.length) return;
+	if (!state.plan) await makePlan($('#cc-command').value);
+	if (!state.plan) return;
+	state.activeApproveJob = true;
+	state.dryRunPassed = false;
+	addTimeline('Dry-run requested', `${docs.length} target(s)`);
+	renderAll();
+	const log = $('#job-log');
+	if (log) {
+		log.textContent = '';
+		$('#job-log-badge').textContent = 'dry-run';
+		$('#job-log-badge').className = 'badge info';
+	}
+	try {
+		const data = await postJson(`/api/agent/plan/${encodeURIComponent(state.plan.id)}/dry-run`, { planHash: state.plan.hash, targetKeys: docs });
+		if (data.job) {
+			streamJob(data.job.id, log || document.createElement('pre'), async () => {
+				state.activeApproveJob = null;
+				await refreshPlan(state.plan.id);
+				const jr = await getJson(`/api/jobs/${encodeURIComponent(data.job.id)}/result`).catch(() => null);
+				state.dryRunSummary = state.plan?.dryRun?.result || jr?.result || null;
+				addTimeline(state.dryRunPassed ? 'Dry-run passed' : 'Dry-run ended', state.dryRunPassed ? 'All selected targets returned dry-ok.' : 'Inspect the job log and guard results.', state.dryRunPassed ? 'success' : 'warning');
+				loadQueue().finally(renderAll);
+			});
+			setView('queue');
+		}
+	} catch (e) {
+		state.activeApproveJob = null;
+		addTimeline('Dry-run refused', e.message, 'danger');
+		renderAll();
+		alert(`Dry-run refused: ${e.message}`);
+	}
+}
+
+async function runLiveConfirm() {
+	const docs = selectedDocs();
+	if (!state.plan || !state.dryRunPassed || !docs.length) return;
+	const msg = `This will request LIVE approval for ${docs.length} selected document(s).\n\nPlan: ${state.plan.id}\nHash: ${state.plan.hash}\n\nContinue?`;
+	if (!window.confirm(msg)) return;
+	state.activeApproveJob = true;
+	addTimeline('Human confirmation accepted', `${docs.length} live target(s) / hash ${state.plan.hash}`);
+	renderAll();
+	const log = $('#job-log');
+	if (log) {
+		log.textContent = '';
+		$('#job-log-badge').textContent = 'live approve';
+		$('#job-log-badge').className = 'badge risk';
+	}
+	try {
+		const data = await postJson(`/api/agent/plan/${encodeURIComponent(state.plan.id)}/confirm`, {
+			planHash: state.plan.hash,
+			targetSetHash: state.plan.targetSetHash,
+			dryRunHash: state.plan.dryRun?.hash,
+			confirm: true,
+		});
+		if (data.job) {
+			streamJob(data.job.id, log || document.createElement('pre'), async () => {
+				state.activeApproveJob = null;
+				await refreshPlan(state.plan.id);
+				addTimeline('Live job finished', 'Audit API will show requested/clicked/confirmed/skipped events.');
+				Promise.allSettled([loadApprovals(), loadAudit(), loadQueue()]).then(renderAll);
+			});
+			setView('queue');
+		}
+	} catch (e) {
+		state.activeApproveJob = null;
+		addTimeline('Live confirmation refused', e.message, 'danger');
+		renderAll();
+		alert(`Live confirm refused: ${e.message}`);
+	}
+}
+
+function selectVisibleTargets() {
+	for (const a of pendingApprovals()) {
+		if (a.doc_id) state.selectedTargets.add(a.doc_id);
+	}
+	if (state.plan && state.plan.action === 'approve') {
+		state.plan.targets = selectedDocs();
+		state.plan.targetCount = state.plan.targets.length;
+		state.plan.targetSetHash = null;
+		state.dryRunPassed = false;
+	}
+	renderAll();
+}
+
+function clearTargets() {
+	state.selectedTargets.clear();
+	if (state.plan && state.plan.action === 'approve') {
+		state.plan.targets = [];
+		state.plan.targetCount = 0;
+		state.plan.targetSetHash = null;
+		state.dryRunPassed = false;
+	}
+	renderAll();
+}
+
+async function runNlCommand() {
+	const input = $('#nl-command-input');
+	const text = input.value.trim();
+	if (!text) return;
+	const out = $('#nl-output');
+	setChildren(out, empty('Calling /api/agent...'));
+	try {
+		const data = await postJson('/api/agent', { text });
+		renderNlOutput(data, text);
+		if (data.job) loadQueue();
+	} catch (e) {
+		setChildren(out, errorBox(e.message));
+	}
+}
+
+function renderNlOutput(data, source) {
+	const out = $('#nl-output');
+	const intent = data.intent || {};
+	const parts = [
+		el('div', { class: 'badge-row' }, badge(`intent: ${intent.action || 'unknown'}`, statusKind(intent.action)), data.job ? badge(`job: ${data.job.id}`, 'info') : null),
+		el('div', { class: 'kv-grid' },
+			kv('Source', source),
+			kv('Surface', data.surface || '-'),
+			kv('Note', data.note || intent.question || '-'),
+		),
+	];
+	if (data.job) {
+		const log = el('pre', { class: 'joblog' });
+		parts.push(log);
+		streamJob(data.job.id, log, () => Promise.allSettled([loadApprovals(), loadQueue(), loadAudit()]).then(renderAll));
+	}
+	if (Array.isArray(data.approvals)) parts.push(renderGenericTable(data.approvals.slice(0, 50), ['doc_id', 'title', 'drafter', 'submitted_at', 'status'], 'Approval candidates'));
+	if (Array.isArray(data.systems)) {
+		for (const sys of data.systems) {
+			parts.push(el('div', { class: 'notice neutral' }, `${sys.label || sys.system}: ${(sys.records || []).length} record(s)`));
+			parts.push(renderGenericTable((sys.records || []).slice(0, 30).map((r) => ({ key: r.key, status: r.status, summary: r.summary, data: JSON.stringify(r.data || {}) })), ['key', 'status', 'summary', 'data'], 'System records'));
+		}
+	}
+	setChildren(out, ...parts);
+}
+
+function renderPlan() {
+	renderPlanBadges('#plan-badges');
+	renderPlanSummary('#plan-detail');
+	const contract = $('#plan-contract');
+	if (contract) {
+		const rows = [
+			['POST /api/agent/plan', 'implemented', 'Creates a durable server-hashed CommandPlan.'],
+			['GET /api/agent/plan/:id', 'implemented', 'Reloads plan state after refresh or job completion.'],
+			['POST /api/agent/plan/:id/dry-run', 'implemented', 'Stores reviewed target set and queues deterministic dry-run.'],
+			['POST /api/agent/plan/:id/confirm', 'implemented', 'Requires session/origin gate, dry-run pass, target hash, and human confirmation.'],
+			['GET /api/agent/plan/:id/events', 'implemented', 'Durable command event timeline.'],
+			['GET /api/jobs/:id/result', 'implemented', 'Structured job result; UI no longer parses approve logs.'],
+		];
+		setChildren(contract, renderRowsTable(rows, ['Contract', 'State', 'Operational impact']));
+	}
+}
+
+function renderSystems() {
+	renderSystemsTable();
+	renderSystemForm();
+	renderRecords();
+}
+
+function renderSystemsTable() {
+	const box = $('#systems-table');
+	if (!box) return;
+	if (state.systemsError) return setChildren(box, errorBox(`Systems API error: ${state.systemsError}`));
+	if (!state.systems.length) return setChildren(box, empty('No registered systems. Save a system to begin onboarding.'));
+	const table = el('table', {},
+		el('thead', {}, el('tr', {},
+			el('th', { class: 'col-key' }, 'System'),
+			el('th', {}, 'Target URL'),
+			el('th', { class: 'col-short' }, 'Records'),
+			el('th', { class: 'col-status' }, 'Recipe'),
+			el('th', { class: 'col-actions' }, 'Action'),
+		)),
+	);
+	const body = el('tbody');
+	for (const s of state.systems) {
+		const btn = el('button', { class: 'btn small', type: 'button' }, 'Open');
+		btn.addEventListener('click', () => selectSystem(s.name));
+		body.append(el('tr', { class: state.selectedSystem === s.name ? 'row-selected' : '' },
+			el('td', { class: 'col-key', title: s.name }, s.label || s.name),
+			el('td', { title: safeText(s.target_url) }, safeText(s.target_url, '-')),
+			el('td', { class: 'col-short' }, safeText(s.recordCount, '0')),
+			el('td', { class: 'col-status' }, statusBadge(s.recipe ? 'ready' : 'pending')),
+			el('td', { class: 'col-actions' }, btn),
+		));
+	}
+	table.append(body);
+	setChildren(box, table);
+}
+
+function selectSystem(name) {
+	state.selectedSystem = name;
+	state.records = [];
+	loadRecords().finally(renderSystems);
+}
+
+function selectedSystemObj() {
+	return state.systems.find((s) => s.name === state.selectedSystem) || null;
+}
+
+function renderSystemForm() {
+	const sys = selectedSystemObj();
+	const badgeNode = $('#sys-selected-badge');
+	if (!badgeNode) return;
+	badgeNode.textContent = sys ? sys.name : 'new system';
+	badgeNode.className = `badge ${sys ? 'info' : 'neutral'}`;
+	if (!document.activeElement || !document.activeElement.closest('.systems-layout')) {
+		$('#sys-name').value = sys?.name || state.selectedSystem || '';
+		$('#sys-label').value = sys?.label || '';
+		$('#sys-login').value = sys?.login_url || '';
+		$('#sys-success').value = sys?.success_url || '';
+		$('#sys-target').value = sys?.target_url || '';
+		$('#sys-recipe').value = sys?.recipe ? JSON.stringify(sys.recipe, null, 2) : '';
+	}
+}
+
+function systemFormBody() {
+	let recipe;
+	const text = $('#sys-recipe').value.trim();
+	if (text) recipe = JSON.parse(text);
+	return {
+		name: $('#sys-name').value.trim(),
+		label: $('#sys-label').value.trim() || undefined,
+		login_url: $('#sys-login').value.trim() || undefined,
+		success_url: $('#sys-success').value.trim() || undefined,
+		target_url: $('#sys-target').value.trim() || undefined,
+		recipe,
+	};
+}
+
+async function saveSystem() {
+	let body;
+	try { body = systemFormBody(); } catch (e) { alert(`Recipe JSON is invalid: ${e.message}`); return; }
+	if (!body.name) { alert('System name is required.'); return; }
+	try {
+		await postJson('/api/systems', body);
+		state.selectedSystem = body.name;
+		await loadSystems();
+		renderSystems();
+	} catch (e) {
+		alert(`Save refused: ${e.message}`);
+	}
+}
+
+async function runSystemAction(action) {
+	const name = $('#sys-name').value.trim() || state.selectedSystem;
+	if (!name) return alert('Select or enter a system first.');
+	if (action === 'delete' && !window.confirm(`Delete system ${name} and its records?`)) return;
+	const log = $('#sys-log');
+	log.hidden = false;
+	log.textContent = `${action} requested...\n`;
+	try {
+		const data = await postJson(`/api/systems/${encodeURIComponent(name)}/${action}`, {});
+		if (data.job) {
+			state.activeSystemJob = data.job.id;
+			streamJob(data.job.id, log, () => {
+				state.activeSystemJob = null;
+				Promise.allSettled([loadSystems(), loadRecords(), loadQueue()]).then(renderAll);
+			});
+		} else {
+			await loadSystems();
+			renderSystems();
+		}
+	} catch (e) {
+		log.textContent += `Refused: ${e.message}\n`;
+	}
+}
+
+async function loadRecords() {
+	if (!state.selectedSystem) return;
+	try {
+		const q = $('#records-query')?.value.trim();
+		const url = `/api/systems/${encodeURIComponent(state.selectedSystem)}/records${q ? `?q=${encodeURIComponent(q)}` : ''}`;
+		const { records } = await getJson(url);
+		state.records = Array.isArray(records) ? records : [];
+		state.recordsError = null;
+	} catch (e) {
+		state.recordsError = e.message;
+	}
+}
+
+function renderRecords() {
+	const box = $('#records-table');
+	if (!box) return;
+	if (!state.selectedSystem) return setChildren(box, empty('Select a system to view records.'));
+	if (state.recordsError) return setChildren(box, errorBox(state.recordsError));
+	if (!state.records.length) return setChildren(box, empty(`${state.selectedSystem}: no records for the current filter.`));
+	const rows = state.records.map((r) => ({
+		key: r.key,
+		status: r.status,
+		summary: r.summary,
+		fetched_at: r.fetched_at,
+		data: Object.entries(r.data || {}).slice(0, 6).map(([k, v]) => `${k}: ${v}`).join(' / '),
+	}));
+	setChildren(box, renderGenericTable(rows, ['key', 'data', 'summary', 'status', 'fetched_at'], 'Records'));
+}
+
+function renderActions() {
+	const box = $('#actions-table');
+	if (!box) return;
+	if (state.actionsError) return setChildren(box, errorBox(state.actionsError));
+	const rows = (state.actions || []).map((a) => ({
+		system: a.system,
+		action: a.action,
+		risk: a.riskClass,
+		state: a.state || (a.enabled ? 'enabled' : 'disabled'),
+		requirements: a.disabledReason || [a.permission, a.dryRunRequired ? 'dry-run' : '', a.humanConfirmRequired ? 'human confirm' : ''].filter(Boolean).join(' / '),
+	}));
+	setChildren(box, renderGenericTable(rows, ['system', 'action', 'risk', 'state', 'requirements'], 'Actions'));
+}
+
+function renderQueueGlobal() {
+	const q = state.queue;
+	if (!q) return;
+	const dot = $('#side-queue-dot');
+	const title = $('#side-queue-title');
+	const sub = $('#side-queue-sub');
+	if (dot) dot.className = `health-dot ${q.busy ? 'busy' : 'idle'}`;
+	if (title) title.textContent = q.busy ? `Running ${q.running?.id || ''}` : 'Queue idle';
+	if (sub) sub.textContent = q.busy ? (q.running?.label || 'browser job running') : `${q.pending?.length || 0} pending / ${q.recent?.length || 0} recent`;
+	renderQueueMini('#cc-queue');
+}
+
+function renderQueueMini(selector) {
+	const box = $(selector);
+	if (!box) return;
+	const q = state.queue;
+	if (!q) return setChildren(box, empty('Queue API not loaded.'));
+	const rows = [
+		['Busy', q.busy ? 'yes' : 'no'],
+		['Running', q.running ? `${q.running.id} / ${q.running.label}` : 'none'],
+		['Pending', String(q.pending?.length || 0)],
+		['Recent', String(q.recent?.length || 0)],
+	];
+	setChildren(box, renderRowsTable(rows, ['Field', 'Value']));
+}
+
+function jobResultLabel(job) {
+	if (!job || !job.result) return job?.status === 'done' ? 'no result' : '-';
+	if (Array.isArray(job.result.results)) {
+		const counts = job.result.results.reduce((m, r) => {
+			const k = r.status || 'unknown';
+			m[k] = (m[k] || 0) + 1;
+			return m;
+		}, {});
+		return Object.entries(counts).map(([k, v]) => `${k}:${v}`).join(' ');
+	}
+	return job.result.status || 'result';
+}
+
+function renderQueueView() {
+	const box = $('#queue-table');
+	if (!box) return;
+	const q = state.queue;
+	if (state.queueError) return setChildren(box, errorBox(state.queueError));
+	if (!q) return setChildren(box, empty('Queue API not loaded.'));
+	const jobs = [];
+	if (q.running) jobs.push(q.running);
+	jobs.push(...(q.pending || []), ...(q.recent || []));
+	const seen = new Set();
+	const unique = jobs.filter((j) => j && !seen.has(j.id) && seen.add(j.id));
+	if (!unique.length) return setChildren(box, empty('No jobs in memory.'));
+	const table = el('table', {},
+		el('thead', {}, el('tr', {},
+			el('th', { class: 'col-key' }, 'Job'),
+			el('th', {}, 'Label'),
+			el('th', { class: 'col-short' }, 'Kind'),
+			el('th', { class: 'col-status' }, 'Status'),
+			el('th', { class: 'col-status' }, 'Result'),
+			el('th', { class: 'col-actions' }, 'Actions'),
+		)),
+	);
+	const body = el('tbody');
+	for (const j of unique) {
+		const open = el('button', { class: 'btn small', type: 'button' }, 'Log');
+		open.addEventListener('click', () => openJobLog(j.id, j.label));
+		const cancel = el('button', { class: 'btn small quiet', type: 'button' }, 'Cancel');
+		cancel.disabled = ['done', 'failed', 'cancelled'].includes(j.status);
+		cancel.addEventListener('click', async () => { await cancelJob(j.id); await loadQueue(); renderQueueView(); });
+		body.append(el('tr', {},
+			el('td', { class: 'col-key' }, j.id),
+			el('td', { title: safeText(j.label) }, safeText(j.label, '-')),
+			el('td', { class: 'col-short' }, safeText(j.kind, '-')),
+			el('td', { class: 'col-status' }, statusBadge(j.status)),
+			el('td', { class: 'col-status' }, statusBadge(jobResultLabel(j))),
+			el('td', { class: 'col-actions' }, el('div', { class: 'button-row' }, open, cancel)),
+		));
+	}
+	table.append(body);
+	setChildren(box, table);
+}
+
+function openJobLog(id, label) {
+	const log = $('#job-log');
+	$('#job-log-badge').textContent = id;
+	$('#job-log-badge').className = 'badge info';
+	log.textContent = '';
+	streamJob(id, log, () => loadQueue().then(renderQueueView));
+	if (state.view !== 'queue') setView('queue');
+}
+
+function renderAudit() {
+	const box = $('#audit-table');
+	if (!box) return;
+	if (state.auditError) return setChildren(box, errorBox(state.auditError));
+	const q = ($('#audit-filter')?.value || '').toLowerCase().trim();
+	const rows = state.audit.filter((a) => !q || JSON.stringify(a).toLowerCase().includes(q));
+	if (!rows.length) return setChildren(box, empty('No audit rows for the current filter.'));
+	const mapped = rows.map((a) => ({
+		at: a.at,
+		doc_id: a.doc_id || '-',
+		stage: a.stage || '-',
+		mode: a.live === true ? 'LIVE' : 'dry',
+		actor: a.actor || a.by || '-',
+		detail: a.detail || '',
+	}));
+	setChildren(box, renderGenericTable(mapped, ['at', 'doc_id', 'stage', 'mode', 'actor', 'detail'], `Audit rows (${rows.length}/${state.auditTotal || rows.length})`));
+}
+
+async function renderApprovalState() {
+	const box = $('#approval-state-card');
+	if (!box) return;
+	const app = $('#approval-app')?.value.trim() || state.selectedSystem || 'hiworks';
+	try {
+		const data = await getJson(`/api/approve/state?app=${encodeURIComponent(app)}`);
+		setChildren(box,
+			el('div', { class: 'metric-grid' },
+				metric('App', data.app || app, 'selected'),
+				metric('Logged in', data.loggedIn ? 'yes' : 'no', 'approve/*.pw-state.json'),
+				metric('Recipe', data.hasApproveRecipe ? 'ready' : 'missing', `recipes/${app}.json`),
+				metric('List URL', data.listUrl ? 'configured' : 'missing', 'pending inbox'),
+			),
+			data.loggedIn && data.hasApproveRecipe && data.listUrl
+				? warnBox('Reviewed approval can dry-run. Live still requires human confirmation and server-side session/origin gate.')
+				: warnBox('Approval action is disabled until login state, recipe, and list URL are all present.'),
+		);
+	} catch (e) {
+		setChildren(box, errorBox(e.message));
+	}
+}
+
+async function requestKillSwitch() {
+	if (!window.confirm('Request approve kill-switch? A running live batch should stop before the next document.')) return;
+	try {
+		await postJson('/api/approve/stop', {});
+		alert('Kill-switch requested.');
+		await loadAudit();
+		renderAudit();
+	} catch (e) {
+		alert(`Kill-switch failed: ${e.message}`);
+	}
+}
+
+async function runSuite() {
+	const glob = $('#run-glob').value.trim();
+	const log = $('#run-log');
+	log.hidden = false;
+	log.textContent = 'run requested...\n';
+	try {
+		const data = await postJson('/api/run', { glob });
+		if (data.job) {
+			state.activeRunJob = data.job.id;
+			streamJob(data.job.id, log, () => {
+				state.activeRunJob = null;
+				Promise.allSettled([loadQueue(), loadDiagnostics()]).then(renderAll);
+			});
+			await loadQueue();
+			renderAll();
+		}
+	} catch (e) {
+		log.textContent += `Refused: ${e.message}\n`;
+	}
+}
+
+function renderDiagnosticsLinks() {
+	const box = $('#workspace-links');
+	if (!box) return;
+	const links = [
+		['Queue API', '/api/queue', 'Current job serialization state'],
+		['Systems API', '/api/systems', 'Registered systems and record counts'],
+		['Approvals API', '/api/approvals', 'Pending approval records'],
+		['Audit API', '/api/approve/audit?limit=300', 'Append-only approve leaf audit'],
+		['Runs API', '/api/runs', 'Historical run reports'],
+		['Flows API', '/api/flows', 'Recorded declarative flows'],
+	];
+	setChildren(box, el('div', { class: 'link-grid' }, ...links.map(([title, href, desc]) =>
+		el('a', { class: 'link-card', href, target: '_blank', rel: 'noreferrer' }, el('strong', {}, title), el('span', {}, desc)),
+	)));
+}
+
+function renderDiagnostics() {
+	const box = $('#diagnostics-table');
+	if (!box) return;
+	const rows = [
+		{ area: 'Runs', count: state.runs.length, state: state.runs.length ? `${state.runs[0].runId || 'loaded'}` : 'no records', endpoint: '/api/runs' },
+		{ area: 'Flows', count: state.flows.length, state: state.flows.some((f) => f.needsReview) ? 'needs review' : 'loaded', endpoint: '/api/flows' },
+		{ area: 'Auth states', count: state.auth.length, state: state.auth.length ? state.auth.join(', ') : 'none', endpoint: '/api/auth' },
+		{ area: 'Preflight', count: '-', state: 'CLI only', endpoint: 'bash lib/preflight.sh' },
+		{ area: 'Full suite', count: '-', state: 'available through POST /api/run', endpoint: 'bash run.sh' },
+	];
+	setChildren(box, renderGenericTable(rows, ['area', 'count', 'state', 'endpoint'], 'Diagnostics'));
+}
+
+function renderGenericTable(rows, columns, label) {
+	if (!rows.length) return empty(`No rows for ${label || 'table'}.`);
+	const table = el('table', { 'aria-label': label || 'data table' },
+		el('thead', {}, el('tr', {}, ...columns.map((c) => el('th', { class: columnClass(c) }, c.replaceAll('_', ' '))))),
+	);
+	const body = el('tbody');
+	for (const row of rows) {
+		body.append(el('tr', {}, ...columns.map((c) => {
+			const val = row[c];
+			const node = c === 'state' || c === 'status' || c === 'stage' ? statusBadge(val) : safeText(val, '-');
+			return el('td', { class: columnClass(c), title: typeof val === 'string' ? val : undefined }, node);
+		})));
+	}
+	table.append(body);
+	return table;
+}
+
+function renderRowsTable(rows, columns) {
+	const mapped = rows.map((r) => Object.fromEntries(columns.map((c, i) => [c, r[i]])));
+	return renderGenericTable(mapped, columns, 'rows');
+}
+
+function columnClass(name) {
+	const n = String(name).toLowerCase();
+	if (['doc_id', 'key', 'system', 'job', 'plan id', 'contract'].includes(n)) return 'col-key';
+	if (['status', 'state', 'stage', 'risk', 'mode'].includes(n)) return 'col-status';
+	if (['count', 'kind', 'action'].includes(n)) return 'col-short';
+	if (['at', 'created', 'fetched_at', 'submitted_at'].includes(n)) return 'col-time';
+	return n === 'detail' || n === 'requirements' || n === 'data' || n === 'summary' || n === 'operational impact' ? 'cell-wrap' : '';
+}
+
+function bindEvents() {
+	document.querySelectorAll('.nav-item').forEach((btn) => btn.addEventListener('click', () => setView(btn.dataset.viewTarget)));
+	$('#global-refresh').addEventListener('click', () => loadCoreData());
+	$('#cc-create-plan').addEventListener('click', () => makePlan($('#cc-command').value));
+	$('#cc-dry-run').addEventListener('click', runDryRun);
+	$('#tr-dry-run').addEventListener('click', runDryRun);
+	$('#cc-confirm').addEventListener('click', runLiveConfirm);
+	$('#tr-confirm').addEventListener('click', runLiveConfirm);
+	$('#cc-select-all').addEventListener('click', selectVisibleTargets);
+	$('#tr-select-all').addEventListener('click', selectVisibleTargets);
+	$('#cc-clear-selection').addEventListener('click', clearTargets);
+	$('#tr-refresh').addEventListener('click', () => loadApprovals().then(renderAll));
+	$('#nl-run').addEventListener('click', runNlCommand);
+	$('#nl-command-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') runNlCommand(); });
+	$('#nl-use-plan').addEventListener('click', () => { $('#cc-command').value = $('#nl-command-input').value; makePlan($('#nl-command-input').value); setView('command-center'); });
+	$('#sys-refresh').addEventListener('click', () => loadSystems().then(renderSystems));
+	$('#sys-save').addEventListener('click', saveSystem);
+	$('#sys-auth').addEventListener('click', () => runSystemAction('auth'));
+	$('#sys-analyze').addEventListener('click', async () => { await saveSystem(); runSystemAction('analyze'); });
+	$('#sys-sync').addEventListener('click', () => runSystemAction('sync'));
+	$('#sys-enrich').addEventListener('click', () => runSystemAction('enrich'));
+	$('#sys-delete').addEventListener('click', () => runSystemAction('delete'));
+	$('#records-refresh').addEventListener('click', () => loadRecords().then(renderRecords));
+	$('#records-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadRecords().then(renderRecords); });
+	$('#actions-refresh').addEventListener('click', () => loadActions().then(renderActions));
+	$('#queue-refresh').addEventListener('click', () => loadQueue().then(renderQueueView));
+	$('#audit-refresh').addEventListener('click', () => loadAudit().then(renderAudit));
+	$('#audit-filter').addEventListener('input', renderAudit);
+	$('#approval-state-refresh').addEventListener('click', renderApprovalState);
+	$('#approval-stop').addEventListener('click', requestKillSwitch);
+	$('#run-suite').addEventListener('click', runSuite);
+	$('#diagnostics-refresh').addEventListener('click', loadDiagnostics);
+}
+
+bindEvents();
+loadCoreData();
+setInterval(() => loadQueue().then(() => {
+	if (state.view === 'queue') renderQueueView();
+	renderCommandCenter();
+}), 2500);

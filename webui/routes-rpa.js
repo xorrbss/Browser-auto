@@ -4,7 +4,7 @@
 // handler returns true when it consumed the route (so server.js falls through to its other routes).
 
 import { classifyIntent, runQuery, runRecordsQuery } from './agent.js';
-import { validSysName, listSystemsView, getSystemView, saveSystem, removeSystem, recordsView, readProposed } from './systems.js';
+import { validSysName, listSystemsView, getSystemView, saveSystem, removeSystem, recordsView, readProposed, systemState, systemActions, allActionsView } from './systems.js';
 
 // rpaPost(p, bodyJson, res, {sendJson, enqueue, gitBash}) -> handled? (async: /api/agent classifies)
 export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash }) {
@@ -92,7 +92,24 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash }) 
 
 // rpaGet(p, url, res, {sendJson, notFound}) -> handled?
 export function rpaGet(p, url, res, { sendJson, notFound }) {
+	if (p === '/api/actions') { sendJson(res, 200, { actions: allActionsView() }); return true; }
 	if (p === '/api/systems') { sendJson(res, 200, { systems: listSystemsView() }); return true; }
+	const mSysState = /^\/api\/systems\/([^/]+)\/state$/.exec(p);
+	if (mSysState) {
+		let n; try { n = decodeURIComponent(mSysState[1]); } catch { notFound(res); return true; }
+		if (!validSysName(n)) { notFound(res); return true; }
+		const st = systemState(n);
+		st ? sendJson(res, 200, st) : notFound(res, 'no such system');
+		return true;
+	}
+	const mSysActions = /^\/api\/systems\/([^/]+)\/actions$/.exec(p);
+	if (mSysActions) {
+		let n; try { n = decodeURIComponent(mSysActions[1]); } catch { notFound(res); return true; }
+		if (!validSysName(n)) { notFound(res); return true; }
+		const actions = systemActions(n);
+		actions ? sendJson(res, 200, { actions }) : notFound(res, 'no such system');
+		return true;
+	}
 	const mSysRec = /^\/api\/systems\/([^/]+)\/records$/.exec(p);
 	if (mSysRec) {
 		let n; try { n = decodeURIComponent(mSysRec[1]); } catch { notFound(res); return true; }
