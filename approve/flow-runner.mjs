@@ -68,14 +68,15 @@ function frameScope(page, f) {
 // A step with a `frame` is scoped INTO that iframe via frameScope (the uniqueness count is then frame-local).
 export function buildLocator(page, s) {
 	const scope = s.frame ? frameScope(page, s.frame) : page;
+	const exact = s.exact !== false;
 	switch (s.by) {
 		case 'testid': return scope.getByTestId(s.value);
-		case 'role': return scope.getByRole(s.value, s.name ? { name: s.name, exact: !!s.exact } : undefined);
-		case 'label': return scope.getByLabel(s.value, s.exact ? { exact: true } : undefined);
-		case 'text': return scope.getByText(s.value, s.exact ? { exact: true } : undefined);
-		case 'placeholder': return scope.getByPlaceholder(s.value);
-		case 'alt': return scope.getByAltText(s.value);
-		case 'title': return scope.getByTitle(s.value);
+		case 'role': return scope.getByRole(s.value, s.name ? { name: s.name, exact } : undefined);
+		case 'label': return scope.getByLabel(s.value, { exact });
+		case 'text': return scope.getByText(s.value, { exact });
+		case 'placeholder': return scope.getByPlaceholder(s.value, { exact });
+		case 'alt': return scope.getByAltText(s.value, { exact });
+		case 'title': return scope.getByTitle(s.value, { exact });
 		default: throw new Error(`unknown find.by ${s.by}`);
 	}
 }

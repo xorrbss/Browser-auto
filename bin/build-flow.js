@@ -11,12 +11,16 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { normalizeEngine, DEFAULT_ENGINE } = require('../lib/engine.js');
 
-const [, , name, startUrl, app, recordsPath, flowsDir] = process.argv;
+const [, , name, startUrl, app, recordsPath, flowsDir, engineArg] = process.argv;
 if (!name || !startUrl || !recordsPath || !flowsDir) {
-  console.error('usage: build-flow.js <name> <startUrl> <app|""> <records.json> <flowsDir>');
+  console.error('usage: build-flow.js <name> <startUrl> <app|""> <records.json> <flowsDir> [engine]');
   process.exit(2);
 }
+let engine;
+try { engine = normalizeEngine(engineArg || DEFAULT_ENGINE, 'flow.engine'); }
+catch (e) { console.error('[build-flow] ' + e.message); process.exit(2); }
 let records;
 try { records = JSON.parse(fs.readFileSync(recordsPath, 'utf8')); }
 catch (e) { console.error('[build-flow] cannot read records: ' + e.message); process.exit(1); }
@@ -197,7 +201,7 @@ const asserts = [];
 const finalGlob = urlGlob(lastUrl);
 if (finalGlob) asserts.push({ kind: 'url', value: finalGlob });
 
-const flow = { name };
+const flow = { name, engine };
 if (app) flow.app = app;
 flow.startUrl = startUrl;
 flow.steps = steps;

@@ -38,10 +38,19 @@ ensure_authoring_daemon() {
 usage() {
 	echo "usage:" >&2
 	echo "  bin/probe-record.sh scaffold <name> <startUrl>           # snapshot + flow.json stub (no key)" >&2
-	echo "  bin/probe-record.sh capture  <name> <startUrl> [--app a] [--seconds N] # record a live journey -> flow.json" >&2
+	echo "  bin/probe-record.sh capture  <name> <startUrl> [--engine agent-browser|playwright] [--app a] [--seconds N] # record a live journey -> flow.json" >&2
 	echo "  bin/probe-record.sh verify   <flows/name.flow.json>      # re-drive + verify/repair locators (optional)" >&2
 	echo "  bin/probe-record.sh compile  <flows/name.flow.json>      # flow.json -> runnable test.sh" >&2
 	exit 2
+}
+
+flow_engine() {
+	local flow="$1" engine
+	engine="$(jq -r '.engine // "agent-browser"' "$flow")"
+	case "$engine" in
+		agent-browser|playwright) printf '%s' "$engine" ;;
+		*) echo "[probe] invalid flow.engine '$engine' in $flow (expected agent-browser or playwright)" >&2; exit 2 ;;
+	esac
 }
 
 # --- compile: flow.json -> test.sh (deterministic, the load-bearing part) ---
@@ -63,7 +72,7 @@ compile() {
 	# documented ceiling — flows/SCHEMA.md). A `frame` step is replayable ONLY via the Playwright flow-runner
 	# (the effectful path), never compiled to a test.sh — refuse rather than silently run the find on the TOP
 	# frame (a wrong-element false-green).
-	if ! jq -e '[.steps[] | select(.frame!=null)] | length==0' "$flow" >/dev/null 2>&1; then
+	if [ "$(flow_engine "$flow")" = "agent-browser" ] && ! jq -e '[.steps[] | select(.frame!=null)] | length==0' "$flow" >/dev/null 2>&1; then
 		jq -r '.steps | to_entries[] | select(.value.frame!=null)
 			| "  iframe step #\(.key): frame \(.value.frame.by):\(.value.frame.value)"' "$flow" >&2
 		echo "[probe] compile refused: $flow has iframe (frame) step(s) — the agent-browser test path can't scope into frames; replay via the Playwright flow-runner (effectful path) instead." >&2
@@ -89,6 +98,32 @@ compile() {
 	app="$(jq -r '.app // empty' "$flow")"
 	starturl="$(jq -r '.startUrl' "$flow")"
 	local out="${PROBE_ROOT}/tests/${name}.test.sh"
+	local engine
+	engine="$(flow_engine "$flow")"
+
+	if [ "$engine" = "playwright" ]; then
+		{
+			echo '#!/usr/bin/env bash'
+			echo "# tests/${name}.test.sh ??COMPILED from flows/${name}.flow.json by bin/probe-record.sh."
+			echo '# Edit the .flow.json and recompile, or edit here directly (then this becomes the source).'
+			echo 'set -euo pipefail'
+			echo 'DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"'
+			echo "node \"\$DIR/bin/play-flow.mjs\" --flow \"\$DIR/flows/${name}.flow.json\""
+		} | tr -d '\r' > "$out"
+		echo "[probe] compiled -> $out"
+		return 0
+	fi
+
+	# FAIL-LOUD on iframe (frame-scoped) steps: the agent-browser TEST path cannot scope into an iframe (a
+	# documented ceiling ??flows/SCHEMA.md). A `frame` step is replayable ONLY via the Playwright flow-runner
+	# (the effectful path), never compiled to a test.sh ??refuse rather than silently run the find on the TOP
+	# frame (a wrong-element false-green).
+	if ! jq -e '[.steps[] | select(.frame!=null)] | length==0' "$flow" >/dev/null 2>&1; then
+		jq -r '.steps | to_entries[] | select(.value.frame!=null)
+			| "  iframe step #\(.key): frame \(.value.frame.by):\(.value.frame.value)"' "$flow" >&2
+		echo "[probe] compile refused: $flow has iframe (frame) step(s) ??the agent-browser test path can't scope into frames; set flow.engine=\"playwright\" or remove the frame steps." >&2
+		exit 1
+	fi
 
 	# REPLAY FALLBACK (opt-in: flow.replayFallback==true). Build a per-step ladder of
 	# capture-time-UNIQUE sibling candidates from the gitignored candidates sidecar so a transient
@@ -291,7 +326,7 @@ scaffold() {
 		echo "[probe] $stub already exists; left untouched."
 	else
 		jq -n --arg name "$name" --arg url "$starturl" \
-			'{name:$name, startUrl:$url, steps:[], asserts:[]}' > "$stub"
+			'{name:$name, engine:"agent-browser", startUrl:$url, steps:[], asserts:[]}' > "$stub"
 		echo "[probe] flow stub -> $stub (fill in steps/asserts, then: compile)"
 	fi
 	echo "[probe] locator priority: testid > role+name > label > exact-text > placeholder > title"
@@ -304,20 +339,32 @@ scaffold() {
 # are the supported v1 scope (cross-origin top-level nav is a documented limitation).
 # Test/CI hooks: AQA_CAPTURE_SECONDS=N auto-stops after N s; AQA_CAPTURE_SESSION pins the session.
 capture() {
-	local name="$1" starturl="$2"; shift 2
-	local app="" secs="${AQA_CAPTURE_SECONDS:-0}"
+	local name="" starturl="" app="" engine="agent-browser" secs="${AQA_CAPTURE_SECONDS:-0}"
 	while [ $# -gt 0 ]; do
 		case "${1:-}" in
 			--app) [ $# -ge 2 ] || usage; app="$2"; shift 2 ;;
 			--seconds) [ $# -ge 2 ] || usage; secs="$2"; shift 2 ;;
-			*) usage ;;
+			--engine) [ $# -ge 2 ] || usage; engine="$2"; shift 2 ;;
+			*)
+				if [ -z "$name" ]; then name="$1"; shift
+				elif [ -z "$starturl" ]; then starturl="$1"; shift
+				else usage
+				fi ;;
 		esac
 	done
+	[ -n "$name" ] && [ -n "$starturl" ] || usage
+	case "$engine" in agent-browser|playwright) ;; *) echo "[probe] invalid engine '$engine' (expected agent-browser or playwright)" >&2; exit 2 ;; esac
 
 	local capjs="${PROBE_ROOT}/bin/capture.js"
 	[ -s "$capjs" ] || { echo "[probe] missing $capjs" >&2; exit 1; }
 	local builder="${PROBE_ROOT}/bin/build-flow.js"
 	[ -s "$builder" ] || { echo "[probe] missing $builder" >&2; exit 1; }
+
+	if [ "$engine" = "playwright" ]; then
+		local args=(--name "$name" --url "$starturl" --seconds "$secs")
+		[ -n "$app" ] && args+=(--app "$app")
+		exec node "$PROBE_ROOT/bin/pw-record.mjs" "${args[@]}"
+	fi
 
 	local sess="${AQA_CAPTURE_SESSION:-capture-${name}-$$}"
 	export AGENT_BROWSER_HEADED=1   # B3: capture is human-driven; config defaults headless
@@ -466,7 +513,7 @@ capture() {
 		exit 1
 	fi
 	echo "[probe] captured $n raw event(s) -> building flow..."
-	node "$builder" "$name" "$starturl" "$app" "$recfile" "${PROBE_ROOT}/flows"
+	node "$builder" "$name" "$starturl" "$app" "$recfile" "${PROBE_ROOT}/flows" "$engine"
 	rm -f "$recfile"
 	# F7: build-flow.js writes flows/<name>.flow.json unconditionally; on each fatal branch
 	# rename it first so a later `compile` can never accept an incomplete artifact as clean.
@@ -493,10 +540,20 @@ capture() {
 	echo "[probe] next: resolve any needs_review in flows/${name}.flow.json, then: bin/probe-record.sh compile flows/${name}.flow.json"
 }
 
+verify_dispatch() {
+	local flow="$1" engine
+	[ -s "$flow" ] || { echo "[probe] no such flow: $flow" >&2; exit 1; }
+	engine="$(flow_engine "$flow")"
+	if [ "$engine" = "playwright" ]; then
+		exec node "$PROBE_ROOT/bin/play-flow.mjs" --flow "$flow" --verify
+	fi
+	exec bash "${PROBE_ROOT}/bin/verify-flow.sh" "$flow"
+}
+
 case "${1:-}" in
 	scaffold) shift; [ $# -eq 2 ] || usage; scaffold "$1" "$2" ;;
 	capture)  shift; [ $# -ge 2 ] || usage; capture "$@" ;;
-	verify)   shift; [ $# -eq 1 ] || usage; exec bash "${PROBE_ROOT}/bin/verify-flow.sh" "$1" ;;
+	verify)   shift; [ $# -eq 1 ] || usage; verify_dispatch "$1" ;;
 	compile)  shift; [ $# -eq 1 ] || usage; compile "$1" ;;
 	*) usage ;;
 esac
