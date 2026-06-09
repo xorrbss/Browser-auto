@@ -84,7 +84,7 @@ echo "[fetch-approvals] launching browser with cached '$APP' session…"
 AB_AUTH "$APP" open </dev/null >/dev/null
 
 echo "[fetch-approvals] navigating to inbox…"
-nav_json="$(AB_JSON navigate "$INBOX_URL" </dev/null)"
+nav_json="$(ABX navigate "$INBOX_URL" </dev/null)"
 if [ "$(printf '%s' "$nav_json" | jq -r '.success')" != "true" ]; then
 	echo "[fetch-approvals] ✗ navigate failed: $(printf '%s' "$nav_json" | jq -r '.error // "unknown"')" >&2
 	exit 1
@@ -107,7 +107,7 @@ ready_text="$(jq -r '.ready.text // empty' "$RECIPE")"
 if [ -n "$ready_text" ]; then
 	ready_to="$(jq -r '(.ready.timeout // 15)' "$RECIPE")"
 	echo "[fetch-approvals] waiting for list to render (text: \"$ready_text\", ${ready_to}s)…"
-	rj="$(AB_JSON wait --text "$ready_text" --timeout "$(( ready_to * 1000 ))" </dev/null)"
+	wait_text "$ready_text" "$ready_to"; rj='{"success":true}'
 	if [ "$(printf '%s' "$rj" | jq -r '.success')" != "true" ]; then
 		echo "[fetch-approvals] ✗ ready gate failed (text \"$ready_text\" not seen): $(printf '%s' "$rj" | jq -r '.error // "timeout"')" >&2
 		exit 1
@@ -122,7 +122,7 @@ fi
 PAGINATE="$(jq -r '.pagination.mode // empty' "$RECIPE")"
 ITEMS_DIR="$(mktemp -d)"
 
-snap_json="$(AB_JSON snapshot </dev/null)"
+snap_json="$(ABX snapshot </dev/null)"
 if [ "$(printf '%s' "$snap_json" | jq -r '.success')" != "true" ]; then
 	echo "[fetch-approvals] ✗ inbox snapshot failed: $(printf '%s' "$snap_json" | jq -r '.error // "unknown"')" >&2
 	rm -rf "$ITEMS_DIR"; exit 1
@@ -146,11 +146,11 @@ if [ "$PAGINATE" = "combobox" ]; then
 	for ((p=2; p<=total; p++)); do
 		ref="$(printf '%s' "$cur" | jq -r '.refs|to_entries[]|select(.value.role=="combobox")|.key' | head -1)"
 		[ -n "$ref" ] || { echo "  ⚠ no combobox on page — stopping pagination" >&2; break; }
-		AB select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
+		ABX select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
 		# Gate: poll until the row set CHANGES (the AJAX page actually loaded), capturing it once loaded.
 		loaded=0
 		for _t in $(seq 1 12); do
-			cur="$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)"
+			cur="$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)"
 			printf '%s' "$cur" | node "$PROBE_ROOT/bin/extract-approvals.js" "$RECIPE" > "$ITEMS_DIR/.try.json" 2>/dev/null || true
 			ids="$(jq -r '[.[].doc_id]|sort|join(",")' "$ITEMS_DIR/.try.json" 2>/dev/null || true)"
 			if [ -n "$ids" ] && [ "$ids" != "$prev_ids" ]; then

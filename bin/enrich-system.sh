@@ -103,9 +103,9 @@ LIST_READY="$(jq -r '.ready.text // empty' "$RECIPE")"
 PAGINATE="$(jq -r '.pagination.mode // empty' "$RECIPE")"
 EX_LIST="$PROBE_ROOT/bin/extract-list.js"
 _list_keysig() { printf '%s' "$1" | node "$EX_LIST" "$RECIPE" 2>/dev/null | jq -r '[.[].key]|sort|join(",")' 2>/dev/null || true; }
-AB_JSON navigate "$TARGET" </dev/null >/dev/null 2>&1 || true
-[ -z "$LIST_READY" ] || AB_JSON wait --text "$LIST_READY" --timeout 15000 </dev/null >/dev/null 2>&1 || true
-P1SNAP="$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)"
+ABX navigate "$TARGET" </dev/null >/dev/null || { rm -rf "$TMPD"; exit 1; }
+[ -z "$LIST_READY" ] || wait_text "$LIST_READY" 15 >/dev/null 2>&1 || true
+P1SNAP="$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)"
 SIG1="$(_list_keysig "$P1SNAP")"
 TOTAL=1
 if [ "$PAGINATE" = "combobox" ]; then
@@ -128,22 +128,22 @@ for key in "${DOCS[@]}"; do
 	# Re-navigate to page 1 (we may be on a previous doc's detail page), then SCAN list pages until the
 	# click lands — a target doc can be on any page. Page forward via the combobox @ref (read FRESH per
 	# page, never stored), settling when the key set differs from page 1 (mirrors sync-system.sh).
-	AB_JSON navigate "$TARGET" </dev/null >/dev/null 2>&1 || true
-	[ -z "$LIST_READY" ] || AB_JSON wait --text "$LIST_READY" --timeout 12000 </dev/null >/dev/null 2>&1 || true
+	ABX navigate "$TARGET" </dev/null >/dev/null 2>&1 || { echo "  WARN: list navigation failed; skipping $key" >&2; continue; }
+	[ -z "$LIST_READY" ] || wait_text "$LIST_READY" 12 >/dev/null 2>&1 || true
 	clicked=0
 	for ((p=1; p<=TOTAL; p++)); do
 		if [ "$p" -gt 1 ]; then
-			cur="$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)"
+			cur="$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)"
 			ref="$(printf '%s' "$cur" | jq -r '.refs|to_entries[]|select(.value.role=="combobox")|.key' 2>/dev/null | head -1 || true)"
 			[ -n "$ref" ] || break
-			AB select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
+			ABX select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
 			for _t in $(seq 1 12); do
-				ids="$(_list_keysig "$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)")"
+				ids="$(_list_keysig "$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)")"
 				[ -n "$ids" ] && [ "$ids" != "$SIG1" ] && break
 				sleep 0.5
 			done
 		fi
-		cj="$(AB_JSON find text "$key" click </dev/null || true)"
+		cj="$(ABX find text "$key" click </dev/null 2>/dev/null || true)"
 		[ "$(printf '%s' "$cj" | jq -r '.success' 2>/dev/null)" = "true" ] && { clicked=1; break; }
 	done
 	if [ "$clicked" != 1 ]; then
@@ -154,9 +154,9 @@ for key in "${DOCS[@]}"; do
 		echo "  ⚠ click did not open a detail page (no $DETAIL_URLGLOB) — skipping $key" >&2; continue
 	fi
 	if [ -n "$READY_TEXT" ]; then
-		AB_JSON wait --text "$READY_TEXT" --timeout 12000 </dev/null >/dev/null 2>&1 || true
+		wait_text "$READY_TEXT" 12 >/dev/null 2>&1 || true
 	fi
-	sj="$(AB_JSON snapshot </dev/null || true)"
+	sj="$(ABX snapshot </dev/null 2>/dev/null || true)"
 	if [ "$(printf '%s' "$sj" | jq -r '.success' 2>/dev/null)" != "true" ]; then
 		echo "  ⚠ detail snapshot failed — skipping" >&2; continue
 	fi

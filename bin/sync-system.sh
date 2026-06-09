@@ -49,18 +49,18 @@ echo "[sync-system] '$SYSTEM' → launching browser (cached auth)…"
 AB_AUTH "$SYSTEM" open </dev/null >/dev/null   # fails loud if fixtures/auth/<system>.state.json missing
 
 echo "[sync-system] navigating to target…"
-nav="$(AB_JSON navigate "$TARGET" </dev/null || true)"   # || true: report loud below, not a silent set -e abort
+nav="$(ABX navigate "$TARGET" </dev/null)" || { rm -rf "$TMPD"; exit 1; }
 if [ "$(printf '%s' "$nav" | jq -r '.success // empty' 2>/dev/null)" != "true" ]; then
 	echo "[sync-system] ✗ navigate failed: $(printf '%s' "$nav" | jq -r '.error // "unknown"')" >&2; rm -rf "$TMPD"; exit 1
 fi
 echo "[sync-system] landed: $(printf '%s' "$nav" | jq -r '.data.url // "?"')"
 
 if [ -n "$READY_TEXT" ]; then
-	AB_JSON wait --text "$READY_TEXT" --timeout 15000 </dev/null >/dev/null 2>&1 || true
+	wait_text "$READY_TEXT" 15 >/dev/null 2>&1 || true
 fi
 
 ITEMS_DIR="$TMPD/items"; mkdir -p "$ITEMS_DIR"
-cur="$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)"
+cur="$(ABX snapshot </dev/null | jq '.data')" || { rm -rf "$TMPD"; exit 1; }
 printf '%s' "$cur" | node "$EX" "$RECIPE" > "$ITEMS_DIR/p001.json"
 prev="$(jq -r '[.[].key]|sort|join(",")' "$ITEMS_DIR/p001.json")"
 echo "[sync-system] page 1: $(jq 'length' "$ITEMS_DIR/p001.json") rows"
@@ -73,10 +73,10 @@ if [ "$PAGINATE" = "combobox" ]; then
 	for ((p=2; p<=total; p++)); do
 		ref="$(printf '%s' "$cur" | jq -r '.refs|to_entries[]|select(.value.role=="combobox")|.key' | head -1)"
 		[ -n "$ref" ] || { echo "  ⚠ no combobox — stopping" >&2; break; }
-		AB select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
+		ABX select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
 		loaded=0
 		for _t in $(seq 1 12); do
-			cur="$(AB_JSON snapshot </dev/null | jq '.data' 2>/dev/null || true)"
+			cur="$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)"
 			printf '%s' "$cur" | node "$EX" "$RECIPE" > "$ITEMS_DIR/.try.json" 2>/dev/null || true
 			ids="$(jq -r '[.[].key]|sort|join(",")' "$ITEMS_DIR/.try.json" 2>/dev/null || true)"
 			if [ -n "$ids" ] && [ "$ids" != "$prev" ]; then mv "$ITEMS_DIR/.try.json" "$ITEMS_DIR/$(printf 'p%03d' "$p").json"; loaded=1; break; fi

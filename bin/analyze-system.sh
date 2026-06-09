@@ -41,13 +41,13 @@ echo "[analyze] '$SYSTEM' → launching browser (cached auth)…"
 AB_AUTH "$SYSTEM" open </dev/null >/dev/null
 
 echo "[analyze] navigating to target…"
-nav="$(AB_JSON navigate "$TARGET" </dev/null)"
+nav="$(ABX navigate "$TARGET" </dev/null)"
 if [ "$(printf '%s' "$nav" | jq -r '.success')" != "true" ]; then
 	echo "[analyze] ✗ navigate failed: $(printf '%s' "$nav" | jq -r '.error // "unknown"')" >&2; exit 1
 fi
 echo "[analyze] landed: $(printf '%s' "$nav" | jq -r '.data.url // "?"')"
 
-snap="$(AB_JSON snapshot </dev/null)"
+snap="$(ABX snapshot </dev/null)"
 if [ "$(printf '%s' "$snap" | jq -r '.success')" != "true" ]; then
 	echo "[analyze] ✗ snapshot failed" >&2; exit 1
 fi

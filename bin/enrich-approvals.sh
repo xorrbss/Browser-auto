@@ -83,10 +83,10 @@ i=0
 for doc in "${DOCS[@]}"; do
 	echo "[enrich] ($((i+1))/${#DOCS[@]}) $doc"
 	# Back to the list, then open this doc by its visible doc-number text (same-tab navigation).
-	AB_JSON navigate "$INBOX_URL" </dev/null >/dev/null 2>&1 || true
+	ABX navigate "$INBOX_URL" </dev/null >/dev/null 2>&1 || { echo "  WARN: list navigation failed; skipping $doc" >&2; continue; }
 	# `|| true`: a chained `find … click` exits NON-ZERO when the element isn't found (e.g. the doc is on
 	# another list page) — without it, set -e would ABORT the whole batch instead of skipping this doc.
-	cj="$(AB_JSON find text "$doc" click </dev/null || true)"
+	cj="$(ABX find text "$doc" click </dev/null 2>/dev/null || true)"
 	if [ "$(printf '%s' "$cj" | jq -r '.success' 2>/dev/null)" != "true" ]; then
 		echo "  ⚠ not on the current list page / click failed ($(printf '%s' "$cj" | jq -r '.error // "?"' 2>/dev/null)) — skipping" >&2; continue
 	fi
@@ -97,9 +97,9 @@ for doc in "${DOCS[@]}"; do
 	fi
 	# Settle the detail render (recipe.detail.ready) before snapshotting; in-batch wait --text only.
 	if [ -n "$READY_TEXT" ]; then
-		AB_JSON wait --text "$READY_TEXT" --timeout 12000 </dev/null >/dev/null 2>&1 || true
+		wait_text "$READY_TEXT" 12 >/dev/null 2>&1 || true
 	fi
-	sj="$(AB_JSON snapshot </dev/null || true)"
+	sj="$(ABX snapshot </dev/null 2>/dev/null || true)"
 	if [ "$(printf '%s' "$sj" | jq -r '.success' 2>/dev/null)" != "true" ]; then
 		echo "  ⚠ detail snapshot failed — skipping" >&2; continue
 	fi
