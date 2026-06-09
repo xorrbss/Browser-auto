@@ -18,6 +18,7 @@
 
 set -euo pipefail
 PROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PROBE_ROOT
 
 # Accept config as positional args (auth.sh <app> <login_url> <success_url>) OR env
 # vars. Args are preferred because they survive terminals that wrap/split long
@@ -44,6 +45,13 @@ SESS="auth-${APP}"
 # replay; auth is the one flow that MUST be visible, so we override via both the flag
 # and the env var (the env var beats project config) to be certain the window appears.
 export AGENT_BROWSER_HEADED=1
+
+# Standalone auth does not source env.sh, so it owns the shared daemon-health
+# gate before its first agent-browser call.
+# shellcheck source=../lib/daemon.sh
+source "$PROBE_ROOT/lib/daemon.sh"
+ensure_daemon
+export AQA_DAEMON_ENSURED=1
 
 echo "[auth] opening $LOGIN_URL in a real Chrome window (session: $SESS)..."
 agent-browser --session "$SESS" --headed open "$LOGIN_URL" >/dev/null

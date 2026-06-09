@@ -24,7 +24,10 @@ mkdir -p "$RUN_DIR"
 # Gate the environment ONCE (ffmpeg absolute-path inject lives here and, because we
 # `source` it, the prepended PATH propagates to the test subshells we spawn next).
 source "${PROBE_ROOT}/lib/preflight.sh"
+source "${PROBE_ROOT}/lib/daemon.sh"
 source "${PROBE_ROOT}/lib/report.sh"
+ensure_daemon
+export AQA_DAEMON_ENSURED=1
 
 REPORT_TSV="${RUN_DIR}/results.tsv"
 : > "$REPORT_TSV"
@@ -78,5 +81,6 @@ report_emit "$REPORT_TSV" "$RUN_DIR"
 
 # Reap any daemon sessions left behind (best-effort; never changes the gate result).
 agent-browser close --all >/dev/null 2>&1 || true
+reap_browser_orphans || true
 
 exit $overall_rc

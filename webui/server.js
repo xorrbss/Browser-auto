@@ -39,7 +39,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { listRuns, getRun, getTrends, pruneArtifacts, ARTIFACTS_DIR } from './index.js';
 import { enqueue, jobStatus, jobResult, subscribe, queueState, cancel, stop, killRunning } from './jobs.js';
-import { gitBash, recordCmd, nodeLeaf } from './spawn.js';
+import { gitBash, browserBash, recordCmd, nodeLeaf } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
 import { listAuthStates, validApp, deleteAuthState } from './auth.js';
 import { listApprovalsView } from './approvals.js';
@@ -275,7 +275,7 @@ const server = http.createServer(async (req, res) => {
 					return sendJson(res, 400, { error: 'invalid test glob' });
 				}
 				const label = glob ? `run.sh ${glob}` : 'run.sh (all)';
-				const job = enqueue({ kind: 'run', label, spawnFn: () => gitBash('run.sh', glob ? [glob] : []) });
+				const job = enqueue({ kind: 'run', label, spawnFn: () => browserBash('run.sh', glob ? [glob] : []) });
 				return sendJson(res, 202, { job });
 			}
 			const mCancel = /^\/api\/jobs\/([^/]+)\/cancel$/.exec(p);
@@ -339,7 +339,7 @@ const server = http.createServer(async (req, res) => {
 				const job = enqueue({
 					kind: 'verify',
 					label: `verify ${name}`,
-					spawnFn: () => gitBash('bin/probe-record.sh', ['verify', `flows/${name}.flow.json`]),
+					spawnFn: () => browserBash('bin/probe-record.sh', ['verify', `flows/${name}.flow.json`]),
 				});
 				return sendJson(res, 202, { job });
 			}
@@ -353,9 +353,9 @@ const server = http.createServer(async (req, res) => {
 			}
 
 				// 결재/RPA routes (sync, NL command router, system registry) — see webui/routes-rpa.js.
-				if (await commandPlanPost(p, bodyJson, res, { sendJson, enqueue, gitBash, nodeLeaf })) return;
+				if (await commandPlanPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash, nodeLeaf })) return;
 				if (approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf })) return;
-				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash })) return;
+				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash })) return;
 
 			if (p === '/api/auth') {
 				const app = String(bodyJson.app || '').trim();
@@ -376,7 +376,7 @@ const server = http.createServer(async (req, res) => {
 				}
 				// setup/auth.sh opens headed Chrome for human OTP, then saves fixtures/auth/<app>.state.json.
 				// Browser job -> through the single-slot serial queue. (successUrl is an inert arg via Git-Bash.)
-				const job = enqueue({ kind: 'auth', label: `auth ${app}`, spawnFn: () => gitBash('setup/auth.sh', [app, loginUrl, successUrl]) });
+				const job = enqueue({ kind: 'auth', label: `auth ${app}`, spawnFn: () => browserBash('setup/auth.sh', [app, loginUrl, successUrl]) });
 				return sendJson(res, 202, { job, app });
 			}
 

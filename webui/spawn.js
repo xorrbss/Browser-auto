@@ -15,10 +15,8 @@ export const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 const IS_WIN = process.platform === 'win32';
 const GIT_BASH = process.env.WEBUI_BASH || (IS_WIN ? 'C:\\Program Files\\Git\\bin\\bash.exe' : 'bash');
 
-// gitBash(scriptRel, args): run a bash CLI script (path relative to PROBE_ROOT), e.g.
-// gitBash('run.sh', ['login'])  ->  bash.exe run.sh login   (cwd = PROBE_ROOT).
-export function gitBash(scriptRel, args = [], extraEnv = null) {
-	return spawn(GIT_BASH, [scriptRel, ...args], {
+function spawnOpts(extraEnv = null) {
+	return {
 		cwd: PROBE_ROOT,
 		env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
 		windowsHide: true,
@@ -27,7 +25,25 @@ export function gitBash(scriptRel, args = [], extraEnv = null) {
 		// — jobs.js still awaits 'close', so the parent keeps tracking it. Windows uses taskkill /T
 		// and must NOT be detached (detached there spawns a stray console window).
 		detached: !IS_WIN,
-	});
+	};
+}
+
+// gitBash(scriptRel, args): run a bash CLI script (path relative to PROBE_ROOT), e.g.
+// gitBash('run.sh', ['login'])  ->  bash.exe run.sh login   (cwd = PROBE_ROOT).
+export function gitBash(scriptRel, args = [], extraEnv = null) {
+	return spawn(GIT_BASH, [scriptRel, ...args], spawnOpts(extraEnv));
+}
+
+// browserBash(): run a browser-driving bash job after proving the shared agent-browser daemon is
+// healthy. Non-browser bash calls (compile, daemon stop) keep using raw gitBash().
+export function browserBash(scriptRel, args = [], extraEnv = null) {
+	return spawn(GIT_BASH, [
+		'-lc',
+		'source ./lib/daemon.sh && ensure_daemon && export AQA_DAEMON_ENSURED=1 && exec bash "$@"',
+		'aqa-webui-daemon',
+		scriptRel,
+		...args,
+	], spawnOpts(extraEnv));
 }
 
 // recordCmd(name, startUrl, {app, seconds}): launch the headed-Chrome recorder. We invoke
@@ -45,7 +61,7 @@ export function recordCmd(name, startUrl, { app, seconds, stopFile } = {}) {
 	args.push('--seconds', String(seconds));
 	// stopFile (optional): a path the web UI touches to request a GRACEFUL early finish; capture()
 	// watches AQA_CAPTURE_STOPFILE and breaks into its normal drain path (a complete flow).
-	return gitBash('bin/probe-record.sh', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
+	return browserBash('bin/probe-record.sh', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
 }
 
 // nodeLeaf(scriptRel, args, extraEnv): run a Node leaf (path relative to PROBE_ROOT) with the SAME node
@@ -54,12 +70,7 @@ export function recordCmd(name, startUrl, { app, seconds, stopFile } = {}) {
 // + array args => no shell interprets web-form input. Same process-group / windowsHide treatment as
 // gitBash so killTree() reaps the whole node -> Chromium tree.
 export function nodeLeaf(scriptRel, args = [], extraEnv = null) {
-	return spawn(process.execPath, [scriptRel, ...args], {
-		cwd: PROBE_ROOT,
-		env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
-		windowsHide: true,
-		detached: !IS_WIN,
-	});
+	return spawn(process.execPath, [scriptRel, ...args], spawnOpts(extraEnv));
 }
 
 // killTree(pid): kill a process AND its whole descendant tree. child.kill() only signals the top

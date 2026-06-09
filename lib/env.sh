@@ -30,10 +30,79 @@ ARTDIR="${PROBE_ROOT}/artifacts/${RUN_ID:-standalone}/${_PROBE_TEST_NAME}"
 export ARTDIR
 mkdir -p "$ARTDIR"
 
+if [ -f "$PROBE_ROOT/lib/daemon.sh" ]; then
+	# shellcheck source=daemon.sh
+	source "$PROBE_ROOT/lib/daemon.sh"
+fi
+
+_AQA_DAEMON_ENSURED="${AQA_DAEMON_ENSURED:-0}"
+_ensure_daemon_once() {
+	[ "${AQA_SKIP_DAEMON_ENSURE:-0}" = "1" ] && return 0
+	[ "$_AQA_DAEMON_ENSURED" = "1" ] && return 0
+	if declare -F ensure_daemon >/dev/null 2>&1; then
+		ensure_daemon
+		_AQA_DAEMON_ENSURED=1
+		export AQA_DAEMON_ENSURED=1
+	fi
+}
+
+_agent_browser_wedged() {
+	grep -Eiq 'os error 10060|10060|Failed to read' "$@" 2>/dev/null
+}
+
+_agent_browser_retry() {
+	local out err rc
+	out="$(mktemp)"; err="$(mktemp)"
+	set +e
+	agent-browser "$@" >"$out" 2>"$err"
+	rc=$?
+	set -e
+	if _agent_browser_wedged "$out" "$err"; then
+		echo "[daemon] agent-browser command hit daemon wedge; recovering and retrying: $*" >&2
+		if declare -F recover_daemon >/dev/null 2>&1; then recover_daemon >&2 || true; fi
+		_AQA_DAEMON_ENSURED=1
+		export AQA_DAEMON_ENSURED=1
+		: >"$out"; : >"$err"
+		set +e
+		agent-browser "$@" >"$out" 2>"$err"
+		rc=$?
+		set -e
+	fi
+	cat "$out"
+	cat "$err" >&2
+	rm -f "$out" "$err"
+	return "$rc"
+}
+
+_agent_browser_retry_stdin() {
+	local input="$1"; shift
+	local out err rc
+	out="$(mktemp)"; err="$(mktemp)"
+	set +e
+	agent-browser "$@" >"$out" 2>"$err" <<<"$input"
+	rc=$?
+	set -e
+	if _agent_browser_wedged "$out" "$err"; then
+		echo "[daemon] agent-browser command hit daemon wedge; recovering and retrying: $*" >&2
+		if declare -F recover_daemon >/dev/null 2>&1; then recover_daemon >&2 || true; fi
+		_AQA_DAEMON_ENSURED=1
+		export AQA_DAEMON_ENSURED=1
+		: >"$out"; : >"$err"
+		set +e
+		agent-browser "$@" >"$out" 2>"$err" <<<"$input"
+		rc=$?
+		set -e
+	fi
+	cat "$out"
+	cat "$err" >&2
+	rm -f "$out" "$err"
+	return "$rc"
+}
+
 # AB: every agent-browser call in a test goes through this so the isolated --session
 # is always applied. Raw stdout/stderr passthrough; callers that need a verdict use
 # AB_JSON or the assert_* helpers instead of trusting AB's exit code.
-AB() { agent-browser --session "$S" "$@"; }
+AB() { _ensure_daemon_once; agent-browser --session "$S" "$@"; }
 
 # AB_AUTH <app> <agent-browser-args...>: like AB but injects --state from the cached
 # login produced by setup/auth.sh (fixtures/auth/<app>.state.json). Use as the first
@@ -48,13 +117,14 @@ AB_AUTH() {
 		echo "  ✗ AB_AUTH: no cached state for '$app' ($state). Run setup/auth.sh first." >&2
 		return 1
 	fi
-	agent-browser --session "$S" --state "$state" "$@"
+	_ensure_daemon_once
+	_agent_browser_retry --session "$S" --state "$state" "$@"
 }
 
 # AB_JSON: run an agent-browser command with --json and echo its raw JSON envelope.
 # THE failure-detection primitive. Does NOT itself decide pass/fail — it just surfaces
 # the JSON so jq can read `.success`. Single command only (batch has its own shape).
-AB_JSON() { agent-browser --session "$S" "$@" --json; }
+AB_JSON() { _ensure_daemon_once; _agent_browser_retry --session "$S" "$@" --json; }
 
 # BATCH: run a deterministic journey body passed as JSON on stdin, e.g.
 #   BATCH --bail <<'JSON'
@@ -65,8 +135,10 @@ AB_JSON() { agent-browser --session "$S" "$@" --json; }
 # so BATCH pipes the result array to _batch_check, which fails the test if any
 # command's `.success` is false. NEVER rely on BATCH's exit code alone.
 BATCH() {
-	local out
-	out="$(agent-browser --session "$S" batch --json "$@")"
+	local out input
+	input="$(cat)"
+	_ensure_daemon_once
+	out="$(_agent_browser_retry_stdin "$input" --session "$S" batch --json "$@")"
 	_batch_check "$out"
 }
 

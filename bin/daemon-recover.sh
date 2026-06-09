@@ -14,7 +14,15 @@
 #   bash bin/daemon-recover.sh
 set -euo pipefail
 
+PROBE_ROOT="${PROBE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export PROBE_ROOT
 AB_DIR="${AGENT_BROWSER_HOME:-$HOME/.agent-browser}"
+
+if [ "${DAEMON_RECOVER_NO_REAP:-0}" != "1" ] && [ -f "$PROBE_ROOT/lib/daemon.sh" ]; then
+	# shellcheck source=../lib/daemon.sh
+	source "$PROBE_ROOT/lib/daemon.sh"
+	reap_browser_orphans || true
+fi
 
 echo "[recover] agent-browser daemon stop (best-effort, bounded)…"
 # Bound the daemon-routed stop: a WEDGED daemon (the very thing this script cures) can hang the stop

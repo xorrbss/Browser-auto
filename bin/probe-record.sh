@@ -25,6 +25,15 @@
 
 set -euo pipefail
 PROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PROBE_ROOT
+
+ensure_authoring_daemon() {
+	[ "${AQA_DAEMON_ENSURED:-0}" = "1" ] && return 0
+	# shellcheck source=../lib/daemon.sh
+	source "$PROBE_ROOT/lib/daemon.sh"
+	ensure_daemon
+	export AQA_DAEMON_ENSURED=1
+}
 
 usage() {
 	echo "usage:" >&2
@@ -271,6 +280,7 @@ scaffold() {
 	local stub="${PROBE_ROOT}/flows/${name}.flow.json"
 
 	echo "[probe] opening $starturl (headed) for authoring..."
+	ensure_authoring_daemon
 	agent-browser --session "$sess" --headed open "$starturl" >/dev/null
 	agent-browser --session "$sess" wait --load networkidle >/dev/null 2>&1 || true
 	agent-browser --session "$sess" snapshot -i > "$snap" 2>/dev/null || true
@@ -380,6 +390,7 @@ capture() {
 	}
 
 	echo "[probe] opening $starturl (headed). DRIVE YOUR JOURNEY, then press Enter (or Ctrl-C) to stop."
+	ensure_authoring_daemon
 	agent-browser --session "$sess" "${state_args[@]+"${state_args[@]}"}" --headed \
 		open --init-script "$capjs" "$starturl" >/dev/null 2>&1 \
 		|| { echo "[probe] open failed (is agent-browser healthy? try: agent-browser doctor)" >&2; exit 1; }
