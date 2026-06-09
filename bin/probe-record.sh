@@ -509,7 +509,14 @@ capture() {
 	# always-green flow with no steps. (Degraded recordings still build their partial flow so it
 	# can be quarantined below.)
 	if [ "${n:-0}" -eq 0 ] 2>/dev/null && [ "$degraded" != 1 ]; then
-		echo "[probe] FATAL: captured 0 events — nothing to build (cross-origin nav, or init-script did not install?). Re-record." >&2
+		if [ "$crossorigin" = 1 ]; then
+			echo "[probe] FATAL: captured 0 events after a top-level cross-origin navigation." >&2
+			echo "[probe]   Do not start recording from a login URL. Cache login first, then record from the post-login app page." >&2
+		elif [ "$newtab" = 1 ]; then
+			echo "[probe] FATAL: captured 0 events after a new tab/popup opened (out of scope: single tab)." >&2
+		else
+			echo "[probe] FATAL: captured 0 events — nothing to build. Click/type at least one in-scope page action before stopping, or verify the init-script installed." >&2
+		fi
 		exit 1
 	fi
 	echo "[probe] captured $n raw event(s) -> building flow..."

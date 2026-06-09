@@ -1,23 +1,28 @@
 // webui/public/app.js -- NL RPA Control Plane shell.
 // Zero-dependency browser app over the existing localhost APIs.
 
-import { $, el, getJson, fmtTime, streamJob, cancelJob } from './util.js';
+import { $, el, getJson, fmtTime, streamJob, cancelJob, stopJob } from './util.js';
+
+const DEFAULT_ENGINE = 'agent-browser';
+const ENGINES = ['agent-browser', 'playwright'];
+const FLOW_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 const VIEW_TITLES = {
+	automation: '자동화 만들기',
 	'command-center': '커맨드 센터',
 	'nl-command': '자연어 명령',
 	'command-plan': '커맨드 플랜',
 	'target-review': '대상 검토',
-	systems: '시스템 레지스트리',
+	systems: '연결 시스템',
 	actions: '액션 레지스트리',
-	queue: '큐 / 작업',
+	queue: '작업 큐',
 	audit: '감사 로그',
 	'approval-state': '결재 상태',
-	diagnostics: '진단 / 워크스페이스 링크',
+	diagnostics: '실행 결과',
 };
 
 const state = {
-	view: 'command-center',
+	view: 'automation',
 	approvals: [],
 	systems: [],
 	records: [],
@@ -37,6 +42,18 @@ const state = {
 	activeApproveJob: null,
 	activeSystemJob: null,
 	activeRunJob: null,
+	automation: {
+		flowName: '',
+		flow: null,
+		plan: null,
+		planError: null,
+		recordJob: null,
+		verifyJob: null,
+		runJob: null,
+		compileOutput: '',
+		flowError: '',
+		lastRunId: '',
+	},
 };
 
 const empty = (message) => el('div', { class: 'empty' }, message);
@@ -126,9 +143,9 @@ function updatePlanPill() {
 
 function inferAction(text) {
 	const s = String(text || '');
-	if (/(approve|confirm|review|approval|결재|승인|검토|확정)/i.test(s)) return 'approve';
 	if (/(sync|refresh|fetch|동기화|새로고침|가져오기)/i.test(s)) return 'sync';
-	if (/(summarize|summary|digest|enrich|요약|상세)/i.test(s)) return 'enrich';
+	if (/(summarize|summary|digest|enrich|query|show|display|read|요약|상세|조회|검색|확인|보여|읽어)/i.test(s)) return 'enrich';
+	if (/(approve|confirm|approval|승인|확정|실제\s*결재|결재\s*(승인|확정|처리|실행))/i.test(s)) return 'approve';
 	return '';
 }
 
@@ -190,7 +207,7 @@ function addTimeline(title, detail, kind = 'info') {
 }
 
 async function loadCoreData() {
-	await Promise.allSettled([loadApprovals(), loadSystems(), loadQueue(), loadAudit()]);
+	await Promise.allSettled([loadApprovals(), loadSystems(), loadQueue(), loadAudit(), loadFlowsList()]);
 	renderAll();
 }
 
@@ -275,7 +292,17 @@ async function loadDiagnostics() {
 	renderDiagnostics();
 }
 
+async function loadFlowsList() {
+	try {
+		const { flows } = await getJson('/api/flows');
+		state.flows = Array.isArray(flows) ? flows : [];
+	} catch {
+		state.flows = [];
+	}
+}
+
 function loadView(view) {
+	if (view === 'automation') renderAutomation();
 	if (view === 'target-review') renderTargetsView();
 	if (view === 'systems') renderSystems();
 	if (view === 'actions') renderActions();
@@ -286,6 +313,7 @@ function loadView(view) {
 }
 
 function renderAll() {
+	renderAutomation();
 	renderCommandCenter();
 	renderPlan();
 	renderTargetsView();
@@ -296,6 +324,445 @@ function renderAll() {
 	renderAudit();
 	renderApprovalState();
 	renderDiagnosticsLinks();
+}
+
+function automationForm() {
+	return {
+		name: $('#auto-name')?.value.trim() || '',
+		startUrl: $('#auto-url')?.value.trim() || '',
+		app: $('#auto-app')?.value.trim() || '',
+		successUrl: $('#auto-success-url')?.value.trim() || '',
+		engine: $('#auto-engine')?.value || DEFAULT_ENGINE,
+		seconds: Math.min(Math.max(parseInt($('#auto-seconds')?.value, 10) || 180, 5), 1800),
+		goal: $('#auto-goal')?.value.trim() || '',
+	};
+}
+
+function slugPart(value) {
+	return String(value || '')
+		.normalize('NFKD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.replace(/[^A-Za-z0-9_-]+/g, '_')
+		.replace(/_+/g, '_')
+		.replace(/^_+|_+$/g, '')
+		.slice(0, 64);
+}
+
+function flowNameSuggestion(form) {
+	const fromName = slugPart(form.name);
+	if (fromName) return fromName;
+	try {
+		const u = new URL(form.startUrl);
+		const host = slugPart(u.hostname.replace(/^www\./, ''));
+		const path = slugPart(u.pathname.split('/').filter(Boolean).slice(0, 2).join('_'));
+		const candidate = [host, path].filter(Boolean).join('_').slice(0, 64);
+		if (candidate) return candidate;
+	} catch {
+		/* handled by the caller's URL validation */
+	}
+	const fromApp = slugPart(form.app);
+	if (fromApp) return fromApp;
+	const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12);
+	return `flow_${stamp}`;
+}
+
+function ensureFlowName(form, { update = true } = {}) {
+	if (FLOW_NAME_RE.test(form.name)) return form.name;
+	const suggested = flowNameSuggestion(form);
+	if (update) {
+		const input = $('#auto-name');
+		if (input) input.value = suggested;
+		const log = $('#auto-record-log');
+		if (log) {
+			log.hidden = false;
+			log.append(document.createTextNode(`이름은 영문/숫자/_/-만 사용할 수 있어 '${suggested}' ID로 바꿨습니다.\n`));
+		}
+	}
+	return suggested;
+}
+
+function safeAutomationSystem(form) {
+	if (FLOW_NAME_RE.test(form.app)) return form.app;
+	if (FLOW_NAME_RE.test(form.name)) return form.name;
+	return state.selectedSystem || 'hiworks';
+}
+
+function looksLikeLoginUrl(url) {
+	return /login|signin|auth|sso|oauth/i.test(String(url || ''));
+}
+
+function flowStepSummary(s) {
+	if (!s || typeof s !== 'object') return '-';
+	if (s.kind === 'wait') return `대기: ${s.until || ''} ${s.value || ''}`.trim();
+	if (s.kind === 'press') return `키 입력: ${s.value || ''}`;
+	if (s.kind === 'scroll') return `스크롤: ${s.dir || 'down'} ${s.px || ''}`;
+	if (s.kind === 'find') {
+		const locator = s.needs_review ? '검토 필요' : `${s.by || '?'}=${s.value || ''}${s.name ? ` / ${s.name}` : ''}`;
+		const value = s.text != null ? ` / ${s.text}` : s.val != null ? ` / ${s.val}` : '';
+		return `${s.action || '동작'}: ${locator}${value}`;
+	}
+	return `${s.kind || '단계'}`;
+}
+
+function flowReadyReason(flow) {
+	if (!flow) return '녹화된 플로우가 없습니다.';
+	if (flow.needsReviewSteps?.length) return `검토 필요 단계 ${flow.needsReviewSteps.length}개`;
+	if (flow.missingValues?.length) return `입력값 누락: ${flow.missingValues.join(', ')}`;
+	if (!flow.compiled) return '컴파일 전';
+	return '실행 가능';
+}
+
+function setAutomationJobBadge(label, kind = 'neutral') {
+	const b = $('#auto-job-badge');
+	if (!b) return;
+	b.textContent = label;
+	b.className = `badge ${kind}`;
+}
+
+function renderAutomation() {
+	const box = $('#auto-flow-box');
+	if (!box) return;
+	const flow = state.automation.flow;
+	const form = automationForm();
+	const activeRecord = !!state.automation.recordJob;
+	const activeVerify = !!state.automation.verifyJob;
+	const activeRun = !!state.automation.runJob;
+	const badges = $('#auto-status-badges');
+	if (badges) {
+		setChildren(
+			badges,
+			badge(flow ? flow.name : '새 시나리오', flow ? 'info' : 'neutral'),
+			flow ? badge(`${flow.steps.length}단계`, 'neutral') : badge('URL 대기', 'warning'),
+			flow && flow.needsReviewSteps.length ? badge(`${flow.needsReviewSteps.length} 검토`, 'warning') : null,
+			flow && flow.compiled ? badge('컴파일됨', 'success') : null,
+			activeRecord ? badge('녹화 중', 'info') : null,
+		);
+	}
+	const pill = $('#top-plan-pill');
+	if (pill && state.view === 'automation') {
+		pill.textContent = flow ? `시나리오: ${flow.name} / ${flowReadyReason(flow)}` : '시나리오: 준비 전';
+		pill.className = `pill ${flow && flow.compilable ? '' : 'muted'}`;
+	}
+	const stopBtn = $('#auto-stop-record');
+	if (stopBtn) stopBtn.disabled = !activeRecord;
+	const verifyBtn = $('#auto-verify');
+	if (verifyBtn) verifyBtn.disabled = !flow || activeRecord || activeVerify || activeRun;
+	const compileBtn = $('#auto-compile');
+	if (compileBtn) {
+		compileBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun;
+		compileBtn.title = flow && !flow.compilable ? flowReadyReason(flow) : '';
+	}
+	const runBtn = $('#auto-run');
+	if (runBtn) {
+		runBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun;
+		runBtn.textContent = flow && !flow.compiled ? '컴파일 후 실행' : '실행';
+	}
+	renderAutomationPreview(form.goal);
+	renderAutomationFlow(flow);
+}
+
+function renderAutomationPreview(goal) {
+	const box = $('#auto-preview-box');
+	if (!box) return;
+	const flow = state.automation.flow;
+	const plan = state.automation.plan;
+	const form = automationForm();
+	if (!goal && !plan) {
+		const loginNotice = looksLikeLoginUrl(form.startUrl)
+			? warnBox('로그인 화면에서 녹화를 시작하면 로그인 후 창이 닫힐 수 있습니다. 먼저 [로그인 저장]을 완료한 뒤, 시작 URL을 로그인 이후 업무 화면으로 바꾸고 녹화하세요.')
+			: null;
+		return setChildren(box, empty('목표가 아직 없습니다.'), loginNotice);
+	}
+	const risk = plan?.riskClass || (/(승인|삭제|확정|approve|delete|confirm|실제\s*결재|결재\s*(승인|확정|처리|실행))/i.test(goal) ? 'irreversible' : 'read');
+	const rows = [
+		['목표', goal || plan?.sourceText || '-'],
+		['기반', flow ? `${flow.name} / ${flow.steps.length}단계 녹화` : '녹화 전'],
+		['실행 방식', '컴파일된 bash 테스트'],
+		['위험도', risk === 'irreversible' ? '변경 작업' : '조회 작업'],
+		['게이트', flowReadyReason(flow)],
+	];
+	if (plan) {
+		rows.push(['계획 ID', plan.id], ['액션', plan.action], ['시스템', plan.system]);
+	}
+	const notice = state.automation.planError
+		? warnBox(`계획 생성 참고: ${state.automation.planError}`)
+		: risk === 'irreversible'
+			? warnBox('변경 작업은 모의실행과 사람 확인을 거친 뒤 실행됩니다.')
+			: null;
+	setChildren(box, renderRowsTable(rows, ['항목', '값']), notice);
+}
+
+function renderAutomationFlow(flow) {
+	const box = $('#auto-flow-box');
+	if (!box) return;
+	if (state.automation.flowError) return setChildren(box, errorBox(state.automation.flowError));
+	if (!flow) return setChildren(box, empty('녹화가 끝나면 단계와 검토 항목이 여기에 표시됩니다.'));
+	const summary = el('div', { class: 'metric-grid' },
+		metric('단계', flow.steps.length, flow.startUrl || ''),
+		metric('검토', flow.needsReviewSteps.length, 'locator 후보 선택'),
+		metric('입력값', flow.inputTokens.length, flow.missingValues.length ? '누락 있음' : '준비됨'),
+		metric('상태', flow.compiled ? 'compiled' : flowReadyReason(flow), flow.engine),
+	);
+	const steps = el('div', { class: 'step-list' });
+	flow.steps.forEach((s, i) => {
+		steps.append(el('div', { class: `flow-step ${s.needs_review ? 'needs-review' : ''}` },
+			el('span', { class: 'step-num' }, String(i + 1)),
+			el('span', { class: 'step-text' }, flowStepSummary(s)),
+		));
+	});
+	const reviewBlocks = flow.needsReviewSteps.map((item) => {
+		const actions = el('div', { class: 'candidate-list' });
+		for (const [ci, c] of (item.candidates || []).entries()) {
+			actions.append(el('button', {
+				class: 'candidate-button',
+				type: 'button',
+				onclick: () => resolveAutomationStep(flow.name, item.index, ci),
+			}, `${c.by}: ${c.value}${c.name ? ` / ${c.name}` : ''}`));
+		}
+		return el('div', { class: 'review-block' },
+			el('strong', {}, `${item.index + 1}단계 locator 선택`),
+			actions,
+		);
+	});
+	let valuesBlock = null;
+	if (flow.inputTokens.length) {
+		const inputs = el('div', { class: 'values-grid' });
+		for (const t of flow.inputTokens) {
+			inputs.append(el('label', { class: 'input-wrap' }, el('span', {}, t), el('input', { class: 'auto-value-input', dataset: { token: t }, value: flow.values[t] || '', autocomplete: 'off' })));
+		}
+		valuesBlock = el('div', { class: 'review-block' },
+			el('strong', {}, '입력값'),
+			inputs,
+			el('div', { class: 'button-row' }, el('button', { class: 'btn small', type: 'button', onclick: () => saveAutomationValues(flow.name) }, '값 저장')),
+		);
+	}
+	const compileOut = state.automation.compileOutput ? el('pre', { class: 'joblog compact-log' }, state.automation.compileOutput) : null;
+	setChildren(box,
+		summary,
+		el('div', { class: 'flow-body' }, steps),
+		...reviewBlocks,
+		valuesBlock,
+		compileOut,
+	);
+}
+
+async function loadAutomationFlow(name) {
+	const form = automationForm();
+	const raw = String(name || form.name || state.automation.flowName || '').trim();
+	const flowName = FLOW_NAME_RE.test(raw) ? raw : ensureFlowName({ ...form, name: raw });
+	if (!flowName) return;
+	try {
+		if (state.automation.flowName && state.automation.flowName !== flowName) state.automation.compileOutput = '';
+		state.automation.flow = await getJson(`/api/flows/${encodeURIComponent(flowName)}`);
+		state.automation.flowName = flowName;
+		state.automation.flowError = '';
+		const nameInput = $('#auto-name');
+		if (nameInput && !nameInput.value.trim()) nameInput.value = flowName;
+		renderAutomation();
+	} catch (e) {
+		state.automation.flow = null;
+		state.automation.flowError = `플로우를 불러오지 못했습니다: ${e.message}`;
+		renderAutomation();
+	}
+}
+
+async function startAutomationRecord(overwrite = false) {
+	const form = automationForm();
+	if (!form.startUrl) return alert('시작 URL을 입력하세요.');
+	const log = $('#auto-record-log');
+	log.hidden = false;
+	log.textContent = '녹화 준비 중...\n';
+	if (looksLikeLoginUrl(form.startUrl)) {
+		setAutomationJobBadge('로그인 먼저', 'warning');
+		log.textContent += '로그인 URL에서는 녹화를 시작하지 않습니다.\n먼저 [로그인 저장]을 완료한 뒤, 시작 URL을 로그인 이후 실제 업무 화면으로 바꾸고 [녹화 시작]을 누르세요.\n';
+		return;
+	}
+	const flowName = ensureFlowName(form);
+	if (!flowName) return alert('이름을 영문/숫자/_/- 형태로 입력하세요.');
+	setAutomationJobBadge('녹화', 'info');
+	try {
+		const data = await postJson('/api/record', {
+			name: flowName,
+			startUrl: form.startUrl,
+			app: form.app || undefined,
+			engine: form.engine,
+			seconds: form.seconds,
+			overwrite,
+		});
+		state.automation.flowName = flowName;
+		state.automation.recordJob = data.job?.id || null;
+		renderAutomation();
+		if (data.job) {
+			streamJob(data.job.id, log, async (done) => {
+				state.automation.recordJob = null;
+				setAutomationJobBadge(done?.status === 'done' ? '녹화 완료' : '녹화 종료', done?.status === 'done' ? 'success' : 'warning');
+				await Promise.allSettled([loadFlowsList(), loadAutomationFlow(flowName), loadQueue()]);
+				renderAutomation();
+			});
+		}
+	} catch (e) {
+		if (String(e.message || '').includes('already exists') && !overwrite && window.confirm('같은 이름의 플로우가 있습니다. 다시 녹화해서 덮어쓸까요?')) {
+			return startAutomationRecord(true);
+		}
+		state.automation.recordJob = null;
+		setAutomationJobBadge('녹화 실패', 'danger');
+		log.textContent += `거부됨: ${e.message}\n`;
+		renderAutomation();
+	}
+}
+
+async function stopAutomationRecord() {
+	const id = state.automation.recordJob;
+	if (!id) return;
+	const log = $('#auto-record-log');
+	const ok = await stopJob(id);
+	log.hidden = false;
+	log.append(document.createTextNode(ok ? '\n[webui] 녹화 종료를 요청했습니다.\n' : '\n[webui] 아직 종료할 수 없습니다. 잠시 후 다시 누르세요.\n'));
+}
+
+async function runAutomationAuth() {
+	const form = automationForm();
+	if (!form.app) return alert('로그인 상태를 저장할 앱 이름을 입력하세요. 예: d33 또는 hiworks');
+	if (!form.startUrl) return alert('로그인 URL을 시작 URL에 입력하세요.');
+	if (!form.successUrl) return alert('로그인 완료 후 도달하는 URL 일부를 입력하세요. 예: office.hiworks.com');
+	const log = $('#auto-record-log');
+	log.hidden = false;
+	log.textContent = '로그인 창을 여는 중...\n로그인과 OTP를 완료하면 성공 URL 도달 후 창이 자동으로 닫히고 상태가 저장됩니다.\n';
+	setAutomationJobBadge('로그인 저장', 'info');
+	try {
+		const data = await postJson('/api/auth', {
+			app: form.app,
+			loginUrl: form.startUrl,
+			successUrl: form.successUrl,
+			engine: form.engine,
+		});
+		if (data.job) {
+			streamJob(data.job.id, log, async (done) => {
+				setAutomationJobBadge(done?.status === 'done' ? '로그인 저장 완료' : '로그인 확인', done?.status === 'done' ? 'success' : 'warning');
+				await Promise.allSettled([loadDiagnostics(), loadQueue()]);
+				log.append(document.createTextNode('\n다음 단계: 시작 URL을 로그인 이후 실제 업무 화면으로 바꾸고 [녹화 시작]을 누르세요.\n'));
+				renderAutomation();
+			});
+		}
+	} catch (e) {
+		setAutomationJobBadge('로그인 실패', 'danger');
+		log.append(document.createTextNode(`로그인 저장 거부됨: ${e.message}\n`));
+	}
+}
+
+async function createAutomationPreview() {
+	const form = automationForm();
+	if (!form.goal) return alert('하고 싶은 일을 입력하세요.');
+	state.automation.plan = null;
+	state.automation.planError = null;
+	renderAutomation();
+	const action = inferAction(form.goal);
+	try {
+		const body = { text: form.goal, system: safeAutomationSystem(form), mode: 'reviewed' };
+		if (action) body.action = action;
+		const { plan, refusal } = await postJson('/api/agent/plan', body);
+		state.automation.plan = plan || null;
+		state.automation.planError = refusal ? `${refusal.reason}${refusal.detail ? ` / ${refusal.detail}` : ''}` : null;
+	} catch (e) {
+		state.automation.planError = e.message;
+	}
+	renderAutomation();
+}
+
+async function resolveAutomationStep(name, step, candidate) {
+	try {
+		await postJson(`/api/flows/${encodeURIComponent(name)}/resolve`, { step, candidate });
+		await loadAutomationFlow(name);
+	} catch (e) {
+		alert(`locator 선택 실패: ${e.message}`);
+	}
+}
+
+async function saveAutomationValues(name) {
+	const values = {};
+	document.querySelectorAll('.auto-value-input').forEach((input) => {
+		values[input.dataset.token] = input.value;
+	});
+	try {
+		await postJson(`/api/flows/${encodeURIComponent(name)}/values`, { values });
+		await loadAutomationFlow(name);
+	} catch (e) {
+		alert(`값 저장 실패: ${e.message}`);
+	}
+}
+
+async function verifyAutomationFlow() {
+	const flow = state.automation.flow;
+	if (!flow) return;
+	const log = $('#auto-run-log');
+	log.textContent = '검증 요청 중...\n';
+	setAutomationJobBadge('검증', 'info');
+	try {
+		const data = await postJson('/api/verify', { name: flow.name });
+		state.automation.verifyJob = data.job?.id || null;
+		renderAutomation();
+		if (data.job) {
+			streamJob(data.job.id, log, async (done) => {
+				state.automation.verifyJob = null;
+				setAutomationJobBadge(done?.status === 'done' ? '검증 완료' : '검증 확인', done?.status === 'done' ? 'success' : 'warning');
+				await loadAutomationFlow(flow.name);
+			});
+		}
+	} catch (e) {
+		state.automation.verifyJob = null;
+		setAutomationJobBadge('검증 실패', 'danger');
+		log.textContent += `거부됨: ${e.message}\n`;
+		renderAutomation();
+	}
+}
+
+async function compileAutomationFlow() {
+	const flow = state.automation.flow;
+	if (!flow) return false;
+	state.automation.compileOutput = '컴파일 중...';
+	renderAutomation();
+	try {
+		const data = await postJson('/api/compile', { name: flow.name });
+		state.automation.compileOutput = (data.ok ? `컴파일됨: ${data.testFile}` : `컴파일 실패 (${data.code})`) + (data.output ? `\n\n${data.output}` : '');
+		await loadAutomationFlow(flow.name);
+		return !!data.ok;
+	} catch (e) {
+		state.automation.compileOutput = `컴파일 실패: ${e.message}`;
+		renderAutomation();
+		return false;
+	}
+}
+
+async function runAutomationFlow() {
+	let flow = state.automation.flow;
+	if (!flow) return;
+	if (!flow.compiled) {
+		const ok = await compileAutomationFlow();
+		if (!ok) return;
+		flow = state.automation.flow;
+	}
+	const log = $('#auto-run-log');
+	log.textContent = '실행 요청 중...\n';
+	setAutomationJobBadge('실행', 'info');
+	try {
+		const data = await postJson('/api/run', { glob: flow.name });
+		state.automation.runJob = data.job?.id || null;
+		renderAutomation();
+		if (data.job) {
+			streamJob(data.job.id, log, async (done) => {
+				state.automation.runJob = null;
+				state.automation.lastRunId = done?.result?.runId || '';
+				setAutomationJobBadge(done?.status === 'done' ? '실행 완료' : '실행 확인', done?.status === 'done' ? 'success' : 'warning');
+				await Promise.allSettled([loadQueue(), loadDiagnostics(), loadAutomationFlow(flow.name)]);
+				renderAutomation();
+			});
+		}
+	} catch (e) {
+		state.automation.runJob = null;
+		setAutomationJobBadge('실행 실패', 'danger');
+		log.textContent += `거부됨: ${e.message}\n`;
+		renderAutomation();
+	}
 }
 
 function renderCommandCenter() {
@@ -664,7 +1131,7 @@ function renderSystemsTable() {
 		const btn = el('button', { class: 'btn small', type: 'button' }, '열기');
 		btn.addEventListener('click', () => selectSystem(s.name));
 		body.append(el('tr', { class: state.selectedSystem === s.name ? 'row-selected' : '' },
-			el('td', { class: 'col-key', title: s.name }, s.label || s.name),
+			el('td', { class: 'col-key', title: `${s.name} / ${s.engine || DEFAULT_ENGINE}` }, `${s.label || s.name} (${s.engine || DEFAULT_ENGINE})`),
 			el('td', { title: safeText(s.target_url) }, safeText(s.target_url, '-')),
 			el('td', { class: 'col-short' }, safeText(s.recordCount, '0')),
 			el('td', { class: 'col-status' }, statusBadge(s.recipe ? 'ready' : 'pending')),
@@ -685,7 +1152,17 @@ function selectedSystemObj() {
 	return state.systems.find((s) => s.name === state.selectedSystem) || null;
 }
 
+function ensureSystemEngineField() {
+	if ($('#sys-engine')) return;
+	const login = $('#sys-login');
+	if (!login) return;
+	const select = el('select', { id: 'sys-engine' }, ...ENGINES.map((engine) => el('option', { value: engine }, engine === 'playwright' ? 'Playwright' : engine)));
+	const wrap = el('label', { class: 'input-wrap' }, el('span', {}, 'Engine'), select);
+	login.closest('.input-wrap')?.before(wrap);
+}
+
 function renderSystemForm() {
+	ensureSystemEngineField();
 	const sys = selectedSystemObj();
 	const badgeNode = $('#sys-selected-badge');
 	if (!badgeNode) return;
@@ -694,6 +1171,7 @@ function renderSystemForm() {
 	if (!document.activeElement || !document.activeElement.closest('.systems-layout')) {
 		$('#sys-name').value = sys?.name || state.selectedSystem || '';
 		$('#sys-label').value = sys?.label || '';
+		$('#sys-engine').value = sys?.engine || DEFAULT_ENGINE;
 		$('#sys-login').value = sys?.login_url || '';
 		$('#sys-success').value = sys?.success_url || '';
 		$('#sys-target').value = sys?.target_url || '';
@@ -708,6 +1186,7 @@ function systemFormBody() {
 	return {
 		name: $('#sys-name').value.trim(),
 		label: $('#sys-label').value.trim() || undefined,
+		engine: $('#sys-engine')?.value || DEFAULT_ENGINE,
 		login_url: $('#sys-login').value.trim() || undefined,
 		success_url: $('#sys-success').value.trim() || undefined,
 		target_url: $('#sys-target').value.trim() || undefined,
@@ -789,6 +1268,7 @@ function renderActions() {
 	const rows = (state.actions || []).map((a) => ({
 		system: a.system,
 		action: a.action,
+		engine: a.engine || '',
 		risk: a.riskClass,
 		state: a.state || (a.enabled ? 'enabled' : 'disabled'),
 		requirements: a.disabledReason || [a.permission, a.dryRunRequired ? '모의실행' : '', a.humanConfirmRequired ? '사람 확인' : ''].filter(Boolean).join(' / '),
@@ -1048,6 +1528,15 @@ function columnClass(name) {
 function bindEvents() {
 	document.querySelectorAll('.nav-item').forEach((btn) => btn.addEventListener('click', () => setView(btn.dataset.viewTarget)));
 	$('#global-refresh').addEventListener('click', () => loadCoreData());
+	$('#auto-auth').addEventListener('click', runAutomationAuth);
+	$('#auto-start-record').addEventListener('click', () => startAutomationRecord(false));
+	$('#auto-stop-record').addEventListener('click', stopAutomationRecord);
+	$('#auto-refresh-flow').addEventListener('click', () => loadAutomationFlow());
+	$('#auto-preview').addEventListener('click', createAutomationPreview);
+	$('#auto-verify').addEventListener('click', verifyAutomationFlow);
+	$('#auto-compile').addEventListener('click', compileAutomationFlow);
+	$('#auto-run').addEventListener('click', runAutomationFlow);
+	['#auto-url', '#auto-goal'].forEach((sel) => $(sel)?.addEventListener('input', renderAutomation));
 	$('#cc-sync').addEventListener('click', runApprovalsSync);
 	$('#cc-create-plan').addEventListener('click', () => makePlan($('#cc-command').value));
 	$('#cc-dry-run').addEventListener('click', runDryRun);
@@ -1091,10 +1580,21 @@ function reconcileApproveJob() {
 	if (!active.has(state.activeApproveJob)) state.activeApproveJob = null;
 }
 
+function reconcileAutomationJobs() {
+	const q = state.queue || {};
+	const active = new Set([q.running && q.running.id, ...(q.pending || []).map((j) => j.id)].filter(Boolean));
+	for (const key of ['recordJob', 'verifyJob', 'runJob']) {
+		const id = state.automation[key];
+		if (id && !active.has(id)) state.automation[key] = null;
+	}
+}
+
 bindEvents();
 loadCoreData();
 setInterval(() => loadQueue().then(() => {
 	reconcileApproveJob();
+	reconcileAutomationJobs();
 	if (state.view === 'queue') renderQueueView();
+	if (state.view === 'automation') renderAutomation();
 	renderCommandCenter();
 }), 2500);

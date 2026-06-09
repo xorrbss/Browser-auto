@@ -7,7 +7,7 @@
 	<link rel="icon" href="data:," />
 	<link rel="stylesheet" href="/app.css" />
 </head>
-<body data-view="command-center">
+<body data-view="automation">
 	<div class="app-shell">
 		<aside class="sidebar" aria-label="주 메뉴">
 			<div class="brand">
@@ -18,16 +18,12 @@
 				</div>
 			</div>
 			<nav class="nav-list" id="nav-list">
-				<button type="button" class="nav-item active" data-view-target="command-center"><span class="nav-icon">CC</span><span>커맨드 센터</span></button>
-				<button type="button" class="nav-item" data-view-target="nl-command"><span class="nav-icon">NL</span><span>자연어</span></button>
-				<button type="button" class="nav-item" data-view-target="command-plan"><span class="nav-icon">CP</span><span>커맨드플랜</span></button>
-				<button type="button" class="nav-item" data-view-target="target-review"><span class="nav-icon">TR</span><span>대상 검토</span></button>
-				<button type="button" class="nav-item" data-view-target="systems"><span class="nav-icon">SR</span><span>시스템 레지스트리</span></button>
-				<button type="button" class="nav-item" data-view-target="actions"><span class="nav-icon">AR</span><span>액션 레지스트리</span></button>
-				<button type="button" class="nav-item" data-view-target="queue"><span class="nav-icon">QJ</span><span>큐 / 작업</span></button>
+				<button type="button" class="nav-item active" data-view-target="automation"><span class="nav-icon">AU</span><span>자동화 만들기</span></button>
+				<button type="button" class="nav-item" data-view-target="diagnostics"><span class="nav-icon">RS</span><span>실행 결과</span></button>
+				<button type="button" class="nav-item" data-view-target="systems"><span class="nav-icon">SY</span><span>연결 시스템</span></button>
+				<button type="button" class="nav-item" data-view-target="queue"><span class="nav-icon">Q</span><span>작업 큐</span></button>
 				<button type="button" class="nav-item" data-view-target="audit"><span class="nav-icon">AL</span><span>감사 로그</span></button>
-				<button type="button" class="nav-item" data-view-target="approval-state"><span class="nav-icon">AS</span><span>결재 상태</span></button>
-				<button type="button" class="nav-item" data-view-target="diagnostics"><span class="nav-icon">DX</span><span>진단 / 링크</span></button>
+				<button type="button" class="nav-item" data-view-target="command-center"><span class="nav-icon">AD</span><span>고급 결재</span></button>
 			</nav>
 			<div class="sidebar-status">
 				<span id="side-queue-dot" class="health-dot idle"></span>
@@ -41,22 +37,82 @@
 		<div class="main-shell">
 			<header class="topbar">
 				<div class="page-title">
-					<h1 id="page-title">커맨드 센터</h1>
+					<h1 id="page-title">자동화 만들기</h1>
 					<div class="page-meta">
 						<span class="pill">작업자: local-operator</span>
 						<span class="pill">호스트: 127.0.0.1:4310</span>
-						<span id="top-plan-pill" class="pill muted">플랜: 없음</span>
+						<span id="top-plan-pill" class="pill muted">시나리오: 준비 전</span>
 					</div>
 				</div>
 				<div class="top-actions">
-					<button id="global-refresh" class="icon-button" type="button" title="데이터 새로고침">R</button>
-					<a class="link-button" href="/api/queue" target="_blank" rel="noreferrer">큐 API</a>
-					<a class="link-button" href="/api/systems" target="_blank" rel="noreferrer">시스템 API</a>
+					<button id="global-refresh" class="btn small quiet" type="button">새로고침</button>
 				</div>
 			</header>
 
 			<main class="workspace">
-				<section class="view active" data-view="command-center">
+				<section class="view active" data-view="automation">
+					<div class="automation-workspace">
+						<section class="panel scenario-panel">
+							<div class="panel-head">
+								<h2>시나리오</h2>
+								<div id="auto-status-badges" class="badge-row"></div>
+							</div>
+							<div class="panel-body stack compact">
+								<div class="scenario-grid">
+									<label class="input-wrap"><span>이름 (영문 ID)</span><input id="auto-name" autocomplete="off" spellcheck="false" placeholder="hiworks_login" /></label>
+									<label class="input-wrap"><span>시작 URL</span><input id="auto-url" autocomplete="off" spellcheck="false" placeholder="https://app.example.com" /></label>
+									<label class="input-wrap"><span>앱</span><input id="auto-app" autocomplete="off" spellcheck="false" placeholder="선택" /></label>
+									<label class="input-wrap"><span>로그인 완료 URL</span><input id="auto-success-url" autocomplete="off" spellcheck="false" placeholder="예: office.hiworks.com" /></label>
+									<label class="input-wrap"><span>엔진</span><select id="auto-engine"><option value="agent-browser">agent-browser</option><option value="playwright">Playwright</option></select></label>
+									<label class="input-wrap"><span>녹화 시간</span><input id="auto-seconds" type="number" min="5" max="1800" step="5" value="180" /></label>
+								</div>
+								<div class="button-row">
+									<button id="auto-auth" class="btn" type="button">로그인 저장</button>
+									<button id="auto-start-record" class="btn primary" type="button">녹화 시작</button>
+									<button id="auto-stop-record" class="btn" type="button" disabled>녹화 완료</button>
+									<button id="auto-refresh-flow" class="btn quiet" type="button">불러오기</button>
+								</div>
+								<pre id="auto-record-log" class="joblog compact-log" hidden></pre>
+							</div>
+						</section>
+
+						<section class="panel">
+							<div class="panel-head">
+								<h2>목표</h2>
+								<div class="panel-actions"><button id="auto-preview" class="btn primary" type="button">미리보기 생성</button></div>
+							</div>
+							<div class="panel-body stack compact">
+								<label class="input-wrap">
+									<span>하고 싶은 일</span>
+									<textarea id="auto-goal" rows="5" spellcheck="false" placeholder="예: 결재 대기 문서를 열어 금액과 기안자를 확인하고, 조건에 맞는 항목만 모의실행까지 해줘"></textarea>
+								</label>
+								<div id="auto-preview-box"></div>
+							</div>
+						</section>
+
+						<section class="panel">
+							<div class="panel-head">
+								<h2>녹화 결과</h2>
+								<div class="panel-actions">
+									<button id="auto-verify" class="btn small" type="button" disabled>검증</button>
+									<button id="auto-compile" class="btn small primary" type="button" disabled>컴파일</button>
+									<button id="auto-run" class="btn small danger" type="button" disabled>실행</button>
+								</div>
+							</div>
+							<div id="auto-flow-box" class="panel-body"></div>
+						</section>
+
+						<section class="panel">
+							<div class="panel-head">
+								<h2>실행 로그</h2>
+								<span id="auto-job-badge" class="badge neutral">대기</span>
+							</div>
+							<pre id="auto-run-log" class="joblog fixed"></pre>
+						</section>
+					</div>
+				</section>
+
+				<section class="view" data-view="command-center">
 					<div class="command-strip">
 						<label class="input-wrap">
 							<span>자연어 명령</span>

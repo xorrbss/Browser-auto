@@ -197,6 +197,95 @@ pre, code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; }
 	box-shadow: var(--shadow);
 	padding: 14px;
 }
+.automation-workspace {
+	display: grid;
+	grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr);
+	gap: 16px;
+	align-items: start;
+}
+.automation-workspace > .panel:nth-child(3),
+.automation-workspace > .panel:nth-child(4) {
+	grid-column: 1 / -1;
+}
+.scenario-grid {
+	display: grid;
+	grid-template-columns: minmax(160px, .7fr) minmax(260px, 1.3fr);
+	gap: 10px;
+	align-items: end;
+}
+.scenario-grid .input-wrap:nth-child(2),
+.scenario-grid .input-wrap:nth-child(4) { grid-column: span 1; }
+.compact-log { min-height: 110px; max-height: 230px; }
+.flow-body {
+	margin-top: 12px;
+	border-top: 1px solid var(--line);
+}
+.step-list {
+	display: grid;
+	grid-template-columns: 1fr;
+}
+.flow-step {
+	display: grid;
+	grid-template-columns: 34px minmax(0, 1fr);
+	gap: 10px;
+	align-items: start;
+	padding: 10px 0;
+	border-bottom: 1px solid var(--line);
+}
+.flow-step:last-child { border-bottom: 0; }
+.flow-step.needs-review .step-text {
+	color: var(--amber);
+	font-weight: 800;
+}
+.step-num {
+	width: 28px;
+	height: 24px;
+	border-radius: 6px;
+	display: inline-grid;
+	place-items: center;
+	background: var(--surface-3);
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 900;
+}
+.step-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.review-block {
+	margin-top: 12px;
+	padding-top: 12px;
+	border-top: 1px solid var(--line);
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+.review-block strong { font-size: 13px; }
+.candidate-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	gap: 8px;
+}
+.candidate-button {
+	min-height: 34px;
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	background: var(--surface-2);
+	color: var(--ink);
+	padding: 8px 10px;
+	text-align: left;
+	font-weight: 700;
+	overflow-wrap: anywhere;
+}
+.candidate-button:hover {
+	border-color: var(--teal);
+	color: #0b5961;
+}
+.values-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	gap: 10px;
+}
 .panel {
 	background: var(--surface);
 	border: 1px solid var(--line);
@@ -243,7 +332,7 @@ pre, code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; }
 	font-size: 12px;
 	font-weight: 800;
 }
-input, textarea, .inline-input {
+input, textarea, select, .inline-input {
 	width: 100%;
 	border: 1px solid var(--line-strong);
 	border-radius: 6px;
@@ -253,12 +342,20 @@ input, textarea, .inline-input {
 	min-height: 36px;
 	outline: none;
 }
+select {
+	appearance: none;
+	background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+	background-position: calc(100% - 16px) 15px, calc(100% - 11px) 15px;
+	background-size: 5px 5px, 5px 5px;
+	background-repeat: no-repeat;
+	padding-right: 28px;
+}
 textarea {
 	resize: vertical;
 	min-height: 96px;
 	font: 12px/1.45 "Cascadia Code", Consolas, ui-monospace, monospace;
 }
-input:focus, textarea:focus {
+input:focus, textarea:focus, select:focus {
 	border-color: var(--teal);
 	background: var(--surface);
 	box-shadow: 0 0 0 3px rgba(14,117,128,0.12);
@@ -529,7 +626,11 @@ tbody tr:hover td { background: #fbfdfe; }
 .link-card span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 
 @media (max-width: 1200px) {
-	.layout.two-col, .systems-layout { grid-template-columns: 1fr; }
+	.layout.two-col, .systems-layout, .automation-workspace { grid-template-columns: 1fr; }
+	.automation-workspace > .panel:nth-child(3),
+	.automation-workspace > .panel:nth-child(4) { grid-column: auto; }
+	.scenario-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.scenario-grid .input-wrap:nth-child(2) { grid-column: span 1; }
 	.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 880px) {
@@ -567,7 +668,7 @@ tbody tr:hover td { background: #fbfdfe; }
 	.workspace { padding: 14px; }
 	.command-strip { grid-template-columns: 1fr; }
 	.command-strip .button-row .btn { flex: 1 1 140px; }
-	.kv-grid, .form-grid, .metric-grid, .link-grid { grid-template-columns: 1fr; }
+	.kv-grid, .form-grid, .metric-grid, .link-grid, .scenario-grid { grid-template-columns: 1fr; }
 	.table-wrap table { min-width: 760px; }
 	.panel-head {
 		align-items: flex-start;

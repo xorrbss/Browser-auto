@@ -122,10 +122,12 @@ function normalizeAction(body, intent) {
 	const explicit = body.action ? String(body.action).trim() : '';
 	if (explicit) return explicit;
 	const a = intent && intent.action;
+	const text = String(body.text || '');
+	if (/(summarize|summary|digest|enrich|query|show|display|read|요약|상세|조회|검색|확인|보여|읽어)/i.test(text)) return 'enrich';
 	if (a === 'review' || a === 'approve') return 'approve';
 	if (a === 'summarize') return 'enrich';
 	if (a === 'sync' || a === 'query') return a;
-	return /approve|approval|review|confirm|결재|승인|검토|확정/i.test(String(body.text || '')) ? 'approve' : 'query';
+	return /approve|approval|confirm|승인|확정|실제\s*결재|결재\s*(승인|확정|처리|실행)/i.test(text) ? 'approve' : 'query';
 }
 
 async function createPlan(body) {
