@@ -244,7 +244,11 @@ const server = http.createServer(async (req, res) => {
 			// The EFFECTFUL auto-approve route clicks a REAL 확인 with no human, so it is gated STRICTER
 			// than the general guard above: a PRESENT host-matching Origin/Referer (no absent-fall-through —
 			// red-team R1/T8) AND a valid server session cookie (DESIGN §5). See webui/session.js.
-			const commandConfirm = /^\/api\/agent\/plans?\/[^/]+\/confirm$/.test(p);
+			// Match confirm followed by EOL or ANY trailing segment (…/confirm/x): the route below
+			// dispatches confirm on op===\'confirm\' regardless of trailing segments, so the gate must be a
+			// SUPERSET of that shape — else /confirm/x bypasses the session+Origin gate and runs a LIVE
+			// approve. The route also refuses the trailing-segment shape; the two now agree.
+			const commandConfirm = /^\/api\/agent\/plans?\/[^/]+\/confirm(?:\/|$)/.test(p);
 			if ((p.startsWith('/api/approve/') || commandConfirm) && approveGate(req, res, ALLOWED_HOSTS, sendJson)) {
 				if (commandConfirm) {
 					recordCommandGateRefusal(p, res.statusCode === 401 ? 'session_missing' : 'origin_or_referer_required', { httpStatus: res.statusCode });

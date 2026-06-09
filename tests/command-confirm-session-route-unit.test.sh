@@ -58,6 +58,16 @@ assert(r.status === 403, 'confirm without Origin/Referer must be 403, got ' + r.
 r = await post(`/api/agent/plan/${plan.id}/confirm`, { planHash: plan.hash, confirm: true }, { Origin: base });
 assert(r.status === 401, 'confirm with same-origin but no session must be 401, got ' + r.status);
 
+// A trailing path segment must NOT bypass the effectful-route gate (…/confirm/x once skipped the
+// session+Origin gate and ran a LIVE approve). It must be gated EXACTLY like …/confirm.
+r = await post(`/api/agent/plan/${plan.id}/confirm/x`, { planHash: plan.hash, confirm: true });
+assert(r.status === 403, 'confirm trailing-segment without Origin/Referer must be 403 (no gate bypass), got ' + r.status);
+r = await post(`/api/agent/plan/${plan.id}/confirm/x`, { planHash: plan.hash, confirm: true }, { Origin: base });
+assert(r.status === 401, 'confirm trailing-segment with same-origin but no session must be 401, got ' + r.status);
+// With the gate satisfied, the route itself refuses the unknown trailing shape (never reaches confirm).
+r = await post(`/api/agent/plan/${plan.id}/confirm/x`, { planHash: plan.hash, confirm: true }, { Origin: base, Cookie: 'aqa_session=bogus' });
+assert(r.status === 404 || r.status === 401, 'confirm trailing-segment must 404 (route refuses) or 401 (bad session), never execute; got ' + r.status);
+
 r = await fetch(`${base}/api/agent/plan/${plan.id}/events`);
 assert(r.status === 200, 'events fetch failed');
 const events = (await r.json()).events || [];

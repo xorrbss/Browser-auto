@@ -461,6 +461,14 @@ export async function commandPlanPost(p, bodyJson, res, deps) {
 	if (parsed.bad) { deps.sendJson(res, 400, { error: 'bad plan id' }); return true; }
 	const plan = loadPlan(parsed.id);
 	if (!plan) { deps.sendJson(res, 404, { error: 'no such plan' }); return true; }
+	// Trailing path segments must not change which op runs. The server.js effectful-route gate keys on the
+	// path SHAPE (…/confirm[/…]); the ONLY op that takes a sub-segment is targets/review. Any other op2 is an
+	// unknown shape — refuse here so /confirm/<x> can never fall through to the LIVE approve below (the gate
+	// and route now agree on path shape; trailing-segment gate bypass closed).
+	if (parsed.op2 && !(parsed.op === 'targets' && parsed.op2 === 'review')) {
+		deps.sendJson(res, 404, { error: 'no such plan route' });
+		return true;
+	}
 	if (parsed.op === 'targets' && (parsed.op2 === 'review' || !parsed.op2)) {
 		if (!assertPlanHash(res, plan, bodyJson.planHash || bodyJson.hash)) return true;
 		const saved = saveTargets(plan, bodyJson.targetKeys || bodyJson.targets || bodyJson.docs);
