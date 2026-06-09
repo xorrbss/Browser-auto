@@ -126,6 +126,21 @@ AB_AUTH() {
 # the JSON so jq can read `.success`. Single command only (batch has its own shape).
 AB_JSON() { _ensure_daemon_once; _agent_browser_retry --session "$S" "$@" --json; }
 
+# ABX: checked single-action wrapper. agent-browser may exit 0 even when the
+# action failed, so this fails loud on `.success != true` and echoes the JSON
+# envelope only for successful actions.
+ABX() {
+	local out ok err
+	out="$(AB_JSON "$@")" || true
+	ok="$(printf '%s' "$out" | jq -r '.success // false' 2>/dev/null || echo false)"
+	if [ "$ok" != "true" ]; then
+		err="$(printf '%s' "$out" | jq -r '.error // "unknown error"' 2>/dev/null || echo "invalid JSON envelope")"
+		echo "  ✗ ABX action failed: [$*] -> $err" >&2
+		return 1
+	fi
+	printf '%s' "$out"
+}
+
 # BATCH: run a deterministic journey body passed as JSON on stdin, e.g.
 #   BATCH --bail <<'JSON'
 #   [["find","text","Checkout","click"],["wait","--url","**/pay"]]
