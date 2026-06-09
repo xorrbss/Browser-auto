@@ -20,7 +20,7 @@ set -euo pipefail
 PROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PROBE_ROOT
 
-ENGINE="${ENGINE:-agent-browser}"
+ENGINE="${ENGINE:-playwright}"
 ARGS=()
 while [ $# -gt 0 ]; do
 	case "${1:-}" in
@@ -44,11 +44,18 @@ LOGIN_URL="${2:-${LOGIN_URL:-}}"
 SUCCESS_URL="${3:-${SUCCESS_URL:-}}"
 if [ -z "$APP" ] || [ -z "$LOGIN_URL" ] || [ -z "$SUCCESS_URL" ]; then
 	echo "usage: bash setup/auth.sh [--engine agent-browser|playwright] <app> <login_url> <success_url>" >&2
-	echo "  e.g: bash setup/auth.sh --engine agent-browser myapp https://app.example.com/login '**/dashboard'" >&2
+	echo "  e.g: bash setup/auth.sh myapp https://app.example.com/login '**/dashboard'  # default: playwright" >&2
+	echo "       bash setup/auth.sh --engine agent-browser myapp https://app.example.com/login '**/dashboard'" >&2
 	exit 2
 fi
 # How long to wait for the human to finish (default 5 min). OTP + reading email is slow.
 HUMAN_TIMEOUT_MS="${HUMAN_TIMEOUT_MS:-300000}"
+
+# Human-confirm-save escape (web UI only): if AQA_AUTH_STOPFILE is set, the UI can touch it to mean
+# "I finished logging in — save the current session now". This rescues portals that return to the
+# EXACT login URL after login, where the got!=LOGIN_URL auto-detect guard below can never fire.
+# Standalone CLI runs leave it unset, so the watch is never true and behavior is unchanged.
+STOPFILE="${AQA_AUTH_STOPFILE:-}"
 
 STATE_DIR="${PROBE_ROOT}/fixtures/auth"
 STATE_FILE="${STATE_DIR}/${APP}.state.json"
@@ -127,6 +134,13 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 	# the poll under `set -e` (we just retry until the deadline).
 	url_json="$(agent-browser --session "$SESS" get url --json 2>/dev/null </dev/null || true)"
 	got="$(printf '%s' "$url_json" | jq -r 'if .success then .data.url else empty end' 2>/dev/null || true)"
+	# Human pressed [로그인 완료·저장] in the web UI: save the live session as-is. Require a real URL
+	# ([ -n "$got" ]) so we never save a blank/unopened tab. This is the only path that can complete
+	# when the post-login URL equals the login URL (the auto-detect guard below intentionally won't).
+	if [ -n "$STOPFILE" ] && [ -f "$STOPFILE" ] && [ -n "$got" ]; then
+		echo "[auth] confirm-save requested — saving the current session." >&2
+		matched=1; break
+	fi
 	# Only accept the match once the page has navigated away from the login URL (so a SUCCESS_URL that is also a suffix/substring of LOGIN_URL cannot false-match the login page itself).
 	if [ -n "$got" ] && [ "$got" != "$LOGIN_URL" ] && _url_match "$got" "$SUCCESS_URL"; then matched=1; break; fi
 	sleep 1

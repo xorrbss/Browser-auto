@@ -64,13 +64,14 @@
 								<div id="auto-auth-hint" class="subtle-note"></div>
 								<div class="button-row">
 									<button id="auto-auth" class="btn primary" type="button">로그인 등록</button>
+									<button id="auto-auth-stop" class="btn" type="button" disabled>로그인 완료·저장</button>
 								</div>
 								<details class="advanced-box">
 									<summary>고급 설정</summary>
 									<div class="scenario-grid">
 										<label class="input-wrap"><span>앱 ID</span><input id="auto-app" autocomplete="off" spellcheck="false" placeholder="자동 생성" /></label>
 										<label class="input-wrap"><span>로그인 완료 확인값</span><input id="auto-success-url" autocomplete="off" spellcheck="false" placeholder="자동 생성" title="녹화 URL을 기준으로 자동 생성합니다. 로그인 후 브라우저 주소에 이 값이 포함되면 인증 저장을 완료합니다." /></label>
-										<label class="input-wrap"><span>엔진</span><select id="auto-engine"><option value="agent-browser">agent-browser</option><option value="playwright">Playwright</option></select></label>
+										<label class="input-wrap"><span>엔진</span><select id="auto-engine"><option value="playwright" selected>Playwright</option><option value="agent-browser">agent-browser</option></select></label>
 									</div>
 								</details>
 							</div>

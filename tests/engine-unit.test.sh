@@ -12,8 +12,9 @@ const assert = require('node:assert/strict');
 const e = require('./lib/engine.js');
 const dbm = require('./lib/db.js');
 
-assert.equal(e.normalizeEngine(undefined), 'agent-browser', 'missing engine defaults to agent-browser');
-assert.equal(e.normalizeEngine(''), 'agent-browser', 'empty engine defaults to agent-browser');
+assert.equal(e.normalizeEngine(undefined), 'playwright', 'missing engine defaults to playwright');
+assert.equal(e.normalizeEngine(''), 'playwright', 'empty engine defaults to playwright');
+assert.equal(e.DEFAULT_FLOW_ENGINE, 'agent-browser', 'missing flow.engine remains agent-browser for compatibility');
 assert.equal(e.normalizeEngine('playwright'), 'playwright', 'playwright accepted');
 assert.throws(() => e.normalizeEngine('selenium'), /invalid engine/, 'invalid engine rejected');
 assert.equal(e.flowEngine({ name: 'old' }), 'agent-browser', 'old flow without engine is agent-browser');
@@ -22,7 +23,7 @@ assert.throws(() => e.assertFlowEngine({ engine: 'agent-browser' }, 'playwright'
 
 const h = dbm.openDb();
 dbm.registerSystem(h, { name: 'legacy', target_url: 'https://example.test/list' });
-assert.equal(dbm.getSystem(h, 'legacy').engine, 'agent-browser', 'registered system default engine');
+assert.equal(dbm.getSystem(h, 'legacy').engine, 'playwright', 'registered system default engine');
 dbm.registerSystem(h, { name: 'pw', engine: 'playwright', target_url: 'https://example.test/list' });
 assert.equal(dbm.getSystem(h, 'pw').engine, 'playwright', 'registered system stores playwright');
 assert.throws(() => dbm.registerSystem(h, { name: 'bad', engine: 'selenium' }), /invalid engine/, 'DB rejects invalid engine');

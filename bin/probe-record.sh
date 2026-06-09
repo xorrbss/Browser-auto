@@ -38,7 +38,7 @@ ensure_authoring_daemon() {
 usage() {
 	echo "usage:" >&2
 	echo "  bin/probe-record.sh scaffold <name> <startUrl>           # snapshot + flow.json stub (no key)" >&2
-	echo "  bin/probe-record.sh capture  <name> <startUrl> [--engine agent-browser|playwright] [--app a] [--seconds N] # record a live journey -> flow.json" >&2
+	echo "  bin/probe-record.sh capture  <name> <startUrl> [--engine agent-browser|playwright] [--app a] [--seconds N] # record a live journey -> flow.json (default: playwright)" >&2
 	echo "  bin/probe-record.sh verify   <flows/name.flow.json>      # re-drive + verify/repair locators (optional)" >&2
 	echo "  bin/probe-record.sh compile  <flows/name.flow.json>      # flow.json -> runnable test.sh" >&2
 	exit 2
@@ -84,7 +84,7 @@ compile() {
 	# incomplete test — the exact false-green this framework forbids. Refuse instead of dropping.
 	local bad_kinds
 	bad_kinds="$(jq -r '
-		[ (.steps[]?   | select((.kind|tostring) | test("^(find|wait|press|scroll)$") | not)             | "step:"   + (.kind|tostring)),
+		[ (.steps[]?   | select((.kind|tostring) | test("^(find|wait|press|scroll|open_record)$") | not) | "step:"   + (.kind|tostring)),
 		  (.asserts[]? | select((.kind|tostring) | test("^(url|text|value|visible|count|absent)$") | not) | "assert:" + (.kind|tostring)) ]
 		| unique | .[]' "$flow")"
 	if [ -n "$bad_kinds" ]; then
@@ -93,6 +93,39 @@ compile() {
 		exit 1
 	fi
 
+	local bad_open_records
+	bad_open_records="$(jq -r '
+		.steps
+		| to_entries[]
+		| select(.value.kind == "open_record")
+		| select(
+			((.value.source // "first") as $src | ($src != "first" and $src != "row_index"))
+			or ((.value.recipe | type) != "string")
+			or ((.value.recipe | test("^[A-Za-z0-9_-]+$")) | not)
+			or (((.value.field // "") | test("^[A-Za-z0-9_-]*$")) | not)
+			or ((.value.source // "first") == "row_index" and
+				(((.value.rowIndex // null) | type) != "number"
+				 or (.value.rowIndex < 0)
+				 or ((.value.rowIndex | floor) != .value.rowIndex)))
+			or ((.value.source // "first") != "row_index" and
+				(.value.rowIndex != null) and
+				(((.value.rowIndex | type) != "number")
+				 or (.value.rowIndex < 0)
+				 or ((.value.rowIndex | floor) != .value.rowIndex)))
+		)
+		| "  open_record step #\(.key): source=\(.value.source // "first") recipe=\(.value.recipe // "") field=\(.value.field // "") rowIndex=\(.value.rowIndex // "")"
+	' "$flow")"
+	if [ -n "$bad_open_records" ]; then
+		echo "[probe] compile refused: invalid open_record step(s):" >&2
+		printf '%s\n' "$bad_open_records" >&2
+		exit 1
+	fi
+	while IFS= read -r recipe; do
+		recipe="${recipe%$'\r'}"
+		[ -n "$recipe" ] || continue
+		[ -s "${PROBE_ROOT}/recipes/${recipe}.json" ] || { echo "[probe] compile refused: open_record recipe missing: recipes/${recipe}.json" >&2; exit 1; }
+	done < <(jq -r '.steps[]? | select(.kind=="open_record") | .recipe' "$flow")
+
 	local name app starturl
 	name="$(jq -r '.name' "$flow")"
 	app="$(jq -r '.app // empty' "$flow")"
@@ -100,6 +133,10 @@ compile() {
 	local out="${PROBE_ROOT}/tests/${name}.test.sh"
 	local engine
 	engine="$(flow_engine "$flow")"
+	if [ "$engine" = "playwright" ] && ! jq -e '[.steps[] | select(.kind=="open_record")] | length==0' "$flow" >/dev/null 2>&1; then
+		echo "[probe] compile refused: open_record is currently implemented for agent-browser compiled flows only." >&2
+		exit 1
+	fi
 
 	if [ "$engine" = "playwright" ]; then
 		{
@@ -189,17 +226,20 @@ compile() {
 			elif $s.kind == "wait" then {t:"c", v:["wait", ("--" + $s.until), $s.value]}
 			elif $s.kind == "press" then {t:"c", v:["press", $s.value]}
 			elif $s.kind == "scroll" then {t:"s", v:[$s.dir, ($s.px|tostring)]}
+			elif $s.kind == "open_record" then {t:"o", v:[($s.source // "first"), $s.recipe, ($s.field // ""), (if $s.rowIndex == null then "" else ($s.rowIndex|tostring) end)]}
 			else empty end)
 		| reduce .[] as $s ([];
 			if $s.t == "w" then . + [{w:$s.v}]
 			elif $s.t == "f" then . + [{f:$s.v}]
 			elif $s.t == "s" then . + [{s:$s.v}]
+			elif $s.t == "o" then . + [{o:$s.v}]
 			elif (length > 0 and (.[-1] | has("b"))) then (.[0:-1] + [{b:(.[-1].b + [$s.v])}])
 			else . + [{b:[$s.v]}] end)
 		| .[]
 		| if has("w") then ("wait_url " + (.w | @sh))
 		  elif has("f") then ("_find_fb " + ((.f | @json | @base64) | @sh))
 		  elif has("s") then ("AB scroll " + (.s[0]|@sh) + " " + (.s[1]|@sh))
+		  elif has("o") then ("aqa_open_record " + (.o[0]|@sh) + " " + (.o[1]|@sh) + " " + (.o[2]|@sh) + " " + (.o[3]|@sh))
 		  else ("_run_batch " + ((.b | @json | @base64) | @sh)) end
 	' "$flow")"
 
@@ -231,6 +271,9 @@ compile() {
 		echo 'source "$DIR/lib/env.sh"'
 		echo 'source "$DIR/lib/cleanup.sh"'
 		echo 'source "$DIR/lib/assert.sh"'
+		if printf '%s' "$body_lines" | grep -q 'aqa_open_record'; then
+			echo 'source "$DIR/lib/flow-steps.sh"'
+		fi
 		echo ''
 		echo "$open_line"
 		echo 'AB record start "$ARTDIR/video.webm" >/dev/null'
@@ -326,7 +369,7 @@ scaffold() {
 		echo "[probe] $stub already exists; left untouched."
 	else
 		jq -n --arg name "$name" --arg url "$starturl" \
-			'{name:$name, engine:"agent-browser", startUrl:$url, steps:[], asserts:[]}' > "$stub"
+			'{name:$name, engine:"playwright", startUrl:$url, steps:[], asserts:[]}' > "$stub"
 		echo "[probe] flow stub -> $stub (fill in steps/asserts, then: compile)"
 	fi
 	echo "[probe] locator priority: testid > role+name > label > exact-text > placeholder > title"
@@ -339,7 +382,7 @@ scaffold() {
 # are the supported v1 scope (cross-origin top-level nav is a documented limitation).
 # Test/CI hooks: AQA_CAPTURE_SECONDS=N auto-stops after N s; AQA_CAPTURE_SESSION pins the session.
 capture() {
-	local name="" starturl="" app="" engine="agent-browser" secs="${AQA_CAPTURE_SECONDS:-0}"
+	local name="" starturl="" app="" engine="playwright" secs="${AQA_CAPTURE_SECONDS:-0}"
 	while [ $# -gt 0 ]; do
 		case "${1:-}" in
 			--app) [ $# -ge 2 ] || usage; app="$2"; shift 2 ;;
@@ -452,6 +495,18 @@ capture() {
 	# F6: clear any stale in-page capture state so a reused AQA_CAPTURE_SESSION cannot replay
 	# stale events from a prior recording.
 	agent-browser --session "$sess" eval "sessionStorage.setItem('__aqa_buf','[]');sessionStorage.setItem('__aqa_seq','0');sessionStorage.setItem('__aqa_prevurl',location.href);1" >/dev/null 2>&1 </dev/null || true
+
+	# Capture the pre-journey list snapshot used by the web UI to convert a clicked literal row
+	# into an open_record rowIndex. Failure is non-fatal for ordinary locator-based flows; the
+	# resolver will fail loud later instead of guessing.
+	local snap="${PROBE_ROOT}/flows/${name}.snapshot.txt"
+	agent-browser --session "$sess" wait --load networkidle >/dev/null 2>&1 </dev/null || true
+	if agent-browser --session "$sess" snapshot -i > "$snap" 2>/dev/null </dev/null && [ -s "$snap" ]; then
+		echo "[probe] pre-journey snapshot -> $snap"
+	else
+		rm -f "$snap"
+		echo "[probe] WARNING: could not write pre-journey snapshot; clicked-row resolution will require a fresh scaffold/capture snapshot." >&2
+	fi
 
 	# F5: a top-level cross-origin nav moves sessionStorage to a new empty origin, silently
 	# losing events AND defeating the seq health-check. Remember the start origin to detect it.

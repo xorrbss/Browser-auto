@@ -29,9 +29,11 @@ _ab_data() {
 # _url_match <got-url> <want-pattern>: 0 if the URL matches. <want> may be an agent-browser
 # style glob ("**/secure", query/fragment stripped); ** and * both collapse to bash * and are
 # matched against the WHOLE URL (so "**/secure" => "*/secure" matches ".../secure", optionally
-# followed by ?query/#frag). A plain substring (hand-written test) still matches via the contains
-# fallback. Shared by assert_url and wait_url so a recorded wait gate and its trailing assert
-# agree on EXACTLY the same matching.
+# followed by ?query/#frag). A route-equivalent trailing slash is also accepted (".../secure/"
+# and ".../secure/?x") because many apps canonicalize list/detail routes that way after a
+# click-back. A plain substring (hand-written test) still matches via the contains fallback.
+# Shared by assert_url and wait_url so a recorded wait gate and its trailing assert agree on
+# EXACTLY the same matching.
 _url_match() {
 	local got="$1" want="$2" glob
 	# Only * / ** are wildcards; every other char is literal. Make the OTHER bash-glob
@@ -46,7 +48,7 @@ _url_match() {
 	glob="${glob//\?/[?]}"        # literal ?  -> [?]
 	glob="${glob//\*\*/\*}"       # **         -> *   (sole wildcard)
 	case "$got" in
-		$glob | $glob\?* | $glob\#*) return 0 ;;   # glob match (whole URL, optional query/frag)
+		$glob | $glob\?* | $glob\#* | $glob/ | $glob/\?* | $glob/\#*) return 0 ;;   # glob match (whole URL, optional trailing slash/query/frag)
 		*"$want"*) return 0 ;;                      # literal-substring fallback
 		*) return 1 ;;
 	esac

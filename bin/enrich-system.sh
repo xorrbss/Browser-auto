@@ -30,6 +30,19 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$SYSTEM" ] || { echo "[enrich-system] --system <name> required" >&2; exit 2; }
 
+ENGINE="$(cd "$PROBE_ROOT" && node -e '
+const d=require("./lib/db.js");const e=require("./lib/engine.js");const h=d.openDb();const s=d.getSystem(h,process.argv[1]);
+if(!s){console.error("no such system: "+process.argv[1]);process.exit(3);}
+process.stdout.write(e.systemEngine(s));
+d.closeDb(h);
+' "$SYSTEM")" || { echo "[enrich-system] failed to load system '$SYSTEM' from registry" >&2; exit 3; }
+if [ "$ENGINE" = "playwright" ]; then
+	args=(enrich --system "$SYSTEM")
+	[ "${LIMIT:-0}" != 0 ] && args+=(--limit "$LIMIT")
+	[ -n "${KEY:-}" ] && args+=(--key "$KEY")
+	exec node "$PROBE_ROOT/bin/pw-rpa.mjs" "${args[@]}"
+fi
+
 # SUMMARY_* (on-prem model) live in data/approvals.config (exported there so the child inherits them).
 CONFIG="$PROBE_ROOT/data/approvals.config"
 [ -f "$CONFIG" ] && . "$CONFIG"

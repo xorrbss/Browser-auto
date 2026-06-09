@@ -64,7 +64,8 @@ fronting host, and do not expose the process-spawning webui directly.
 
 External dependencies that must be ready for real operation:
 
-- `fixtures/auth/<app>.state.json` for agent-browser sync/enrich.
+- `fixtures/auth/playwright/<app>.state.json` for default Playwright RPA sync/enrich, or
+  `fixtures/auth/<app>.state.json` for explicitly legacy agent-browser systems.
 - `approve/<app>.pw-state.json`, `recipes/<app>.json`, and a pending-list URL for approve-like actions.
 - `data/approvals.config` for the legacy Hiworks approval inbox path.
 - A private/TLS on-prem OpenAI-compatible endpoint for summaries/classification; set
@@ -553,14 +554,15 @@ Flows may set top-level `"engine": "agent-browser"` or `"engine": "playwright"`.
 If the field is absent, the flow is treated as `agent-browser` for backward
 compatibility. `flow.engine` is the replay source of truth; changing a registered
 system's default engine only affects new auth/record/play work and never rewrites
-existing flows.
+existing flows. New auth/record/system work defaults to `playwright`; pass
+`--engine agent-browser` only when you need the legacy agent-browser path.
 
 ```bash
+bash setup/auth.sh myapp https://app.example.com/login '**/dashboard'                 # default: playwright
 bash setup/auth.sh --engine agent-browser myapp https://app.example.com/login '**/dashboard'
-bash setup/auth.sh --engine playwright     myapp https://app.example.com/login '**/dashboard'
 
+bash bin/probe-record.sh capture checkout https://app.example.com/cart --app myapp     # default: playwright
 bash bin/probe-record.sh capture checkout https://app.example.com/cart --engine agent-browser --app myapp
-bash bin/probe-record.sh capture checkout https://app.example.com/cart --engine playwright     --app myapp
 
 bash bin/probe-record.sh compile flows/checkout.flow.json
 node bin/play-flow.mjs --flow flows/checkout.flow.json
@@ -569,9 +571,9 @@ node bin/play-flow.mjs --flow flows/checkout.flow.json
 There is no silent fallback between engines. Agent-browser auth state remains
 `fixtures/auth/<app>.state.json`; generic Playwright auth state is stored under
 `fixtures/auth/playwright/<app>.state.json` (the legacy approve state
-`approve/<app>.pw-state.json` is still recognized for compatibility). In this
-first slice, generic read/analyze/sync/enrich drivers remain agent-browser only;
-the selected engine covers auth, recording, verify, compile, and replay for flows.
+`approve/<app>.pw-state.json` is still recognized for compatibility). Generic
+read/analyze/sync/enrich drivers now follow the registered system's selected
+engine, so Playwright-default systems use the Playwright auth state end to end.
 
 ### Or: record a live journey (capture mode)
 

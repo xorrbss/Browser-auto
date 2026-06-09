@@ -1,0 +1,78 @@
+{
+  "name": "hiworks01",
+  "engine": "agent-browser",
+  "app": "4345",
+  "startUrl": "https://approval.office.hiworks.com/ibizsoftware.net/approval/document/lists/W",
+  "steps": [
+    {
+      "kind": "find",
+      "needs_review": true,
+      "candidates": [
+        {
+          "by": "title",
+          "count": 1,
+          "value": "IB-품의-20260508-0002"
+        }
+      ],
+      "action": "click"
+    },
+    {
+      "kind": "wait",
+      "until": "url",
+      "value": "**/ibizsoftware.net/approval/document/view/**/condition/**"
+    },
+    {
+      "kind": "find",
+      "needs_review": true,
+      "candidates": [
+        {
+          "by": "role",
+          "count": 1,
+          "name": "결재",
+          "value": "button"
+        },
+        {
+          "by": "text",
+          "count": 0,
+          "value": "결재"
+        }
+      ],
+      "action": "click"
+    },
+    {
+      "kind": "wait",
+      "until": "load",
+      "value": "networkidle"
+    },
+    {
+      "kind": "find",
+      "by": "placeholder",
+      "value": "의견을 입력하세요.",
+      "action": "click"
+    },
+    {
+      "kind": "find",
+      "by": "placeholder",
+      "value": "의견을 입력하세요.",
+      "action": "fill",
+      "text": "{{input_1}}"
+    },
+    {
+      "kind": "find",
+      "by": "text",
+      "value": "확인",
+      "action": "click"
+    },
+    {
+      "kind": "wait",
+      "until": "load",
+      "value": "networkidle"
+    }
+  ],
+  "asserts": [
+    {
+      "kind": "url",
+      "value": "**/ibizsoftware.net/approval/document/view/**/condition/**"
+    }
+  ]
+}

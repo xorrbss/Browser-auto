@@ -22,6 +22,16 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$SYSTEM" ] || { echo "[analyze] --system <name> required" >&2; exit 2; }
 
+ENGINE="$(cd "$PROBE_ROOT" && node -e '
+const d=require("./lib/db.js");const e=require("./lib/engine.js");const h=d.openDb();const s=d.getSystem(h,process.argv[1]);
+if(!s){console.error("no such system: "+process.argv[1]);process.exit(3);}
+process.stdout.write(e.systemEngine(s));
+d.closeDb(h);
+' "$SYSTEM")" || { echo "[analyze] failed to load system '$SYSTEM'" >&2; exit 3; }
+if [ "$ENGINE" = "playwright" ]; then
+	exec node "$PROBE_ROOT/bin/pw-rpa.mjs" analyze --system "$SYSTEM"
+fi
+
 DATA_DIR="$PROBE_ROOT/data"; mkdir -p "$DATA_DIR"
 SNAP="$DATA_DIR/${SYSTEM}.snapshot.json"
 PROPOSED="$DATA_DIR/${SYSTEM}.proposed.json"

@@ -3,8 +3,8 @@
 
 import { $, el, getJson, fmtTime, streamJob, cancelJob, stopJob } from './util.js';
 
-const DEFAULT_ENGINE = 'agent-browser';
-const ENGINES = ['agent-browser', 'playwright'];
+const DEFAULT_ENGINE = 'playwright';
+const ENGINES = ['playwright', 'agent-browser'];
 const FLOW_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 const VIEW_TITLES = {
@@ -49,6 +49,7 @@ const state = {
 		plan: null,
 		planError: null,
 		recordJob: null,
+		authJob: null,
 		verifyJob: null,
 		runJob: null,
 		compileOutput: '',
@@ -348,7 +349,7 @@ function automationForm() {
 	const matchedApp = matchedAuthApp({ recordUrl, loginUrl });
 	const app = manualApp || matchedApp || autoApp;
 	const autoName = flowNameSuggestion({ name: '', recordUrl, loginUrl, app });
-	const autoSuccessUrl = successNeedleSuggestion({ recordUrl });
+	const autoSuccessUrl = successNeedleSuggestion({ recordUrl, loginUrl });
 	return {
 		name: manualName || autoName,
 		recordUrl,
@@ -411,8 +412,14 @@ function appSuggestion(form) {
 }
 
 function successNeedleSuggestion(form) {
+	// Prefer the record (post-login work screen) URL, but fall back to the login URL host so that
+	// registering login with ONLY a login URL still yields a non-empty needle — mirrors the
+	// `recordUrl || loginUrl` idiom used by flowNameSuggestion/appSuggestion. The login-host needle
+	// is by construction a substring of the login URL, so setup/auth.sh's got!=LOGIN_URL guard makes
+	// auto-detect fire only once the page navigates OFF the exact login URL; same-URL portals are
+	// covered by the [로그인 완료·저장] confirm-save fallback.
 	try {
-		const u = new URL(form.recordUrl);
+		const u = new URL(form.recordUrl || form.loginUrl);
 		const firstPath = u.pathname.split('/').filter(Boolean)[0] || '';
 		const pathPart = firstPath ? `/${firstPath}` : '';
 		return `${u.hostname}${pathPart}`;
@@ -487,7 +494,7 @@ function looksLikeLoginUrl(url) {
 }
 
 function automationLoggedIn(form = automationForm()) {
-	return !!(form.app && state.auth.includes(form.app));
+	return !!(form.app && (state.authStates || []).some((auth) => auth.app === form.app && (auth.engine || DEFAULT_ENGINE) === form.engine));
 }
 
 function queueWork() {
@@ -516,8 +523,20 @@ function queueJob(id) {
 	return [q.running, ...q.pending].filter(Boolean).find((j) => j.id === id) || null;
 }
 
+function flowRecipeSuggestion(flow) {
+	const url = String(flow?.startUrl || automationForm().recordUrl || '').toLowerCase();
+	const app = String(flow?.app || automationForm().app || '').toLowerCase();
+	if (url.includes('hiworks') || app.includes('hiworks')) return 'hiworks';
+	if (url.includes('daou') || app.includes('daou')) return 'daou';
+	return 'hiworks';
+}
+
 function flowStepSummary(s) {
 	if (!s || typeof s !== 'object') return '-';
+	if (s.kind === 'open_record') {
+		const row = s.source === 'row_index' && Number.isInteger(s.rowIndex) ? `${s.rowIndex + 1}번째 행` : '첫 번째 행';
+		return `클릭한 행 위치로 열기: ${row} / ${s.recipe || '?'}${s.field ? ` / ${s.field}` : ''}`;
+	}
 	if (s.kind === 'wait') return `대기: ${s.until || ''} ${s.value || ''}`.trim();
 	if (s.kind === 'press') return `키 입력: ${s.value || ''}`;
 	if (s.kind === 'scroll') return `스크롤: ${s.dir || 'down'} ${s.px || ''}`;
@@ -597,19 +616,32 @@ function renderAutomation() {
 	}
 	const authBtn = $('#auto-auth');
 	if (authBtn) {
-		authBtn.disabled = loggedIn || busy || !form.app || !form.loginUrl;
+		authBtn.disabled = loggedIn || busy || !form.app || !form.loginUrl || !form.successUrl;
 		authBtn.textContent = loggedIn ? '로그인 등록됨' : busy ? '작업 대기 중' : '로그인 등록';
-		authBtn.title = !form.loginUrl ? '로그인 URL을 입력하세요.' : !loggedIn && busy ? busyText : '';
+		// form.successUrl is derived from recordUrl||loginUrl, so it is empty only when the login URL
+		// itself is missing or malformed (a valid login URL always yields a host needle).
+		authBtn.title = !form.loginUrl
+			? '로그인 URL을 입력하세요.'
+			: !form.successUrl
+				? '로그인 URL 형식을 확인하세요.'
+				: !loggedIn && busy ? busyText : '';
+	}
+	const authJob = queueJob(state.automation.authJob);
+	const authRunning = authJob?.status === 'running';
+	const authStopBtn = $('#auto-auth-stop');
+	if (authStopBtn) {
+		authStopBtn.disabled = !authRunning;
+		authStopBtn.title = authRunning
+			? '로그인을 마쳤다면 누르세요. 현재 로그인 상태를 저장하고 창을 닫습니다.'
+			: '로그인 등록을 시작하면 활성화됩니다.';
 	}
 	const authHint = $('#auto-auth-hint');
 	if (authHint) {
 		authHint.textContent = loggedIn
 			? '이 사이트의 로그인 상태가 저장되어 있습니다.'
-			: form.loginUrl && form.successUrl
-				? '녹화 URL을 기준으로 로그인 완료를 자동 확인합니다.'
-				: form.loginUrl
-					? '로그인 완료 확인을 위해 녹화 URL도 필요합니다.'
-					: '녹화 URL과 로그인 URL을 입력하면 로그인 완료 기준은 자동으로 잡습니다.';
+			: form.loginUrl
+				? '로그인 후 다른 화면으로 이동하면 자동 저장됩니다. 같은 화면에 머무르면 [로그인 완료·저장]을 누르세요.'
+				: '로그인 URL을 입력하면 로그인 등록을 시작할 수 있습니다.';
 	}
 	const recordHint = $('#auto-record-hint');
 	if (recordHint) {
@@ -622,7 +654,12 @@ function renderAutomation() {
 		if (node) node.disabled = loggedIn;
 	});
 	const verifyBtn = $('#auto-verify');
-	if (verifyBtn) verifyBtn.disabled = !flow || activeRecord || activeVerify || activeRun || busy;
+	if (verifyBtn) {
+		const needsReview = !!(flow && flow.needsReviewSteps?.length);
+		verifyBtn.disabled = !flow || needsReview || activeRecord || activeVerify || activeRun || busy;
+		verifyBtn.textContent = needsReview ? '후보 선택 필요' : activeVerify ? '검증 중' : '검증';
+		verifyBtn.title = needsReview ? '아래 후보를 먼저 선택해야 검증할 수 있습니다.' : '';
+	}
 	const compileBtn = $('#auto-compile');
 	if (compileBtn) {
 		compileBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun;
@@ -681,25 +718,42 @@ function renderAutomationFlow(flow) {
 	);
 	const steps = el('div', { class: 'step-list' });
 	flow.steps.forEach((s, i) => {
+		const dynamicFirst = s.kind === 'find' && (s.action || 'click') === 'click' && i === 0;
 		steps.append(el('div', { class: `flow-step ${s.needs_review ? 'needs-review' : ''}` },
 			el('span', { class: 'step-num' }, String(i + 1)),
 			el('span', { class: 'step-text' }, flowStepSummary(s)),
+			dynamicFirst ? el('button', {
+				class: 'btn small ghost',
+				type: 'button',
+				onclick: () => resolveAutomationClickedRecord(flow.name, i),
+			}, '클릭한 행 위치로 열기') : null,
 		));
 	});
 	const reviewBlocks = flow.needsReviewSteps.map((item) => {
 		const actions = el('div', { class: 'candidate-list' });
+		if ((item.action || 'click') === 'click') {
+			actions.append(el('button', {
+				class: 'candidate-button dynamic',
+				type: 'button',
+				onclick: () => resolveAutomationClickedRecord(flow.name, item.index),
+			}, '클릭한 행 위치로 열기'));
+		}
 		for (const [ci, c] of (item.candidates || []).entries()) {
 			actions.append(el('button', {
 				class: 'candidate-button',
 				type: 'button',
 				onclick: () => resolveAutomationStep(flow.name, item.index, ci),
-			}, `${c.by}: ${c.value}${c.name ? ` / ${c.name}` : ''}`));
+			}, `이 후보 사용: ${c.by}: ${c.value}${c.name ? ` / ${c.name}` : ''}`));
 		}
-		return el('div', { class: 'review-block' },
-			el('strong', {}, `${item.index + 1}단계 locator 선택`),
+		return el('div', { class: 'review-block review-required' },
+			el('strong', {}, `${item.index + 1}단계 후보 선택 필요`),
+			el('span', { class: 'review-help' }, '목표 문장을 바꾸는 문제가 아니라, 녹화 중 실제로 누른 대상을 한 번 확정하는 단계입니다.'),
 			actions,
 		);
 	});
+	const reviewNotice = flow.needsReviewSteps.length
+		? warnBox(`${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요. 선택 후 검증 버튼이 켜집니다.`)
+		: null;
 	let valuesBlock = null;
 	if (flow.inputTokens.length) {
 		const inputs = el('div', { class: 'values-grid' });
@@ -715,6 +769,7 @@ function renderAutomationFlow(flow) {
 	const compileOut = state.automation.compileOutput ? el('pre', { class: 'joblog compact-log' }, state.automation.compileOutput) : null;
 	setChildren(box,
 		summary,
+		reviewNotice,
 		el('div', { class: 'flow-body' }, steps),
 		...reviewBlocks,
 		valuesBlock,
@@ -827,7 +882,7 @@ async function runAutomationAuth() {
 		renderAutomation();
 		return;
 	}
-	log.textContent = '로그인 창을 여는 중...\n로그인과 OTP를 완료하면 완료 확인값을 보고 창이 자동으로 닫히고 상태가 저장됩니다.\n';
+	log.textContent = '로그인 창을 여는 중...\n로그인과 OTP를 완료하면 창이 자동으로 닫히고 상태가 저장됩니다.\n로그인 후 같은 화면에 머무르는 사이트는 [로그인 완료·저장]을 눌러 저장하세요.\n';
 	setAutomationJobBadge('로그인 등록', 'info');
 	try {
 		const data = await postJson('/api/auth', {
@@ -837,7 +892,10 @@ async function runAutomationAuth() {
 			engine: form.engine,
 		});
 		if (data.job) {
+			state.automation.authJob = data.job.id;
+			renderAutomation();
 			streamJob(data.job.id, log, async (done) => {
+				state.automation.authJob = null;
 				setAutomationJobBadge(done?.status === 'done' ? '로그인 등록 완료' : '로그인 확인', done?.status === 'done' ? 'success' : 'warning');
 				await Promise.allSettled([loadAuthStates(), loadDiagnostics(), loadQueue()]);
 				log.append(document.createTextNode('\n다음 단계: 녹화 URL에 로그인 이후 실제 업무 화면을 넣고 [녹화 시작]을 누르세요.\n'));
@@ -845,8 +903,21 @@ async function runAutomationAuth() {
 			});
 		}
 	} catch (e) {
+		state.automation.authJob = null;
 		setAutomationJobBadge('로그인 실패', 'danger');
 		log.append(document.createTextNode(`로그인 등록 거부됨: ${e.message}\n`));
+		renderAutomation();
+	}
+}
+
+async function stopAutomationAuth() {
+	const id = state.automation.authJob;
+	if (!id) return;
+	const log = $('#auto-record-log');
+	const ok = await stopJob(id);
+	if (log) {
+		log.hidden = false;
+		log.append(document.createTextNode(ok ? '\n[webui] 로그인 상태 저장을 요청했습니다.\n' : '\n[webui] 아직 저장할 수 없습니다. 잠시 후 다시 누르세요.\n'));
 	}
 }
 
@@ -878,6 +949,18 @@ async function resolveAutomationStep(name, step, candidate) {
 	}
 }
 
+async function resolveAutomationClickedRecord(name, step) {
+	const flow = state.automation.flow;
+	const recipe = flowRecipeSuggestion(flow);
+	try {
+		await postJson(`/api/flows/${encodeURIComponent(name)}/resolve-clicked-record`, { step, recipe });
+		state.automation.compileOutput = '';
+		await loadAutomationFlow(name);
+	} catch (e) {
+		alert(`클릭한 행 위치 설정 실패: ${e.message}`);
+	}
+}
+
 async function saveAutomationValues(name) {
 	const values = {};
 	document.querySelectorAll('.auto-value-input').forEach((input) => {
@@ -895,6 +978,15 @@ async function verifyAutomationFlow() {
 	const flow = state.automation.flow;
 	if (!flow) return;
 	const log = $('#auto-run-log');
+	if (flow.needsReviewSteps?.length) {
+		setAutomationJobBadge('후보 선택 필요', 'warning');
+		log.textContent = `검증 전에 ${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요.\n녹화 결과 아래의 [이 후보 사용] 버튼을 누른 뒤 다시 검증하면 됩니다.\n`;
+		const firstCandidate = document.querySelector('.review-required .candidate-button');
+		firstCandidate?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		firstCandidate?.focus();
+		renderAutomation();
+		return;
+	}
 	log.textContent = '검증 요청 중...\n';
 	setAutomationJobBadge('검증', 'info');
 	try {
@@ -1729,6 +1821,7 @@ function bindEvents() {
 	document.querySelectorAll('.nav-item').forEach((btn) => btn.addEventListener('click', () => setView(btn.dataset.viewTarget)));
 	$('#global-refresh').addEventListener('click', () => loadCoreData());
 	$('#auto-auth').addEventListener('click', runAutomationAuth);
+	$('#auto-auth-stop')?.addEventListener('click', stopAutomationAuth);
 	$('#auto-start-record').addEventListener('click', () => startAutomationRecord(false));
 	$('#auto-stop-record').addEventListener('click', stopAutomationRecord);
 	$('#auto-refresh-flow').addEventListener('click', () => loadAutomationFlow());
@@ -1737,6 +1830,7 @@ function bindEvents() {
 	$('#auto-compile').addEventListener('click', compileAutomationFlow);
 	$('#auto-run').addEventListener('click', runAutomationFlow);
 	['#auto-record-url', '#auto-login-url', '#auto-success-url', '#auto-app', '#auto-goal'].forEach((sel) => $(sel)?.addEventListener('input', renderAutomation));
+	$('#auto-engine')?.addEventListener('change', renderAutomation);
 	$('#cc-sync').addEventListener('click', runApprovalsSync);
 	$('#cc-create-plan').addEventListener('click', () => makePlan($('#cc-command').value));
 	$('#cc-dry-run').addEventListener('click', runDryRun);

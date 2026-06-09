@@ -7,7 +7,7 @@ import { classifyIntent, runQuery, runRecordsQuery } from './agent.js';
 import { validSysName, listSystemsView, getSystemView, saveSystem, removeSystem, recordsView, readProposed, systemState, systemActions, allActionsView } from './systems.js';
 
 // rpaPost(p, bodyJson, res, {sendJson, enqueue, gitBash}) -> handled? (async: /api/agent classifies)
-export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, authSpawn }) {
+export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, authSpawn, nodeLeaf }) {
 	// 결재 동기화: bin/fetch-approvals.sh (login -> scrape inbox -> DB). Browser job -> serial queue.
 	if (p === '/api/sync') {
 		const app = bodyJson.app ? String(bodyJson.app).trim() : '';
@@ -65,7 +65,7 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, au
 		if (!sysv) { sendJson(res, 404, { error: 'no such system' }); return true; }
 		if (action === 'auth') {
 			if (!sysv.login_url || !sysv.success_url) { sendJson(res, 400, { error: 'register login_url + success_url first' }); return true; }
-			const engine = sysv.engine || 'agent-browser';
+			const engine = sysv.engine || 'playwright';
 			const job = enqueue({
 					kind: 'auth',
 					label: `auth ${name} (${engine})`,
@@ -77,18 +77,36 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, au
 			return true;
 		}
 		if (action === 'analyze') {
-			const job = enqueue({ kind: 'analyze', label: `analyze ${name}`, spawnFn: () => gitBash('bin/analyze-system.sh', ['--system', name]) });
+			const job = enqueue({
+				kind: 'analyze',
+				label: `analyze ${name} (${sysv.engine || 'playwright'})`,
+				spawnFn: () => (sysv.engine || 'playwright') === 'playwright'
+					? nodeLeaf('bin/pw-rpa.mjs', ['analyze', '--system', name])
+					: gitBash('bin/analyze-system.sh', ['--system', name]),
+			});
 			sendJson(res, 202, { job });
 			return true;
 		}
 		if (action === 'sync') {
-			const job = enqueue({ kind: 'sync', label: `sync ${name}`, spawnFn: () => gitBash('bin/sync-system.sh', ['--system', name]) });
+			const job = enqueue({
+				kind: 'sync',
+				label: `sync ${name} (${sysv.engine || 'playwright'})`,
+				spawnFn: () => (sysv.engine || 'playwright') === 'playwright'
+					? nodeLeaf('bin/pw-rpa.mjs', ['sync', '--system', name])
+					: gitBash('bin/sync-system.sh', ['--system', name]),
+			});
 			sendJson(res, 202, { job });
 			return true;
 		}
 		// enrich: per-record detail + on-prem summary onto records (bin/enrich-system.sh). Browser job.
 		if (action === 'enrich') {
-			const job = enqueue({ kind: 'summarize', label: `enrich ${name}`, spawnFn: () => gitBash('bin/enrich-system.sh', ['--system', name]) });
+			const job = enqueue({
+				kind: 'summarize',
+				label: `enrich ${name} (${sysv.engine || 'playwright'})`,
+				spawnFn: () => (sysv.engine || 'playwright') === 'playwright'
+					? nodeLeaf('bin/pw-rpa.mjs', ['enrich', '--system', name])
+					: gitBash('bin/enrich-system.sh', ['--system', name]),
+			});
 			sendJson(res, 202, { job });
 			return true;
 		}

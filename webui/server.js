@@ -20,6 +20,7 @@
 //   GET  /api/flows            -> [{ name, steps, needsReview, inputTokens, compiled }]
 //   GET  /api/flows/:name      -> flow detail (steps, needsReviewSteps, values, compilable)
 //   POST /api/flows/:name/resolve { step, candidate } -> pick a candidate (human flow.json edit)
+//   POST /api/flows/:name/resolve-clicked-record { step, recipe, field? } -> dynamic clicked-row-position open
 //   POST /api/flows/:name/values  { values }          -> write the {{input_N}} sidecar
 //   POST /api/verify           -> enqueue verify-repair re-drive (browser, serial); { job }
 //   POST /api/compile          -> compile flow -> tests/<name>.test.sh (sync, daemon-free)
@@ -41,7 +42,7 @@ import { createRequire } from 'node:module';
 import { listRuns, getRun, getTrends, pruneArtifacts, ARTIFACTS_DIR } from './index.js';
 import { enqueue, jobStatus, jobResult, subscribe, queueState, cancel, stop, killRunning } from './jobs.js';
 import { gitBash, browserBash, recordCmd, nodeLeaf } from './spawn.js';
-import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
+import { listFlows, getFlow, resolveStep, resolveClickedRecordStep, saveValues, validName, flowExists } from './flows.js';
 import { getSystemView } from './systems.js';
 import { listAuthStates, listAuthStateSummaries, validApp, deleteAuthState } from './auth.js';
 import { listApprovalsView } from './approvals.js';
@@ -52,7 +53,7 @@ import { issueSessionIfNeeded, approveGate } from './session.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const require = createRequire(import.meta.url);
-const { normalizeEngine } = require('../lib/engine.js');
+const { normalizeEngine, flowEngine } = require('../lib/engine.js');
 // Bind address. Default 127.0.0.1 (localhost-only — the safe default for native Windows/macOS use).
 // A 127.0.0.1 listener inside a container is unreachable through Docker's published port, so the
 // Docker image sets WEBUI_HOST=0.0.0.0; that stays safe because compose publishes the port only to
@@ -322,7 +323,7 @@ const server = http.createServer(async (req, res) => {
 				let engine;
 				try {
 					const sysDefault = app ? getSystemView(app)?.engine : null;
-					engine = normalizeEngine(bodyJson.engine || sysDefault || 'agent-browser', 'record.engine');
+					engine = normalizeEngine(bodyJson.engine || sysDefault, 'record.engine');
 				} catch (e) {
 					return sendJson(res, 400, { error: e.message });
 				}
@@ -354,7 +355,7 @@ const server = http.createServer(async (req, res) => {
 				const name = String(bodyJson.name || '').trim();
 				if (!flowExists(name)) return sendJson(res, 400, { error: 'no such flow' });
 				const flow = await getFlow(name);
-				const engine = normalizeEngine(flow?.engine || 'agent-browser', 'flow.engine');
+				const engine = flowEngine(flow);
 				const job = enqueue({
 					kind: 'verify',
 					label: `verify ${name} (${engine})`,
@@ -376,7 +377,7 @@ const server = http.createServer(async (req, res) => {
 				// 결재/RPA routes (sync, NL command router, system registry) — see webui/routes-rpa.js.
 				if (await commandPlanPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash, nodeLeaf })) return;
 				if (approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf })) return;
-				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash, authSpawn: systemAuthSpawn })) return;
+				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash, authSpawn: systemAuthSpawn, nodeLeaf })) return;
 
 			if (p === '/api/auth') {
 				const app = String(bodyJson.app || '').trim();
@@ -396,16 +397,22 @@ const server = http.createServer(async (req, res) => {
 					return sendJson(res, 400, { error: 'invalid successUrl' });
 				}
 				let engine;
-				try { engine = normalizeEngine(bodyJson.engine || 'agent-browser', 'auth.engine'); }
+				try { engine = normalizeEngine(bodyJson.engine, 'auth.engine'); }
 				catch (e) { return sendJson(res, 400, { error: e.message }); }
 				// setup/auth.sh opens headed Chrome for human OTP, then saves fixtures/auth/<app>.state.json.
 				// Browser job -> through the single-slot serial queue. (successUrl is an inert arg via Git-Bash.)
+				// Human-confirm-save: a tmpdir stop-file the UI touches via POST /api/jobs/:id/stop (jobs.stop)
+				// to mean "I finished logging in — save now". This rescues portals that return to the EXACT login
+				// URL after login, where URL auto-detect can never fire. Both auth drivers watch it;
+				// runJob's finally removes the file.
+				const authStopFile = path.join(os.tmpdir(), `aqa-auth-stop-${app}-${Date.now()}`);
 				const job = enqueue({
 					kind: 'auth',
 					label: `auth ${app} (${engine})`,
+					stopFile: authStopFile || undefined,
 					spawnFn: () => engine === 'playwright'
-						? nodeLeaf('approve/auth-pw.mjs', [loginUrl, successNeedle(successUrl), `fixtures/auth/playwright/${app}.state.json`])
-						: browserBash('setup/auth.sh', ['--engine', 'agent-browser', app, loginUrl, successUrl]),
+						? nodeLeaf('approve/auth-pw.mjs', [loginUrl, successNeedle(successUrl), `fixtures/auth/playwright/${app}.state.json`], { AQA_AUTH_STOPFILE: authStopFile })
+						: browserBash('setup/auth.sh', ['--engine', 'agent-browser', app, loginUrl, successUrl], { AQA_AUTH_STOPFILE: authStopFile }),
 				});
 				return sendJson(res, 202, { job, app });
 			}
@@ -431,6 +438,23 @@ const server = http.createServer(async (req, res) => {
 					return notFound(res, 'no such flow');
 				}
 				const r = await resolveStep(fname, parseInt(bodyJson.step, 10), parseInt(bodyJson.candidate, 10));
+				return r.ok ? sendJson(res, 200, { ok: true, flow: await getFlow(fname) }) : sendJson(res, 400, r);
+			}
+
+			const mResolveClicked = /^\/api\/flows\/([^/]+)\/resolve-(?:clicked|first)-record$/.exec(p);
+			if (mResolveClicked) {
+				let fname;
+				try {
+					fname = decodeURIComponent(mResolveClicked[1]);
+				} catch {
+					return notFound(res, 'no such flow');
+				}
+				const r = await resolveClickedRecordStep(
+					fname,
+					parseInt(bodyJson.step, 10),
+					String(bodyJson.recipe || '').trim(),
+					String(bodyJson.field || '').trim(),
+				);
 				return r.ok ? sendJson(res, 200, { ok: true, flow: await getFlow(fname) }) : sendJson(res, 400, r);
 			}
 

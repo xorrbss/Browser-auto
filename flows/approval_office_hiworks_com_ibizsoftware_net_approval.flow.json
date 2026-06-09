@@ -1,0 +1,36 @@
+{
+  "name": "approval_office_hiworks_com_ibizsoftware_net_approval",
+  "engine": "agent-browser",
+  "app": "r45",
+  "startUrl": "https://approval.office.hiworks.com/ibizsoftware.net/approval/document/lists/W",
+  "steps": [
+    {
+      "kind": "open_record",
+      "source": "row_index",
+      "rowIndex": 0,
+      "recipe": "hiworks"
+    },
+    {
+      "kind": "wait",
+      "until": "url",
+      "value": "**/ibizsoftware.net/approval/document/view/**/condition/**"
+    },
+    {
+      "kind": "find",
+      "by": "title",
+      "value": "목록보기",
+      "action": "click"
+    },
+    {
+      "kind": "wait",
+      "until": "url",
+      "value": "**/ibizsoftware.net/approval/document/lists/W"
+    }
+  ],
+  "asserts": [
+    {
+      "kind": "url",
+      "value": "**/ibizsoftware.net/approval/document/lists/W"
+    }
+  ]
+}

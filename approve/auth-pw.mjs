@@ -4,19 +4,20 @@
 // fixtures/auth/<app>.state.json is CDP-shaped (no sameSite; red-team AUTH-DUP-2STACK-1), so it is NOT a
 // clean Playwright storageState — the approve leaf captures its OWN. Operator logs in once in the window.
 //
-//   node approve/auth-pw.mjs <loginUrl> <successNeedle> <outFile>
+//   node approve/auth-pw.mjs <loginUrl> <successNeedle> <outFile> [stopFile]
 // e.g. node approve/auth-pw.mjs "https://login.office.hiworks.com/ibizsoftware.net" "dashboard.office.hiworks.com" approve/hiworks.pw-state.json
 'use strict';
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const [loginUrl, successNeedle, outFile] = process.argv.slice(2);
+const [loginUrl, successNeedle, outFile, stopFileArg] = process.argv.slice(2);
 if (!loginUrl || !successNeedle || !outFile) {
-  console.error('usage: node approve/auth-pw.mjs <loginUrl> <successNeedle> <outFile>');
+  console.error('usage: node approve/auth-pw.mjs <loginUrl> <successNeedle> <outFile> [stopFile]');
   process.exit(2);
 }
 const TIMEOUT_MS = Number(process.env.HUMAN_TIMEOUT_MS) || 900000;
+const STOPFILE = stopFileArg || process.env.AQA_AUTH_STOPFILE || '';
 
 // Use the system-installed Google Chrome (channel:'chrome') so no Playwright browser download is needed.
 const browser = await chromium.launch({ headless: false, channel: 'chrome' });
@@ -27,12 +28,18 @@ try {
   console.error(`[auth-pw] Log in (incl. OTP) in the window. Waiting until the URL contains "${successNeedle}" (up to ${Math.round(TIMEOUT_MS/1000)}s)…`);
   const start = Number(process.env.AQA_NOW_MS) || 0; // monotonic-ish via loop counter; wall clock not needed
   let waited = 0;
+  let matched = false;
   while (waited < TIMEOUT_MS) {
-    if (page.url().includes(successNeedle)) break;
+    if (page.url().includes(successNeedle)) { matched = true; break; }
+    if (STOPFILE && fs.existsSync(STOPFILE) && page.url()) {
+      console.error('[auth-pw] confirm-save requested — saving the current session.');
+      matched = true;
+      break;
+    }
     await page.waitForTimeout(1000);
     waited += 1000;
   }
-  if (!page.url().includes(successNeedle)) {
+  if (!matched) {
     console.error('[auth-pw] timed out before reaching the success URL — not saved.');
     process.exit(1);
   }

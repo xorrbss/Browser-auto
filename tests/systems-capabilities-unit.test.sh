@@ -41,8 +41,9 @@ const { systemState, systemActions, allActionsView } = await import('./webui/sys
 const assert = (cond, msg) => { if (!cond) { console.error('  systems-capabilities-unit: ' + msg); process.exit(1); } };
 
 const st = systemState('capunit');
-assert(st.system.engine === 'agent-browser' && st.auth.engine === 'agent-browser', 'system engine defaults to agent-browser');
+assert(st.system.engine === 'playwright' && st.auth.engine === 'playwright', 'system engine defaults to playwright');
 assert(st.auth.state === 'ready' && st.auth.agentBrowser === 'ready' && st.auth.playwright === 'ready' && st.sync.enabled === true, 'engine-scoped auth and sync enabled from fixture state + recipe');
+assert(st.sync.engine === 'playwright' && st.enrich.engine === 'playwright' && st.sync.limited === false && st.enrich.limited === false, 'read drivers use the selected playwright engine');
 assert(st.enrich.enabled === true && st.recordStats.total === 2 && st.recordStats.missingSummary === 1, 'enrich and record stats computed');
 assert(st.approve.loginState === 'ready' && st.approve.listUrl === true, 'approve readiness includes Playwright state and list URL');
 

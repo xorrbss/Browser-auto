@@ -1,0 +1,89 @@
+{
+  "name": "guest_samsungdisplay_com_argos_main_do",
+  "engine": "agent-browser",
+  "app": "guest_samsungdisplay_com",
+  "startUrl": "https://guest.samsungdisplay.com/argos/main.do",
+  "steps": [
+    {
+      "kind": "find",
+      "action": "click",
+      "by": "role",
+      "value": "group",
+      "name": "3 / 8"
+    },
+    {
+      "kind": "wait",
+      "until": "url",
+      "value": "**/argos/main.do"
+    },
+    {
+      "kind": "find",
+      "action": "click",
+      "by": "role",
+      "value": "link",
+      "name": "내방/차량신청(일반)"
+    },
+    {
+      "kind": "wait",
+      "until": "url",
+      "value": "**/vi/rq/VIRQ001.do"
+    },
+    {
+      "kind": "find",
+      "action": "click",
+      "frame": {
+        "by": "urlGlob",
+        "value": "/vi/rq/VIRQ001.do"
+      },
+      "by": "role",
+      "value": "textbox"
+    },
+    {
+      "kind": "find",
+      "action": "fill",
+      "frame": {
+        "by": "urlGlob",
+        "value": "/vi/rq/VIRQ001.do"
+      },
+      "by": "role",
+      "value": "textbox"
+    },
+    {
+      "kind": "find",
+      "action": "click",
+      "frame": {
+        "by": "urlGlob",
+        "value": "/vi/rq/VIRQ001.do"
+      },
+      "by": "role",
+      "value": "textbox"
+    },
+    {
+      "kind": "find",
+      "action": "fill",
+      "frame": {
+        "by": "urlGlob",
+        "value": "/vi/rq/VIRQ001.do"
+      },
+      "by": "role",
+      "value": "textbox"
+    },
+    {
+      "kind": "find",
+      "action": "click",
+      "frame": {
+        "by": "urlGlob",
+        "value": "/vi/rq/VIRQ001.do"
+      },
+      "by": "role",
+      "value": "link",
+      "name": "다음"
+    }
+  ],
+  "asserts": [
+    {
+      "kind": "url",
+      "value": "**/vi/rq/VIRQ001.do"
+    }
+  ]
+}

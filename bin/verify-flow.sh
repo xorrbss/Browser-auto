@@ -24,6 +24,7 @@ export PROBE_ROOT="$DIR"
 source "$DIR/lib/env.sh"
 source "$DIR/lib/cleanup.sh"
 source "$DIR/lib/assert.sh"
+source "$DIR/lib/flow-steps.sh"
 
 flow="${1:-}"
 [ -s "$flow" ] || { echo "[verify] no such flow: $flow" >&2; exit 1; }
@@ -200,8 +201,27 @@ for i in $(seq 0 $((nsteps - 1)) 2>/dev/null); do
 				fi
 			else AB wait --"$until" "$val" >/dev/null 2>&1 || true; fi
 			;;
+		open_record)
+			source="$(printf '%s' "$step" | jq -r '.source // "first"')"
+			recipe="$(printf '%s' "$step" | jq -r '.recipe // empty')"
+			field="$(printf '%s' "$step" | jq -r '.field // empty')"
+			row_index="$(printf '%s' "$step" | jq -r 'if .rowIndex == null then "" else (.rowIndex|tostring) end')"
+			if aqa_open_record "$source" "$recipe" "$field" "$row_index"; then
+				verified=$((verified + 1))
+			else
+				echo "[verify] step #$i: open_record failed." >&2
+				stopped=1; break
+			fi
+			;;
 		press)
 			AB press "$(printf '%s' "$step" | jq -r '.value')" >/dev/null 2>&1 || true
+			;;
+		scroll)
+			AB scroll "$(printf '%s' "$step" | jq -r '.dir // "down"')" "$(printf '%s' "$step" | jq -r '.px // 0')" >/dev/null 2>&1 || true
+			;;
+		*)
+			echo "[verify] step #$i: unknown kind '$kind'." >&2
+			stopped=1; break
 			;;
 	esac
 done

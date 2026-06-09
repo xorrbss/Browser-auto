@@ -250,9 +250,9 @@ pre, code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; }
 }
 .flow-step {
 	display: grid;
-	grid-template-columns: 34px minmax(0, 1fr);
+	grid-template-columns: 34px minmax(0, 1fr) auto;
 	gap: 10px;
-	align-items: start;
+	align-items: center;
 	padding: 10px 0;
 	border-bottom: 1px solid var(--line);
 }
@@ -285,25 +285,42 @@ pre, code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; }
 	gap: 10px;
 }
 .review-block strong { font-size: 13px; }
+.review-required {
+	border: 1px solid #eed49c;
+	border-radius: 8px;
+	background: #fffaf0;
+	padding: 12px;
+}
+.review-help {
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.45;
+}
 .candidate-list {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 	gap: 8px;
 }
 .candidate-button {
-	min-height: 34px;
-	border: 1px solid var(--line-strong);
+	min-height: 42px;
+	border: 1px solid #d9a441;
 	border-radius: 6px;
-	background: var(--surface-2);
+	background: #fff;
 	color: var(--ink);
-	padding: 8px 10px;
+	cursor: pointer;
+	padding: 10px 12px;
 	text-align: left;
-	font-weight: 700;
+	font-weight: 800;
 	overflow-wrap: anywhere;
 }
-.candidate-button:hover {
+.candidate-button:hover, .candidate-button:focus-visible {
 	border-color: var(--teal);
+	box-shadow: 0 0 0 3px rgba(16, 127, 139, .14);
 	color: #0b5961;
+}
+.candidate-button.dynamic {
+	border-color: var(--teal);
+	background: #eefafa;
 }
 .values-grid {
 	display: grid;

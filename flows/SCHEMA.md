@@ -53,6 +53,18 @@ there is no silent fallback to the other engine. New captures write the field.
   Uniqueness is verified **in-page** at capture time (mirroring how replay `find` matches);
   host-side `get count` is CSS-only and CANNOT count semantic locators, so it serves only
   as a redundant cross-check for the testid CSS-equivalent `[data-testid="v"]`.
+- `open_record` — recipe-driven dynamic row open. Preferred shape:
+  `{ "kind":"open_record", "source":"row_index", "rowIndex":1, "recipe":"hiworks", "field":"doc_id" }`
+  where `rowIndex` is 0-based and `field` is optional/defaults to the recipe's `key`.
+  Replay snapshots the CURRENT list page, parses it with `recipes/<recipe>.json` via
+  `bin/extract-list.js`, reads the requested data row, and clicks that row's key/field
+  value using semantic locators. Back-compat: `{ "source":"first" }` remains valid and
+  means `rowIndex:0`. Web UI resolution must infer `rowIndex` from the capture snapshot
+  and the clicked locator/candidate value; if the snapshot is missing or the value does
+  not map to exactly one recipe row, it fails loud and must not silently fall back to first.
+  This is NOT a raw DOM nth click: the recipe must find exactly one list container, headers
+  must map cleanly, row keys must be unique, and empty/out-of-range rows fail loud.
+  Downstream `wait`/assert/detail gates must still bind the journey after the click.
 - `wait`  — `until` ∈ {url,text,load}, `value`. URL globs are normalized to `**/<stable-path>`
   (query/fragment stripped, volatile path segments → `**`); a wait is emitted only when the
   URL actually changed at that boundary. **Replay note:** a `until:url` step does NOT compile to

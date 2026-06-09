@@ -33,6 +33,11 @@ chmod +x "$TMP/bin/agent-browser"
 	wait_visible '#ok' 1
 	wait_gone '#gone' 1
 	wait_stable '#stable' 2
+	_url_match 'https://approval.office.hiworks.com/ibizsoftware.net/approval/document/lists/W/?&list_mode=W' '**/ibizsoftware.net/approval/document/lists/W' \
+		|| { echo "  ✗ waiters-unit: trailing slash + query URL did not match route glob" >&2; exit 1; }
+	if _url_match 'https://approval.office.hiworks.com/ibizsoftware.net/approval/document/lists/W/child' '**/ibizsoftware.net/approval/document/lists/W'; then
+		echo "  ✗ waiters-unit: route glob matched a deeper child path" >&2; exit 1
+	fi
 )
 
 echo "  waiters-unit: all checks passed"

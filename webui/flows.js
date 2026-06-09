@@ -8,12 +8,13 @@
 // gitignored flows/<name>.values.json sidecar (the flow stores {{input_N}} tokens).
 
 import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { flowEngine } = require('../lib/engine.js');
+const aria = require('../lib/aria.js');
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 const FLOWS_DIR = path.join(PROBE_ROOT, 'flows');
@@ -26,8 +27,19 @@ export const validName = (name) => typeof name === 'string' && NAME_RE.test(name
 const flowPath = (name) => path.join(FLOWS_DIR, `${name}.flow.json`);
 const valuesPath = (name) => path.join(FLOWS_DIR, `${name}.values.json`);
 const testPath = (name) => path.join(TESTS_DIR, `${name}.test.sh`);
+const snapshotPath = (name) => path.join(FLOWS_DIR, `${name}.snapshot.txt`);
+const recipePath = (name) => path.join(PROBE_ROOT, 'recipes', `${name}.json`);
 
 export const flowExists = (name) => validName(name) && existsSync(flowPath(name));
+
+function compiledFresh(name) {
+	try {
+		if (!existsSync(testPath(name))) return false;
+		return statSync(testPath(name)).mtimeMs >= statSync(flowPath(name)).mtimeMs;
+	} catch {
+		return false;
+	}
+}
 
 // Distinct {{input_N}} tokens referenced by fill/type/select steps (text/val fields).
 function collectTokens(flow) {
@@ -50,6 +62,130 @@ async function readJsonFile(p) {
 	} catch {
 		return null;
 	}
+}
+
+async function readTextFile(p) {
+	try {
+		return await readFile(p, 'utf8');
+	} catch {
+		return null;
+	}
+}
+
+function applyStrip(value, suffix) {
+	const s = String(value == null ? '' : value);
+	if (!suffix) return s.trim() || null;
+	return (s.endsWith(suffix) ? s.slice(0, s.length - suffix.length).trim() : s.trim()) || null;
+}
+
+function extractRecipeRows(snapshotText, recipe) {
+	if (!recipe?.collection?.name) throw new Error('recipe.collection.name is required');
+	if (!recipe.columns || typeof recipe.columns !== 'object' || !Object.keys(recipe.columns).length) {
+		throw new Error('recipe.columns is required');
+	}
+	if (!recipe.key || !Object.prototype.hasOwnProperty.call(recipe.columns, recipe.key)) {
+		throw new Error('recipe.key must name one of recipe.columns');
+	}
+
+	const role = recipe.collection.role || 'table';
+	const rowRole = recipe.collection.row || 'row';
+	const lines = aria.parse({ snapshot: snapshotText });
+	const hits = aria.findByRoleName(lines, role, recipe.collection.name);
+	if (hits.length === 0) throw new Error(`${role} "${recipe.collection.name}" not found in snapshot`);
+	if (hits.length > 1) throw new Error(`${hits.length} ${role}s named "${recipe.collection.name}" in snapshot`);
+
+	const rows = aria.rowsOf(lines, hits[0], rowRole);
+	const header = rows.find((r) => r.children.some((c) => c.role === 'columnheader'));
+	if (!header) throw new Error('no header row found in snapshot');
+	const headers = header.children.filter((c) => c.role === 'columnheader').map((c) => aria.norm(c.name));
+	const headerCount = headers.length;
+	const idx = {};
+	for (const [field, label] of Object.entries(recipe.columns)) {
+		const want = aria.norm(label);
+		const found = [];
+		headers.forEach((h, i) => { if (h === want) found.push(i); });
+		if (found.length === 0) throw new Error(`column "${label}" (${field}) not found in snapshot`);
+		if (found.length > 1) throw new Error(`column "${label}" (${field}) is ambiguous in snapshot`);
+		idx[field] = found[0];
+	}
+
+	const strip = recipe.strip || {};
+	const fields = Object.keys(recipe.columns);
+	const items = [];
+	for (const r of rows) {
+		const cells = r.children.filter((c) => c.role === 'cell');
+		if (!cells.length) continue;
+		if (cells.length !== headerCount) {
+			throw new Error(`row has ${cells.length} cells but header has ${headerCount}`);
+		}
+		const data = {};
+		for (const field of fields) data[field] = applyStrip(aria.clean(cells[idx[field]].name), strip[field]);
+		const key = data[recipe.key];
+		if (!key) continue;
+		items.push({ key, data });
+	}
+
+	const seen = new Set();
+	for (const item of items) {
+		if (seen.has(item.key)) throw new Error(`recipe key "${recipe.key}" is not unique in snapshot`);
+		seen.add(item.key);
+	}
+	return items;
+}
+
+function compactText(value) {
+	return aria.norm(String(value == null ? '' : value).trim());
+}
+
+function locatorValuesForStep(step) {
+	const values = [];
+	const add = (v) => {
+		if (typeof v !== 'string') return;
+		const s = v.trim();
+		if (s) values.push(s);
+	};
+	for (const field of ['value', 'name', 'text', 'val']) add(step?.[field]);
+	for (const c of Array.isArray(step?.candidates) ? step.candidates : []) {
+		for (const field of ['value', 'name', 'text', 'val']) add(c?.[field]);
+	}
+	return [...new Set(values)];
+}
+
+function rowComparableValues(row) {
+	return [row.key, ...Object.values(row.data || {})]
+		.filter((v) => v != null && String(v).trim() !== '')
+		.map((v) => String(v).trim());
+}
+
+function uniqueRowMatch(rows, targets, predicate) {
+	const matched = [];
+	for (const [rowIndex, row] of rows.entries()) {
+		const rowValues = rowComparableValues(row);
+		if (targets.some((target) => rowValues.some((value) => predicate(target, value)))) {
+			matched.push(rowIndex);
+		}
+	}
+	return [...new Set(matched)];
+}
+
+function inferClickedRowIndex(rows, step) {
+	const targets = locatorValuesForStep(step);
+	if (!targets.length) throw new Error('step has no locator/candidate value to match against snapshot rows');
+	if (!rows.length) throw new Error('snapshot recipe found no data rows');
+
+	const exact = uniqueRowMatch(rows, targets, (target, value) => compactText(target) === compactText(value));
+	if (exact.length === 1) return exact[0];
+	if (exact.length > 1) throw new Error(`locator values match multiple rows exactly: ${exact.join(', ')}`);
+
+	const contains = uniqueRowMatch(rows, targets, (target, value) => {
+		const a = compactText(target);
+		const b = compactText(value);
+		if (a.length < 6 || b.length < 6) return false;
+		return a.includes(b) || b.includes(a);
+	});
+	if (contains.length === 1) return contains[0];
+	if (contains.length > 1) throw new Error(`locator values match multiple rows by contains: ${contains.join(', ')}`);
+	throw new Error(`locator values did not match any recipe row: ${targets.join(' / ')}`);
 }
 
 export async function listFlows() {
@@ -75,7 +211,7 @@ export async function listFlows() {
 			needsReview: steps.filter((s) => s.needs_review === true).length,
 			inputTokens: collectTokens(flow),
 			hasValues: existsSync(valuesPath(name)),
-			compiled: existsSync(testPath(name)),
+			compiled: compiledFresh(name),
 		});
 	}
 	out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -103,7 +239,7 @@ export async function getFlow(name) {
 		inputTokens: tokens,
 		values,
 		missingValues: tokens.filter((t) => !(t in values) || values[t] === ''),
-		compiled: existsSync(testPath(name)),
+		compiled: compiledFresh(name),
 		// compile is safe only when no needs_review remains AND every token has a value.
 		compilable: steps.every((s) => s.needs_review !== true) && tokens.every((t) => t in values && values[t] !== ''),
 	};
@@ -142,6 +278,54 @@ async function resolveStepInner(name, stepIndex, candidateIndex) {
 	delete step.candidates;
 	await writeFile(flowPath(name), JSON.stringify(flow, null, 2) + '\n', 'utf8');
 	return { ok: true };
+}
+
+// resolveClickedRecordStep: replace a recorded literal document click with a dynamic
+// recipe-driven "open the same row position from the current list" step. The row
+// position is inferred from the capture snapshot and the clicked locator/candidate value.
+export function resolveClickedRecordStep(name, stepIndex, recipe, field = '') {
+	return withWriteLock(() => resolveClickedRecordStepInner(name, stepIndex, recipe, field));
+}
+
+// Backward-compatible export for older callers; it no longer falls back to first.
+export function resolveFirstRecordStep(name, stepIndex, recipe, field = '') {
+	return resolveClickedRecordStep(name, stepIndex, recipe, field);
+}
+
+async function resolveClickedRecordStepInner(name, stepIndex, recipe, field = '') {
+	if (!validName(name)) return { ok: false, error: 'invalid flow name' };
+	if (!validName(recipe)) return { ok: false, error: 'invalid recipe name' };
+	if (field && !validName(field)) return { ok: false, error: 'invalid field name' };
+	if (!existsSync(recipePath(recipe))) return { ok: false, error: `missing recipe recipes/${recipe}.json` };
+	if (!existsSync(snapshotPath(name))) return { ok: false, error: `missing snapshot flows/${name}.snapshot.txt; cannot infer clicked row position` };
+	const flow = await readJsonFile(flowPath(name));
+	if (!flow) return { ok: false, error: 'no such flow' };
+	if (flowEngine(flow) !== 'agent-browser') return { ok: false, error: 'clicked-row open is only available for agent-browser flows' };
+	const steps = Array.isArray(flow.steps) ? flow.steps : [];
+	const step = steps[stepIndex];
+	if (!step) return { ok: false, error: 'invalid step index' };
+	if (step.kind !== 'find' || (step.action || 'click') !== 'click') {
+		return { ok: false, error: 'only click steps can become open_record' };
+	}
+	const snapshotText = await readTextFile(snapshotPath(name));
+	if (!snapshotText) return { ok: false, error: `empty snapshot flows/${name}.snapshot.txt; cannot infer clicked row position` };
+	const recipeJson = await readJsonFile(recipePath(recipe));
+	if (!recipeJson) return { ok: false, error: `invalid recipe recipes/${recipe}.json` };
+	let rowIndex;
+	try {
+		rowIndex = inferClickedRowIndex(extractRecipeRows(snapshotText, recipeJson), step);
+	} catch (e) {
+		return { ok: false, error: `cannot infer clicked row position: ${e.message}` };
+	}
+	steps[stepIndex] = {
+		kind: 'open_record',
+		source: 'row_index',
+		rowIndex,
+		recipe,
+		...(field ? { field } : {}),
+	};
+	await writeFile(flowPath(name), JSON.stringify(flow, null, 2) + '\n', 'utf8');
+	return { ok: true, rowIndex };
 }
 
 // saveValues: merge {input_N: string} into the gitignored values sidecar.
