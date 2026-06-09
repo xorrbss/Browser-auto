@@ -17,6 +17,7 @@ const MAX_JOBS = 50; // most-recent job records kept in memory
 // we tree-kill it so its 'close' fires and the chain advances. Generous default (the full
 // suite is ~5 min); override with WEBUI_JOB_TIMEOUT_MS.
 const JOB_TIMEOUT_MS = Number(process.env.WEBUI_JOB_TIMEOUT_MS) || 20 * 60 * 1000;
+const JOB_KILL_GRACE_MS = Number(process.env.WEBUI_JOB_KILL_GRACE_MS) || 15000;
 
 let seq = 0;
 let tail = Promise.resolve(); // the serial chain
@@ -149,26 +150,39 @@ async function runJob(job) {
 	job.status = 'running';
 	job.startedAt = Date.now();
 	runningId = job.id;
+	pushLine(job, `[webui] starting ${job.id}: ${job.label}`);
 	let timer = null;
+	let killGraceTimer = null;
 	try {
 		const child = job.spawnFn();
 		job.child = child;
 		job.pid = child.pid ?? null;
 		if (child.stdout) wireStream(job, child.stdout);
 		if (child.stderr) wireStream(job, child.stderr);
-		// Watchdog: tree-kill a child that overruns so its 'close' fires and the slot frees.
-		timer = setTimeout(() => {
-			job.timedOut = true;
-			pushLine(job, `[webui] job exceeded ${Math.round(JOB_TIMEOUT_MS / 1000)}s timeout — killing process tree`);
-			killTree(job.pid);
-		}, JOB_TIMEOUT_MS);
 		const code = await new Promise((resolve) => {
+			let settled = false;
+			const resolveOnce = (c) => {
+				if (settled) return;
+				settled = true;
+				resolve(c == null ? -1 : c);
+			};
+			// Watchdog: tree-kill a child that overruns. If Windows never reports the child's
+			// close after taskkill, force-resolve so the single browser slot cannot stay wedged.
+			timer = setTimeout(() => {
+				job.timedOut = true;
+				pushLine(job, `[webui] job exceeded ${Math.round(JOB_TIMEOUT_MS / 1000)}s timeout — killing process tree`);
+				killTree(job.pid);
+				killGraceTimer = setTimeout(() => {
+					pushLine(job, `[webui] process did not report close after ${Math.round(JOB_KILL_GRACE_MS / 1000)}s — freeing queue slot`);
+					resolveOnce(-1);
+				}, JOB_KILL_GRACE_MS);
+			}, JOB_TIMEOUT_MS);
 			child.on('error', (e) => {
 				pushLine(job, `[webui] spawn error: ${e.message}`);
-				resolve(-1);
+				resolveOnce(-1);
 			});
 			// Resolve ONLY on 'close' (stdio fully drained + process exited) -> serialization.
-			child.on('close', (c) => resolve(c == null ? -1 : c));
+			child.on('close', (c) => resolveOnce(c));
 		});
 		job.exitCode = code;
 		job.status = job.cancelled ? 'cancelled' : job.timedOut ? 'failed' : code === 0 ? 'done' : 'failed';
@@ -179,6 +193,7 @@ async function runJob(job) {
 		pushLine(job, `[webui] job error: ${(e && e.message) || e}`);
 	} finally {
 		if (timer) clearTimeout(timer);
+		if (killGraceTimer) clearTimeout(killGraceTimer);
 		if (job.stopFile) { try { fs.rmSync(job.stopFile, { force: true }); } catch {} } // clear the stop signal
 		const wasKilled = job.cancelled || job.timedOut; // SIGKILL path skipped the driver's cleanup trap
 		job.child = null;
@@ -222,6 +237,7 @@ export function enqueue({ kind, label, spawnFn, stopFile, meta, onFinish }) {
 	};
 	jobs.set(id, job);
 	pending.push(id);
+	pushLine(job, `[webui] queued ${id}: ${job.label}`);
 	// .catch keeps the chain alive on a thrown job; per-job status already records the failure.
 	tail = tail.then(() => runJob(job)).catch(() => {});
 	return publicJob(job);

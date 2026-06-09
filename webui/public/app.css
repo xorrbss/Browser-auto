@@ -204,7 +204,8 @@ pre, code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; }
 	align-items: start;
 }
 .automation-workspace > .panel:nth-child(3),
-.automation-workspace > .panel:nth-child(4) {
+.automation-workspace > .panel:nth-child(4),
+.automation-workspace > .panel:nth-child(5) {
 	grid-column: 1 / -1;
 }
 .scenario-grid {
@@ -213,8 +214,31 @@ pre, code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; }
 	gap: 10px;
 	align-items: end;
 }
+.scenario-grid > .input-wrap:only-child {
+	grid-column: 1 / -1;
+}
 .scenario-grid .input-wrap:nth-child(2),
 .scenario-grid .input-wrap:nth-child(4) { grid-column: span 1; }
+.subtle-note {
+	min-height: 20px;
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.45;
+}
+.advanced-box {
+	border-top: 1px solid var(--line);
+	padding-top: 10px;
+}
+.advanced-box summary {
+	cursor: pointer;
+	color: var(--muted);
+	font-size: 13px;
+	font-weight: 800;
+}
+.advanced-box[open] summary {
+	margin-bottom: 10px;
+	color: var(--ink);
+}
 .compact-log { min-height: 110px; max-height: 230px; }
 .flow-body {
 	margin-top: 12px;
@@ -628,7 +652,8 @@ tbody tr:hover td { background: #fbfdfe; }
 @media (max-width: 1200px) {
 	.layout.two-col, .systems-layout, .automation-workspace { grid-template-columns: 1fr; }
 	.automation-workspace > .panel:nth-child(3),
-	.automation-workspace > .panel:nth-child(4) { grid-column: auto; }
+	.automation-workspace > .panel:nth-child(4),
+	.automation-workspace > .panel:nth-child(5) { grid-column: auto; }
 	.scenario-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.scenario-grid .input-wrap:nth-child(2) { grid-column: span 1; }
 	.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

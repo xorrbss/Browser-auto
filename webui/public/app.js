@@ -31,6 +31,7 @@ const state = {
 	runs: [],
 	flows: [],
 	auth: [],
+	authStates: [],
 	actionStates: new Map(),
 	actions: [],
 	selectedTargets: new Set(),
@@ -207,7 +208,7 @@ function addTimeline(title, detail, kind = 'info') {
 }
 
 async function loadCoreData() {
-	await Promise.allSettled([loadApprovals(), loadSystems(), loadQueue(), loadAudit(), loadFlowsList()]);
+	await Promise.allSettled([loadApprovals(), loadSystems(), loadQueue(), loadAudit(), loadFlowsList(), loadAuthStates()]);
 	renderAll();
 }
 
@@ -287,9 +288,20 @@ async function loadDiagnostics() {
 	await Promise.allSettled([
 		getJson('/api/runs').then((d) => { state.runs = d.runs || []; }),
 		getJson('/api/flows').then((d) => { state.flows = d.flows || []; }),
-		getJson('/api/auth').then((d) => { state.auth = d.apps || []; }),
+		loadAuthStates(),
 	]);
 	renderDiagnostics();
+}
+
+async function loadAuthStates() {
+	try {
+		const { apps, states } = await getJson('/api/auth');
+		state.auth = Array.isArray(apps) ? apps : [];
+		state.authStates = Array.isArray(states) ? states : [];
+	} catch {
+		state.auth = [];
+		state.authStates = [];
+	}
 }
 
 async function loadFlowsList() {
@@ -327,11 +339,29 @@ function renderAll() {
 }
 
 function automationForm() {
+	const recordUrl = $('#auto-record-url')?.value.trim() || '';
+	const loginUrl = $('#auto-login-url')?.value.trim() || '';
+	const manualName = $('#auto-name')?.value.trim() || '';
+	const manualApp = $('#auto-app')?.value.trim() || '';
+	const manualSuccessUrl = $('#auto-success-url')?.value.trim() || '';
+	const autoApp = appSuggestion({ recordUrl, loginUrl });
+	const matchedApp = matchedAuthApp({ recordUrl, loginUrl });
+	const app = manualApp || matchedApp || autoApp;
+	const autoName = flowNameSuggestion({ name: '', recordUrl, loginUrl, app });
+	const autoSuccessUrl = successNeedleSuggestion({ recordUrl });
 	return {
-		name: $('#auto-name')?.value.trim() || '',
-		startUrl: $('#auto-url')?.value.trim() || '',
-		app: $('#auto-app')?.value.trim() || '',
-		successUrl: $('#auto-success-url')?.value.trim() || '',
+		name: manualName || autoName,
+		recordUrl,
+		loginUrl,
+		app,
+		successUrl: manualSuccessUrl || autoSuccessUrl,
+		manualName,
+		manualApp,
+		manualSuccessUrl,
+		autoName,
+		autoApp,
+		matchedApp,
+		autoSuccessUrl,
 		engine: $('#auto-engine')?.value || DEFAULT_ENGINE,
 		seconds: Math.min(Math.max(parseInt($('#auto-seconds')?.value, 10) || 180, 5), 1800),
 		goal: $('#auto-goal')?.value.trim() || '',
@@ -352,7 +382,7 @@ function flowNameSuggestion(form) {
 	const fromName = slugPart(form.name);
 	if (fromName) return fromName;
 	try {
-		const u = new URL(form.startUrl);
+		const u = new URL(form.recordUrl || form.loginUrl);
 		const host = slugPart(u.hostname.replace(/^www\./, ''));
 		const path = slugPart(u.pathname.split('/').filter(Boolean).slice(0, 2).join('_'));
 		const candidate = [host, path].filter(Boolean).join('_').slice(0, 64);
@@ -364,6 +394,71 @@ function flowNameSuggestion(form) {
 	if (fromApp) return fromApp;
 	const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12);
 	return `flow_${stamp}`;
+}
+
+function appSuggestion(form) {
+	try {
+		const u = new URL(form.recordUrl || form.loginUrl);
+		const firstPath = u.pathname.split('/').filter(Boolean)[0] || '';
+		const org = /\./.test(firstPath) ? firstPath : '';
+		const host = u.hostname
+			.replace(/^www\./, '')
+			.replace(/^(login|signin|auth|sso|oauth|approval)\./i, '');
+		return slugPart(org || host).slice(0, 48);
+	} catch {
+		return '';
+	}
+}
+
+function successNeedleSuggestion(form) {
+	try {
+		const u = new URL(form.recordUrl);
+		const firstPath = u.pathname.split('/').filter(Boolean)[0] || '';
+		const pathPart = firstPath ? `/${firstPath}` : '';
+		return `${u.hostname}${pathPart}`;
+	} catch {
+		return '';
+	}
+}
+
+function urlPartsForAuth(urls) {
+	const hosts = [];
+	const hints = [];
+	for (const raw of urls) {
+		try {
+			const u = new URL(raw);
+			hosts.push(u.hostname.toLowerCase());
+			const firstPath = u.pathname.split('/').filter(Boolean)[0] || '';
+			if (/^[A-Za-z0-9._-]{2,128}$/.test(firstPath)) hints.push(firstPath);
+		} catch {
+			/* ignore incomplete URLs while typing */
+		}
+	}
+	return { hosts, hints };
+}
+
+function hostMatchesDomain(host, domain) {
+	const d = String(domain || '').replace(/^\./, '').toLowerCase();
+	return !!(host && d && (host === d || host.endsWith(`.${d}`)));
+}
+
+function matchedAuthApp(form) {
+	const { hosts, hints } = urlPartsForAuth([form.recordUrl, form.loginUrl]);
+	if (!hosts.length && !hints.length) return '';
+	let best = null;
+	for (const auth of state.authStates || []) {
+		let score = 0;
+		const domains = Array.isArray(auth.domains) ? auth.domains : [];
+		const authHints = Array.isArray(auth.hints) ? auth.hints : [];
+		if (hints.some((h) => authHints.includes(h))) score += 10;
+		if (hosts.some((h) => domains.some((d) => hostMatchesDomain(h, d)))) score += 3;
+		if (!score) continue;
+		const updatedAt = Number(auth.updatedAt) || 0;
+		if (!best || score > best.score || (score === best.score && updatedAt > best.updatedAt)) {
+			best = { app: auth.app, score, updatedAt };
+		}
+	}
+	return best?.app || '';
 }
 
 function ensureFlowName(form, { update = true } = {}) {
@@ -389,6 +484,36 @@ function safeAutomationSystem(form) {
 
 function looksLikeLoginUrl(url) {
 	return /login|signin|auth|sso|oauth/i.test(String(url || ''));
+}
+
+function automationLoggedIn(form = automationForm()) {
+	return !!(form.app && state.auth.includes(form.app));
+}
+
+function queueWork() {
+	const q = state.queue || {};
+	return {
+		running: q.running || null,
+		pending: Array.isArray(q.pending) ? q.pending : [],
+	};
+}
+
+function queueBusy() {
+	const q = queueWork();
+	return !!(q.running || q.pending.length);
+}
+
+function queueBusyText() {
+	const q = queueWork();
+	if (q.running) return `현재 ${q.running.id} ${q.running.label || q.running.kind} 실행 중`;
+	if (q.pending.length) return `대기 중인 작업 ${q.pending.length}개`;
+	return '';
+}
+
+function queueJob(id) {
+	if (!id) return null;
+	const q = queueWork();
+	return [q.running, ...q.pending].filter(Boolean).find((j) => j.id === id) || null;
 }
 
 function flowStepSummary(s) {
@@ -424,9 +549,15 @@ function renderAutomation() {
 	if (!box) return;
 	const flow = state.automation.flow;
 	const form = automationForm();
+	const recordJob = queueJob(state.automation.recordJob);
 	const activeRecord = !!state.automation.recordJob;
+	const recordQueued = recordJob?.status === 'queued';
+	const recordRunning = recordJob?.status === 'running';
 	const activeVerify = !!state.automation.verifyJob;
 	const activeRun = !!state.automation.runJob;
+	const loggedIn = automationLoggedIn(form);
+	const busy = queueBusy();
+	const busyText = queueBusyText();
 	const badges = $('#auto-status-badges');
 	if (badges) {
 		setChildren(
@@ -435,7 +566,8 @@ function renderAutomation() {
 			flow ? badge(`${flow.steps.length}단계`, 'neutral') : badge('URL 대기', 'warning'),
 			flow && flow.needsReviewSteps.length ? badge(`${flow.needsReviewSteps.length} 검토`, 'warning') : null,
 			flow && flow.compiled ? badge('컴파일됨', 'success') : null,
-			activeRecord ? badge('녹화 중', 'info') : null,
+			activeRecord ? badge(recordQueued ? '녹화 대기 중' : '녹화 중', 'info') : null,
+			!activeRecord && busy ? badge('작업 대기 중', 'info') : null,
 		);
 	}
 	const pill = $('#top-plan-pill');
@@ -444,9 +576,53 @@ function renderAutomation() {
 		pill.className = `pill ${flow && flow.compilable ? '' : 'muted'}`;
 	}
 	const stopBtn = $('#auto-stop-record');
-	if (stopBtn) stopBtn.disabled = !activeRecord;
+	if (stopBtn) {
+		stopBtn.disabled = !recordRunning;
+		stopBtn.title = recordQueued ? '앞선 작업이 끝나고 녹화가 시작되면 종료할 수 있습니다.' : '';
+	}
+	const startBtn = $('#auto-start-record');
+	if (startBtn) {
+		startBtn.disabled = activeRecord || activeVerify || activeRun || busy || !form.recordUrl;
+		startBtn.textContent = activeRecord ? (recordQueued ? '녹화 대기 중' : '녹화 중') : busy ? '작업 대기 중' : '녹화 시작';
+		startBtn.title = !form.recordUrl ? '로그인 이후 실제 업무 화면 URL을 입력하세요.' : !activeRecord && busy ? busyText : '';
+	}
+	const authBadge = $('#auto-auth-badge');
+	if (authBadge) {
+		setChildren(
+			authBadge,
+			loggedIn ? badge('로그인 등록됨', 'success') : badge('로그인 필요', 'warning'),
+			form.app ? badge('자동 연결', 'neutral') : null,
+			!loggedIn && busy ? badge('작업 대기 중', 'info') : null,
+		);
+	}
+	const authBtn = $('#auto-auth');
+	if (authBtn) {
+		authBtn.disabled = loggedIn || busy || !form.app || !form.loginUrl;
+		authBtn.textContent = loggedIn ? '로그인 등록됨' : busy ? '작업 대기 중' : '로그인 등록';
+		authBtn.title = !form.loginUrl ? '로그인 URL을 입력하세요.' : !loggedIn && busy ? busyText : '';
+	}
+	const authHint = $('#auto-auth-hint');
+	if (authHint) {
+		authHint.textContent = loggedIn
+			? '이 사이트의 로그인 상태가 저장되어 있습니다.'
+			: form.loginUrl && form.successUrl
+				? '녹화 URL을 기준으로 로그인 완료를 자동 확인합니다.'
+				: form.loginUrl
+					? '로그인 완료 확인을 위해 녹화 URL도 필요합니다.'
+					: '녹화 URL과 로그인 URL을 입력하면 로그인 완료 기준은 자동으로 잡습니다.';
+	}
+	const recordHint = $('#auto-record-hint');
+	if (recordHint) {
+		recordHint.textContent = form.recordUrl
+			? '시나리오 이름과 로그인 연결은 자동으로 처리됩니다.'
+			: '로그인 이후 실제 업무 화면 URL만 입력하면 나머지는 자동으로 준비됩니다.';
+	}
+	['#auto-login-url', '#auto-success-url'].forEach((sel) => {
+		const node = $(sel);
+		if (node) node.disabled = loggedIn;
+	});
 	const verifyBtn = $('#auto-verify');
-	if (verifyBtn) verifyBtn.disabled = !flow || activeRecord || activeVerify || activeRun;
+	if (verifyBtn) verifyBtn.disabled = !flow || activeRecord || activeVerify || activeRun || busy;
 	const compileBtn = $('#auto-compile');
 	if (compileBtn) {
 		compileBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun;
@@ -454,7 +630,7 @@ function renderAutomation() {
 	}
 	const runBtn = $('#auto-run');
 	if (runBtn) {
-		runBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun;
+		runBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun || busy;
 		runBtn.textContent = flow && !flow.compiled ? '컴파일 후 실행' : '실행';
 	}
 	renderAutomationPreview(form.goal);
@@ -468,8 +644,8 @@ function renderAutomationPreview(goal) {
 	const plan = state.automation.plan;
 	const form = automationForm();
 	if (!goal && !plan) {
-		const loginNotice = looksLikeLoginUrl(form.startUrl)
-			? warnBox('로그인 화면에서 녹화를 시작하면 로그인 후 창이 닫힐 수 있습니다. 먼저 [로그인 저장]을 완료한 뒤, 시작 URL을 로그인 이후 업무 화면으로 바꾸고 녹화하세요.')
+		const loginNotice = looksLikeLoginUrl(form.recordUrl)
+			? warnBox('녹화 URL은 로그인 이후 실제 업무 화면이어야 합니다. 로그인은 왼쪽의 로그인 등록에서 먼저 저장하세요.')
 			: null;
 		return setChildren(box, empty('목표가 아직 없습니다.'), loginNotice);
 	}
@@ -568,13 +744,20 @@ async function loadAutomationFlow(name) {
 
 async function startAutomationRecord(overwrite = false) {
 	const form = automationForm();
-	if (!form.startUrl) return alert('시작 URL을 입력하세요.');
+	if (!form.recordUrl) return alert('녹화 URL을 입력하세요.');
 	const log = $('#auto-record-log');
 	log.hidden = false;
 	log.textContent = '녹화 준비 중...\n';
-	if (looksLikeLoginUrl(form.startUrl)) {
+	await loadQueue();
+	if (queueBusy()) {
+		setAutomationJobBadge('작업 대기 중', 'warning');
+		log.textContent += `${queueBusyText()}\n이 작업이 끝난 뒤 [녹화 시작]을 다시 눌러주세요.\n`;
+		renderAutomation();
+		return;
+	}
+	if (looksLikeLoginUrl(form.recordUrl)) {
 		setAutomationJobBadge('로그인 먼저', 'warning');
-		log.textContent += '로그인 URL에서는 녹화를 시작하지 않습니다.\n먼저 [로그인 저장]을 완료한 뒤, 시작 URL을 로그인 이후 실제 업무 화면으로 바꾸고 [녹화 시작]을 누르세요.\n';
+		log.textContent += '로그인 URL에서는 녹화를 시작하지 않습니다.\n먼저 [로그인 등록]을 완료한 뒤, 녹화 URL에는 로그인 이후 실제 업무 화면을 넣어주세요.\n';
 		return;
 	}
 	const flowName = ensureFlowName(form);
@@ -583,7 +766,7 @@ async function startAutomationRecord(overwrite = false) {
 	try {
 		const data = await postJson('/api/record', {
 			name: flowName,
-			startUrl: form.startUrl,
+			startUrl: form.recordUrl,
 			app: form.app || undefined,
 			engine: form.engine,
 			seconds: form.seconds,
@@ -622,31 +805,48 @@ async function stopAutomationRecord() {
 
 async function runAutomationAuth() {
 	const form = automationForm();
-	if (!form.app) return alert('로그인 상태를 저장할 앱 이름을 입력하세요. 예: d33 또는 hiworks');
-	if (!form.startUrl) return alert('로그인 URL을 시작 URL에 입력하세요.');
-	if (!form.successUrl) return alert('로그인 완료 후 도달하는 URL 일부를 입력하세요. 예: office.hiworks.com');
+	if (!form.app) return alert('녹화 URL 또는 로그인 URL을 입력하면 앱 ID는 자동으로 생성됩니다.');
+	if (automationLoggedIn(form)) return alert(`${form.app} 로그인 상태가 이미 저장되어 있습니다.`);
+	if (!form.loginUrl) return alert('로그인 URL을 입력하세요.');
+	if (!form.successUrl) {
+		const log = $('#auto-record-log');
+		if (log) {
+			log.hidden = false;
+			log.textContent = '로그인 완료를 확인하려면 로그인 후 실제로 열 업무 화면 URL이 필요합니다.\n오른쪽 [녹화 URL]에 로그인 이후 화면 주소를 입력한 뒤 다시 [로그인 등록]을 누르세요.\n';
+		}
+		$('#auto-record-url')?.focus();
+		return;
+	}
 	const log = $('#auto-record-log');
 	log.hidden = false;
-	log.textContent = '로그인 창을 여는 중...\n로그인과 OTP를 완료하면 성공 URL 도달 후 창이 자동으로 닫히고 상태가 저장됩니다.\n';
-	setAutomationJobBadge('로그인 저장', 'info');
+	log.textContent = '로그인 등록 준비 중...\n';
+	await loadQueue();
+	if (queueBusy()) {
+		setAutomationJobBadge('작업 대기 중', 'warning');
+		log.textContent += `${queueBusyText()}\n이 작업이 끝난 뒤 [로그인 등록]을 다시 눌러주세요.\n`;
+		renderAutomation();
+		return;
+	}
+	log.textContent = '로그인 창을 여는 중...\n로그인과 OTP를 완료하면 완료 확인값을 보고 창이 자동으로 닫히고 상태가 저장됩니다.\n';
+	setAutomationJobBadge('로그인 등록', 'info');
 	try {
 		const data = await postJson('/api/auth', {
 			app: form.app,
-			loginUrl: form.startUrl,
+			loginUrl: form.loginUrl,
 			successUrl: form.successUrl,
 			engine: form.engine,
 		});
 		if (data.job) {
 			streamJob(data.job.id, log, async (done) => {
-				setAutomationJobBadge(done?.status === 'done' ? '로그인 저장 완료' : '로그인 확인', done?.status === 'done' ? 'success' : 'warning');
-				await Promise.allSettled([loadDiagnostics(), loadQueue()]);
-				log.append(document.createTextNode('\n다음 단계: 시작 URL을 로그인 이후 실제 업무 화면으로 바꾸고 [녹화 시작]을 누르세요.\n'));
+				setAutomationJobBadge(done?.status === 'done' ? '로그인 등록 완료' : '로그인 확인', done?.status === 'done' ? 'success' : 'warning');
+				await Promise.allSettled([loadAuthStates(), loadDiagnostics(), loadQueue()]);
+				log.append(document.createTextNode('\n다음 단계: 녹화 URL에 로그인 이후 실제 업무 화면을 넣고 [녹화 시작]을 누르세요.\n'));
 				renderAutomation();
 			});
 		}
 	} catch (e) {
 		setAutomationJobBadge('로그인 실패', 'danger');
-		log.append(document.createTextNode(`로그인 저장 거부됨: ${e.message}\n`));
+		log.append(document.createTextNode(`로그인 등록 거부됨: ${e.message}\n`));
 	}
 }
 
@@ -1536,7 +1736,7 @@ function bindEvents() {
 	$('#auto-verify').addEventListener('click', verifyAutomationFlow);
 	$('#auto-compile').addEventListener('click', compileAutomationFlow);
 	$('#auto-run').addEventListener('click', runAutomationFlow);
-	['#auto-url', '#auto-goal'].forEach((sel) => $(sel)?.addEventListener('input', renderAutomation));
+	['#auto-record-url', '#auto-login-url', '#auto-success-url', '#auto-app', '#auto-goal'].forEach((sel) => $(sel)?.addEventListener('input', renderAutomation));
 	$('#cc-sync').addEventListener('click', runApprovalsSync);
 	$('#cc-create-plan').addEventListener('click', () => makePlan($('#cc-command').value));
 	$('#cc-dry-run').addEventListener('click', runDryRun);

@@ -43,7 +43,7 @@ import { enqueue, jobStatus, jobResult, subscribe, queueState, cancel, stop, kil
 import { gitBash, browserBash, recordCmd, nodeLeaf } from './spawn.js';
 import { listFlows, getFlow, resolveStep, saveValues, validName, flowExists } from './flows.js';
 import { getSystemView } from './systems.js';
-import { listAuthStates, validApp, deleteAuthState } from './auth.js';
+import { listAuthStates, listAuthStateSummaries, validApp, deleteAuthState } from './auth.js';
 import { listApprovalsView } from './approvals.js';
 import { rpaPost, rpaGet } from './routes-rpa.js';
 import { approvePost, approveGet, successNeedle } from './routes-approve.js';
@@ -483,7 +483,7 @@ const server = http.createServer(async (req, res) => {
 		}
 
 		if (p === '/api/auth') {
-			return sendJson(res, 200, { apps: await listAuthStates() });
+			return sendJson(res, 200, { apps: await listAuthStates(), states: await listAuthStateSummaries() });
 		}
 
 		if (p === '/api/approvals') {
