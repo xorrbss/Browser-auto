@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const dbm = require('../lib/db.js');
@@ -25,8 +26,9 @@ const opt = (n, d = '') => {
 	const i = argv.indexOf(n);
 	return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d;
 };
+const IS_DIRECT = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
-if (!['analyze', 'sync', 'enrich'].includes(command)) {
+if (IS_DIRECT && !['analyze', 'sync', 'enrich'].includes(command)) {
 	console.error('usage: node bin/pw-rpa.mjs <analyze|sync|enrich> --system <name> [--limit N] [--key id]');
 	process.exit(2);
 }
@@ -34,10 +36,6 @@ if (!['analyze', 'sync', 'enrich'].includes(command)) {
 const SYSTEM = opt('--system');
 const LIMIT = Number(opt('--limit', '0')) || 0;
 const KEY = opt('--key');
-if (!SYSTEM) {
-	console.error(`[${command}] --system <name> required`);
-	process.exit(2);
-}
 
 function log(prefix, msg) {
 	console.error(`[${prefix}] ${msg}`);
@@ -183,18 +181,52 @@ async function selectPage(pager, p) {
 	}
 }
 
-async function waitListChanged(page, recipePath, prevSig) {
+// waitListSettled(getList, { prevSig, tries, wait }): poll the extracted list until it SETTLES.
+// waitListChanged (the predecessor) returned on the FIRST signature change, which can be a half-
+// rendered intermediate — live runs captured 11/13/2/4… rows per page (undercount; the same bug
+// approve-run.mjs settlePage closed, red-team SETTLE-HALFLOAD). Settled means:
+//   pages 2+ (prevSig given): the signature CHANGED from prevSig (the page really switched) AND is
+//     STABLE across two consecutive reads. An empty page 2+ never settles (rows must render).
+//   page 1 (prevSig null): stability only; a CONSISTENTLY-empty budget (no row ever seen) is
+//     accepted as a genuinely empty list — an empty read mixed with row reads never settles empty.
+// extract failures count as "still rendering" and break the consecutive-equal chain. Budget
+// exhaustion returns { error } — callers fail-close via assertPageSettled (never store a partial
+// page). getList/wait are injected so the rule is unit-testable browser-free.
+export async function waitListSettled(getList, { prevSig = null, tries = 24, wait = async () => {} } = {}) {
 	let lastErr = '';
-	for (let t = 0; t < 12; t++) {
-		try {
-			const cur = await snapshotList(page, recipePath);
-			if (cur.sig && cur.sig !== prevSig) return cur;
-		} catch (e) {
-			lastErr = e.message;
+	let prevRead = null; // previous successful read's sig — the consecutive-equal detector
+	let sawRows = false;
+	let lastEmpty = null;
+	for (let t = 0; t < tries; t++) {
+		let cur = null;
+		try { cur = await getList(); } catch (e) { lastErr = e.message; }
+		if (cur) {
+			const changed = prevSig == null || cur.sig !== prevSig;
+			if (cur.sig) {
+				sawRows = true;
+				if (changed && prevRead === cur.sig) return cur; // changed AND stable across two consecutive reads
+			} else {
+				lastEmpty = cur;
+			}
+			prevRead = cur.sig;
+		} else {
+			prevRead = null; // a failed extract breaks the consecutive-equal chain
 		}
-		await page.waitForTimeout(500);
+		await wait();
 	}
-	return { error: lastErr || 'no new rows' };
+	if (prevSig == null && !sawRows && lastEmpty) return lastEmpty; // consistently empty ⇒ a real empty list
+	return { error: lastErr || 'page did not change+stabilize (half-rendered or stuck page)' };
+}
+
+export function paginationSettleFailureMessage(scope, pageNumber, totalPages, detail = '') {
+	const total = Number(totalPages) > 0 ? `/${Number(totalPages)}` : '';
+	const cause = detail ? ` (${detail})` : '';
+	return `${scope} page ${pageNumber}${total} did not settle${cause}; refusing to store partial pagination results (fail-closed)`;
+}
+
+export function assertPageSettled(result, scope, pageNumber, totalPages) {
+	if (result && result.error) throw new Error(paginationSettleFailureMessage(scope, pageNumber, totalPages, result.error));
+	return result;
 }
 
 function uniqueByKey(items) {
@@ -276,8 +308,10 @@ async function sync(system, recipePath) {
 		log(prefix, `'${system.name}' -> launching Playwright (cached auth)...`);
 		await gotoTarget(page, system.target_url, prefix);
 		await waitText(page, system.recipe?.ready?.text || '', readySeconds(system.recipe?.ready, 15));
+		const getList = () => snapshotList(page, recipePath);
+		const settleOpts = { tries: 24, wait: () => page.waitForTimeout(500) };
 		const pages = [];
-		let cur = await snapshotList(page, recipePath);
+		let cur = assertPageSettled(await waitListSettled(getList, settleOpts), 'sync pagination', 1, 0);
 		pages.push(cur.items);
 		log(prefix, `page 1: ${cur.items.length} rows`);
 		let prevSig = cur.sig;
@@ -286,11 +320,7 @@ async function sync(system, recipePath) {
 		if (pager) log(prefix, `paginating: ${total} page(s)...`);
 		for (let p = 2; p <= total; p++) {
 			await selectPage(pager, p);
-			cur = await waitListChanged(page, recipePath, prevSig);
-			if (cur.error) {
-				log(prefix, `page ${p} did not settle (${cur.error}) - stopping (storing pages so far)`);
-				break;
-			}
+			cur = assertPageSettled(await waitListSettled(getList, { ...settleOpts, prevSig }), 'sync pagination', p, total);
 			pages.push(cur.items);
 			prevSig = cur.sig;
 			log(prefix, `  page ${p}: ${cur.items.length} rows`);
@@ -320,15 +350,21 @@ function recordsToEnrich(systemName) {
 async function openRecord(page, system, recipePath, key, listReady) {
 	await page.goto(system.target_url, { waitUntil: 'domcontentloaded' });
 	await waitText(page, listReady, readySeconds(system.recipe?.ready, 12));
-	let cur = await snapshotList(page, recipePath).catch(() => ({ sig: '' }));
+	const getList = () => snapshotList(page, recipePath);
+	const settleOpts = { tries: 24, wait: () => page.waitForTimeout(500) };
+	const cur0 = await waitListSettled(getList, settleOpts);
 	const pager = await pagerInfo(page, system.recipe);
 	const total = pager ? Math.min(pager.total, 100) : 1;
-	let prevSig = cur.sig || '';
+	// Paginated list: an unsettled page 1 makes the whole scan untrustworthy ⇒ fail-closed. A single
+	// un-paginated page tolerates it (the exact-text click below can still find the key).
+	if (pager && cur0.error) {
+		assertPageSettled(cur0, `enrich pagination while locating ${key}`, 1, total);
+	}
+	let prevSig = cur0.error ? '' : cur0.sig || '';
 	for (let p = 1; p <= total; p++) {
 		if (p > 1) {
 			await selectPage(pager, p);
-			cur = await waitListChanged(page, recipePath, prevSig);
-			if (cur.error) return false;
+			const cur = assertPageSettled(await waitListSettled(getList, { ...settleOpts, prevSig }), `enrich pagination while locating ${key}`, p, total);
 			prevSig = cur.sig;
 		}
 		const target = page.getByText(key, { exact: false }).first();
@@ -403,17 +439,27 @@ async function enrich(system, recipePath) {
 	}
 }
 
-try {
-	const system = readSystem(SYSTEM);
-	const tmp = writeTempJson(system.recipe || {});
-	try {
-		if (command === 'analyze') await analyze(system, tmp.file);
-		if (command === 'sync') await sync(system, tmp.file);
-		if (command === 'enrich') await enrich(system, tmp.file);
-	} finally {
-		fs.rmSync(tmp.dir, { recursive: true, force: true });
+async function main() {
+	if (!SYSTEM) {
+		console.error(`[${command}] --system <name> required`);
+		process.exit(2);
 	}
-} catch (e) {
-	console.error(`[pw-rpa] FATAL: ${e && e.message || e}`);
-	process.exit(1);
+	try {
+		const system = readSystem(SYSTEM);
+		const tmp = writeTempJson(system.recipe || {});
+		try {
+			if (command === 'analyze') await analyze(system, tmp.file);
+			if (command === 'sync') await sync(system, tmp.file);
+			if (command === 'enrich') await enrich(system, tmp.file);
+		} finally {
+			fs.rmSync(tmp.dir, { recursive: true, force: true });
+		}
+	} catch (e) {
+		console.error(`[pw-rpa] FATAL: ${e && e.message || e}`);
+		process.exit(1);
+	}
+}
+
+if (IS_DIRECT) {
+	await main();
 }

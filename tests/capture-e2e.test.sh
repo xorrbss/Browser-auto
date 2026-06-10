@@ -13,12 +13,17 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 OUT="$(cd "$DIR" && node --input-type=module - <<'NODE' 2>&1
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { dedupeByOrigin } from './bin/pw-record.mjs';
 
 const ROOT = process.cwd();
 const SECRET = 'Sup3rSecret!pw';
 const OTP = '987654';
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'aqa-capture-e2e-'));
 
 let chromium;
 try { chromium = createRequire(path.join(ROOT, 'approve', 'package.json'))('playwright').chromium; }
@@ -61,6 +66,10 @@ const PAGES = {
 	'/spa': `<!doctype html><meta charset="utf-8">
 		<button id="route" type="button">Route</button>
 		<script>document.getElementById('route').onclick = () => history.pushState({}, '', '/spa-detail');</script>`,
+	'/iframe-same': `<!doctype html><meta charset="utf-8">
+		<iframe id="samePay" name="samePayName" title="Same Origin Pay" src="/same-frame"></iframe>`,
+	'/same-frame': `<!doctype html><meta charset="utf-8">
+		<button data-testid="frame-pay" type="button">Pay in frame</button>`,
 };
 const srv = http.createServer((req, res) => {
 	const html = PAGES[(req.url || '/').split('?')[0]];
@@ -68,13 +77,25 @@ const srv = http.createServer((req, res) => {
 	res.setHeader('content-type', 'text/html; charset=utf-8');
 	res.end(html);
 });
+const srvOther = http.createServer((req, res) => {
+	const route = (req.url || '/').split('?')[0];
+	const html = route === '/xo-frame'
+		? '<!doctype html><meta charset="utf-8"><button data-testid="xo-pay" type="button">Cross frame pay</button>'
+		: '<!doctype html><meta charset="utf-8"><p>other origin</p>';
+	res.setHeader('content-type', 'text/html; charset=utf-8');
+	res.end(html);
+});
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+await new Promise((r) => srvOther.listen(0, '127.0.0.1', r));
 const ORIGIN = `http://127.0.0.1:${srv.address().port}`;
+const OTHER_ORIGIN = `http://127.0.0.1:${srvOther.address().port}`;
+PAGES['/iframe-xo'] = `<!doctype html><meta charset="utf-8">
+	<iframe id="xoPay" name="xoPayName" title="Cross Origin Pay" src="${OTHER_ORIGIN}/xo-frame"></iframe>`;
 
 let browser;
 try { browser = await chromium.launch({ headless: true, channel: process.env.AQA_PW_CHANNEL || 'chrome' }); }
 catch (e) {
-	if (/Executable doesn't exist|Chromium distribution|not found at/.test(String(e && e.message))) { console.log('SKIP_NO_BROWSER'); srv.close(); process.exit(0); }
+	if (/Executable doesn't exist|Chromium distribution|not found at/.test(String(e && e.message))) { console.log('SKIP_NO_BROWSER'); srv.close(); srvOther.close(); fs.rmSync(TMP, { recursive: true, force: true }); process.exit(0); }
 	throw e;
 }
 
@@ -102,6 +123,44 @@ async function drain(label) {
 	}));
 	ok(d.seq === d.buf.length, `${label}: seq==buf.length health (${d.seq}/${d.buf.length})`);
 	return d.buf;
+}
+async function drainAllFrames(label) {
+	const drained = [];
+	const frameFailures = [];
+	for (const frame of page.frames()) {
+		try {
+			const d = await frame.evaluate(() => ({
+				url: location.href,
+				isTop: window.top === window.self,
+				crossOriginFrame: (() => {
+					try { return window.top !== window.self && !window.frameElement; }
+					catch { return true; }
+				})(),
+				buf: JSON.parse(sessionStorage.getItem('__aqa_buf') || '[]'),
+				seq: parseInt(sessionStorage.getItem('__aqa_seq') || '0', 10) || 0,
+			}));
+			ok(d.seq === d.buf.length, `${label}: frame health ${d.url} (${d.seq}/${d.buf.length})`);
+			drained.push(d);
+		} catch (e) {
+			frameFailures.push(`${frame.url() || '<blank>'}: ${String(e && e.message || e)}`);
+		}
+	}
+	ok(frameFailures.length === 0, `${label}: all frame buffers drained`);
+	return dedupeByOrigin(drained);
+}
+function buildFlowFromRecords(flowName, startUrl, records) {
+	const flowDir = path.join(TMP, flowName);
+	fs.mkdirSync(flowDir, { recursive: true });
+	const recPath = path.join(flowDir, 'records.json');
+	fs.writeFileSync(recPath, JSON.stringify(records, null, 2) + '\n');
+	const r = spawnSync(process.execPath, ['bin/build-flow.js', flowName, startUrl, '', recPath, flowDir, 'playwright'], {
+		cwd: ROOT,
+		encoding: 'utf8',
+	});
+	ok(r.status === 0, `${flowName}: build-flow exited 0`);
+	const flowPath = path.join(flowDir, `${flowName}.flow.json`);
+	const flow = JSON.parse(fs.readFileSync(flowPath, 'utf8'));
+	return { flow, flowPath, out: `${r.stdout || ''}${r.stderr || ''}` };
 }
 
 // 1) masking-at-capture: the secret NEVER enters the buffer; plain input is captured faithfully.
@@ -235,8 +294,47 @@ await page.waitForTimeout(200);
 	ok(byType(buf, 'navigate').some((e) => e.is_navigation_boundary === true && String(e.from).includes('/spa')), 'pushstate: SPA route change recorded as a navigation boundary');
 }
 
+// 11) same-origin iframe: page.frames() sees the shared sessionStorage buffer twice; recorder drain
+//     dedupes it, and build-flow emits a runnable iframe-scoped find step.
+await openCase('/iframe-same');
+await page.frameLocator('iframe#samePay').getByTestId('frame-pay').click();
+await page.waitForTimeout(100);
+{
+	const drained = await drainAllFrames('iframe-same');
+	ok(drained.buf.length === 1, `iframe-same: shared same-origin buffer deduped to one event (got ${drained.buf.length})`);
+	const ev = drained.buf[0];
+	ok(!!ev && ev.frame_ref && ev.frame_ref.crossOrigin !== true && ev.frame_ref.id === 'samePay', 'iframe-same: event carries parent-visible frame_ref id');
+	const built = buildFlowFromRecords('same_iframe_flow', ORIGIN + '/iframe-same', drained.buf);
+	const step = built.flow.steps[0];
+	ok(built.flow.steps.length === 1, `iframe-same: flow has one find step, not duplicated (got ${built.flow.steps.length})`);
+	ok(step && step.kind === 'find' && step.by === 'testid' && step.value === 'frame-pay' && step.action === 'click', 'iframe-same: built semantic click locator');
+	ok(step && step.frame && step.frame.by === 'id' && step.frame.value === 'samePay', 'iframe-same: built flow includes frame locator');
+	const valid = spawnSync(process.execPath, ['bin/play-flow.mjs', '--flow', built.flowPath, '--validate-only'], { cwd: ROOT, encoding: 'utf8' });
+	ok(valid.status === 0, 'iframe-same: frame-scoped flow validates for replay');
+}
+
+// 12) cross-origin iframe: events are captured for review, but build-flow must fail closed by
+//     emitting needs_review so validate/replay cannot go green unattended.
+await openCase('/iframe-xo');
+await page.frameLocator('iframe#xoPay').getByTestId('xo-pay').click();
+await page.waitForTimeout(100);
+{
+	const drained = await drainAllFrames('iframe-xo');
+	ok(drained.buf.length === 1, `iframe-xo: cross-origin frame event preserved once (got ${drained.buf.length})`);
+	const ev = drained.buf[0];
+	ok(!!ev && ev.frame_ref && ev.frame_ref.crossOrigin === true, 'iframe-xo: event marked crossOrigin in frame_ref');
+	const built = buildFlowFromRecords('xo_iframe_flow', ORIGIN + '/iframe-xo', drained.buf);
+	const step = built.flow.steps[0];
+	ok(step && step.needs_review === true, 'iframe-xo: built step is needs_review');
+	ok(step && step.by === undefined && step.value === undefined, 'iframe-xo: no runnable locator is emitted for cross-origin frame action');
+	const invalid = spawnSync(process.execPath, ['bin/play-flow.mjs', '--flow', built.flowPath, '--validate-only'], { cwd: ROOT, encoding: 'utf8' });
+	ok(invalid.status !== 0 && /needs_review/.test(`${invalid.stdout || ''}${invalid.stderr || ''}`), 'iframe-xo: validate/replay refuses needs_review flow');
+}
+
 await browser.close();
 srv.close();
+srvOther.close();
+fs.rmSync(TMP, { recursive: true, force: true });
 if (failures) { console.log(`CAPTURE_E2E_FAILED ${failures}`); process.exit(1); }
 console.log('OK_CAPTURE_E2E');
 NODE

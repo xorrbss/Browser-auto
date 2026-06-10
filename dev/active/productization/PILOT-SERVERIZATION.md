@@ -13,6 +13,7 @@ The current codebase is suitable for the first posture with controls. It is not 
 second posture without the P0 serverization work below.
 
 Operational runbook: `dev/active/productization/INTERNAL-PILOT-RUNBOOK.md`.
+Security data policy: `dev/active/productization/SECURITY-DATA-POLICY.md`.
 
 ## 1. Internal Pilot Goal
 

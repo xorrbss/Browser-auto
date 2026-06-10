@@ -8,6 +8,10 @@ This runbook is for a supervised internal pilot only. It assumes a trusted Windo
 loopback webui or an authenticated tunnel, and no unattended live actions. Replay remains
 deterministic and AI-free.
 
+Data-handling baseline: follow `SECURITY-DATA-POLICY.md` for threat boundaries, audit retention,
+artifact retention, and export rules. Internal pilot artifacts and logs stay local unless reviewed and
+redacted.
+
 ## 1. Preconditions
 
 - Run from `C:\project\Browser-auto` on Windows.

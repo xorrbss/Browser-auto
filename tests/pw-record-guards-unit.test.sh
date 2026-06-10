@@ -8,7 +8,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME_POP="_pwg_pop_$$"
 NAME_XO="_pwg_xo_$$"
-cleanup(){ rm -f "$DIR/flows/$NAME_POP.flow.json" "$DIR/flows/$NAME_XO.flow.json" "$DIR/flows/$NAME_POP.candidates.json" "$DIR/flows/$NAME_XO.candidates.json"; }
+cleanup(){ rm -f "$DIR/flows/$NAME_POP.flow.json" "$DIR/flows/$NAME_XO.flow.json" "$DIR/flows/$NAME_POP.candidates.json" "$DIR/flows/$NAME_XO.candidates.json" "$DIR/flows/$NAME_POP.values.json" "$DIR/flows/$NAME_XO.values.json"; }
 trap cleanup EXIT
 
 OUT="$(cd "$DIR" && NAME_POP="$NAME_POP" NAME_XO="$NAME_XO" node --input-type=module - <<'NODE' 2>&1
@@ -41,6 +41,12 @@ function runRecorder(name, url) {
 		child.on('close', (code) => resolve({ code, out }));
 	});
 }
+function assertNoFlowArtifacts(name, label) {
+	for (const ext of ['flow.json', 'candidates.json', 'values.json']) {
+		const p = path.join(ROOT, 'flows', `${name}.${ext}`);
+		if (fs.existsSync(p)) fail(`${label}: ${ext} was written despite the violation`);
+	}
+}
 
 const srvB = await serve(() => '<!doctype html><p>other origin</p>');
 const srvA = await serve((req) =>
@@ -54,13 +60,13 @@ try {
 	if (/Executable doesn't exist|Chromium distribution|not found at/.test(pop.out)) { console.log('SKIP_NO_BROWSER'); process.exit(0); }
 	if (pop.code === 0) fail('popup case: recorder exited 0 (guard missing)');
 	if (!pop.out.includes('new tab/popup opened during recording')) fail('popup case: missing fail-loud message; got: ' + pop.out.slice(-400));
-	if (fs.existsSync(path.join(ROOT, 'flows', `${process.env.NAME_POP}.flow.json`))) fail('popup case: a flow was written despite the violation');
+	assertNoFlowArtifacts(process.env.NAME_POP, 'popup case');
 
 	// 2) mid-recording top-level cross-origin navigation -> FATAL, no flow written
 	const xo = await runRecorder(process.env.NAME_XO, `${originOf(srvA)}/xo`);
 	if (xo.code === 0) fail('cross-origin case: recorder exited 0 (guard missing)');
 	if (!xo.out.includes('cross-origin navigation during recording')) fail('cross-origin case: missing fail-loud message; got: ' + xo.out.slice(-400));
-	if (fs.existsSync(path.join(ROOT, 'flows', `${process.env.NAME_XO}.flow.json`))) fail('cross-origin case: a flow was written despite the violation');
+	assertNoFlowArtifacts(process.env.NAME_XO, 'cross-origin case');
 
 	console.log('OK_GUARDS');
 } finally {

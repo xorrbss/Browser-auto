@@ -30,6 +30,7 @@
 //   POST /api/auth             -> enqueue approve/auth-pw.mjs (headed OTP, serial); { job, app }
 //   POST /api/auth/:app/delete -> remove fixtures/auth/playwright/<app>.state.json; { ok, apps }
 //   GET  /api/trends           -> { runs, tests } (also: artifacts retention prunes on startup)
+//   GET  /api/readiness        -> P0 checklist summary (read-only; not a security attestation)
 //
 // Run: `node webui/server.js`  (WEBUI_PORT overrides the default port).
 
@@ -49,6 +50,7 @@ import { rpaPost, rpaGet } from './routes-rpa.js';
 import { approvePost, approveGet, successNeedle } from './routes-approve.js';
 import { commandPlanPost, commandPlanGet, recordCommandGateRefusal } from './routes-command-plan.js';
 import { issueSessionIfNeeded, approveGate } from './session.js';
+import { getP0Readiness } from './readiness.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 // Bind address. Default 127.0.0.1 (localhost-only — the safe default for native Windows/macOS use).
@@ -506,6 +508,10 @@ const server = http.createServer(async (req, res) => {
 
 		if (p === '/api/auth') {
 			return sendJson(res, 200, { apps: await listAuthStates(), states: await listAuthStateSummaries() });
+		}
+
+		if (p === '/api/readiness') {
+			return sendJson(res, 200, await getP0Readiness());
 		}
 
 		if (p === '/api/approvals') {

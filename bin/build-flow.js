@@ -25,7 +25,15 @@ let records;
 try { records = JSON.parse(fs.readFileSync(recordsPath, 'utf8')); }
 catch (e) { console.error('[build-flow] cannot read records: ' + e.message); process.exit(1); }
 if (!Array.isArray(records)) { console.error('[build-flow] records is not an array'); process.exit(1); }
-records.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+function eventTime(r) {
+  const n = Number(r && r.timestamp_ms);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+records.sort((a, b) => {
+  const at = eventTime(a), bt = eventTime(b);
+  if (at !== null && bt !== null && at !== bt) return at - bt;
+  return (a.seq || 0) - (b.seq || 0);
+});
 
 // --- URL glob normalization: strip query/fragment, ** out volatile path segments ---
 function isVolatile(seg) {

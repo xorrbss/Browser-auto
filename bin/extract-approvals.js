@@ -86,6 +86,13 @@ function main() {
 		}
 		items.push(item);
 	}
+	// A duplicate doc_id would silently collapse distinct approval rows downstream (PRIMARY KEY/upsert).
+	// Empty doc_id rows were skipped above; non-empty duplicates are identity drift and must fail closed.
+	const seen = new Set();
+	for (const item of items) {
+		if (seen.has(item.doc_id)) die(`doc_id is NOT unique: value "${item.doc_id}" appears more than once; refusing to collapse duplicate approval rows`);
+		seen.add(item.doc_id);
+	}
 	process.stdout.write(JSON.stringify(items));
 }
 

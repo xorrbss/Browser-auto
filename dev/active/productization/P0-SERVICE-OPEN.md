@@ -8,6 +8,8 @@ job execution, artifacts, and tenant data boundaries.
 This is not a runbook. It is the P0 acceptance checklist that must be complete before exposing the
 service to external users or tenants. Internal pilots may continue under the narrower controls in
 `PILOT-SERVERIZATION.md`, but external service open is blocked until every P0 item below is accepted.
+The companion data policy for threat model, data flow, audit retention, artifact retention, and export
+gates is `SECURITY-DATA-POLICY.md`.
 
 ## Priority Order
 

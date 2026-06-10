@@ -31,6 +31,7 @@ const state = {
 	flows: [],
 	auth: [],
 	authStates: [],
+	readiness: null,
 	actionStates: new Map(),
 	actions: [],
 	selectedTargets: new Set(),
@@ -74,8 +75,8 @@ function statusKind(value) {
 	const s = String(value || '').toLowerCase();
 	if (['done', 'pass', 'passed', 'ready', 'ok', 'success', 'succeeded', 'approved', 'confirmed', 'synced', 'verified', 'dry-ok', 'implemented', 'enabled'].includes(s)) return 'success';
 	if (['running', 'queued', 'pending', 'planned', 'dry-running', 'dry'].includes(s)) return 'info';
-	if (['needs implementation', 'needs-review', 'needs_review', 'skipped', 'stale-auth', 'awaiting-confirmation', 'disabled', 'not queued'].includes(s)) return 'warning';
-	if (['failed', 'fail', 'refused', 'blocked', 'cancelled', 'guard-failed', 'unavailable'].includes(s)) return 'danger';
+	if (['needs implementation', 'needs-review', 'needs_review', 'skipped', 'stale-auth', 'awaiting-confirmation', 'disabled', 'not queued', 'review-required', 'document-complete'].includes(s)) return 'warning';
+	if (['failed', 'fail', 'refused', 'blocked', 'cancelled', 'guard-failed', 'unavailable', 'no-go'].includes(s)) return 'danger';
 	return 'neutral';
 }
 
@@ -287,9 +288,11 @@ async function loadDiagnostics() {
 	await Promise.allSettled([
 		getJson('/api/runs').then((d) => { state.runs = d.runs || []; }),
 		getJson('/api/flows').then((d) => { state.flows = d.flows || []; }),
+		getJson('/api/readiness').then((d) => { state.readiness = d || null; }),
 		loadAuthStates(),
 	]);
 	renderDiagnostics();
+	renderReadiness();
 }
 
 async function loadAuthStates() {
@@ -335,6 +338,7 @@ function renderAll() {
 	renderAudit();
 	renderApprovalState();
 	renderDiagnosticsLinks();
+	renderReadiness();
 }
 
 function automationForm() {
@@ -1565,6 +1569,7 @@ function renderQueueGlobal() {
 	if (title) title.textContent = q.busy ? `실행 중 ${q.running?.id || ''}` : '큐 유휴';
 	if (sub) sub.textContent = q.busy ? (q.running?.label || '브라우저 작업 실행 중') : `대기 ${q.pending?.length || 0}개 / 최근 ${q.recent?.length || 0}개`;
 	renderQueueMini('#cc-queue');
+	renderQueueMetrics();
 }
 
 function renderQueueMini(selector) {
@@ -1572,13 +1577,33 @@ function renderQueueMini(selector) {
 	if (!box) return;
 	const q = state.queue;
 	if (!q) return setChildren(box, empty('큐 API를 불러오지 못했습니다.'));
+	const m = q.metrics || {};
 	const rows = [
 		['실행 여부', q.busy ? 'yes' : 'no'],
 		['실행 중', q.running ? `${q.running.id} / ${q.running.label}` : 'none'],
 		['대기', String(q.pending?.length || 0)],
 		['최근', String(q.recent?.length || 0)],
+		['평균 시간', m.avgDurationMs == null ? '-' : `${Math.round(m.avgDurationMs / 1000)}s`],
+		['최근 실패', m.lastFailureReason || 'none'],
 	];
 	setChildren(box, renderRowsTable(rows, ['항목', '값']));
+}
+
+function renderQueueMetrics() {
+	const box = $('#queue-metrics');
+	if (!box) return;
+	const q = state.queue;
+	if (state.queueError) return setChildren(box, errorBox(state.queueError));
+	if (!q || !q.metrics) return setChildren(box, empty('큐 metrics를 불러오지 못했습니다.'));
+	const m = q.metrics;
+	setChildren(box, el('div', { class: 'metric-grid' },
+		metric('Queued', m.queued, '대기 중'),
+		metric('Running', m.running, '현재 실행'),
+		metric('Recent', m.recent, '메모리 보관'),
+		metric('Avg Duration', m.avgDurationMs == null ? '-' : `${Math.round(m.avgDurationMs / 1000)}s`, '완료된 작업 평균'),
+		metric('Last Failure', m.lastFailureReason || 'none', '민감 로그 제외'),
+		metric('Timeout / Cancel', `${m.timeoutCount || 0} / ${m.cancelledCount || 0}`, '누적 카운트'),
+	));
 }
 
 function jobResultLabel(job) {
@@ -1597,6 +1622,7 @@ function jobResultLabel(job) {
 function renderQueueView() {
 	const box = $('#queue-table');
 	if (!box) return;
+	renderQueueMetrics();
 	const q = state.queue;
 	if (state.queueError) return setChildren(box, errorBox(state.queueError));
 	if (!q) return setChildren(box, empty('큐 API를 불러오지 못했습니다.'));
@@ -1755,6 +1781,7 @@ function renderDiagnosticsLinks() {
 		['감사 API', '/api/approve/audit?limit=300', '추가 전용 결재 리프 감사'],
 		['실행 API', '/api/runs', '과거 실행 리포트'],
 		['플로우 API', '/api/flows', '녹화된 선언적 플로우'],
+		['P0 Readiness API', '/api/readiness', '문서 체크리스트 기반 No-Go 상태'],
 	];
 	setChildren(box, el('div', { class: 'link-grid' }, ...links.map(([title, href, desc]) =>
 		el('a', { class: 'link-card', href, target: '_blank', rel: 'noreferrer' }, el('strong', {}, title), el('span', {}, desc)),
@@ -1768,10 +1795,41 @@ function renderDiagnostics() {
 		{ area: '실행', count: state.runs.length, state: state.runs.length ? `${state.runs[0].runId || 'loaded'}` : '레코드 없음', endpoint: '/api/runs' },
 		{ area: '플로우', count: state.flows.length, state: state.flows.some((f) => f.needsReview) ? '검토 필요' : '로드됨', endpoint: '/api/flows' },
 		{ area: '인증 상태', count: state.auth.length, state: state.auth.length ? state.auth.join(', ') : '없음', endpoint: '/api/auth' },
+		{ area: 'P0 readiness', count: state.readiness?.open ?? '-', state: state.readiness?.decision || 'No-Go', endpoint: '/api/readiness' },
 		{ area: '프리플라이트', count: '-', state: 'CLI 전용', endpoint: 'bash lib/preflight.sh' },
 		{ area: '전체 스위트', count: '-', state: 'POST /api/run 로 실행 가능', endpoint: 'bash run.sh' },
 	];
 	setChildren(box, renderGenericTable(rows, ['area', 'count', 'state', 'endpoint'], '진단'));
+}
+
+function renderReadiness() {
+	const summary = $('#readiness-summary');
+	const table = $('#readiness-table');
+	if (!summary || !table) return;
+	const r = state.readiness;
+	if (!r) {
+		setChildren(summary, empty('P0 readiness API를 불러오지 못했습니다.'));
+		setChildren(table);
+		return;
+	}
+	const policy = r.artifactPolicy || {};
+	setChildren(summary,
+		el('div', { class: 'metric-grid' },
+			metric('Decision', r.decision || 'No-Go', '문서 체크리스트 상태'),
+			metric('Open Items', r.open ?? '-', `${r.checked || 0}/${r.total || 0} checked`),
+			metric('Document', r.document || '-', r.valid ? 'loaded' : 'unavailable'),
+			metric('Raw Export', policy.rawExport || 'blocked', policy.mode || 'read-only metadata'),
+		),
+		r.blockers?.length ? warnBox(`${r.blockers.length}개 대표 미해결 항목이 있습니다. 전체 목록은 P0 문서를 기준으로 확인하세요.`) : warnBox('모든 문서 체크가 끝나도 별도 보안 검토 전에는 외부 서비스 오픈 Go 판정이 아닙니다.'),
+	);
+	const rows = (r.sections || []).map((s) => ({
+		section: s.id,
+		title: s.title,
+		checked: `${s.checked}/${s.total}`,
+		open: s.open,
+		state: s.state,
+	}));
+	setChildren(table, renderGenericTable(rows, ['section', 'title', 'checked', 'open', 'state'], 'P0 readiness'));
 }
 
 function renderGenericTable(rows, columns, label) {

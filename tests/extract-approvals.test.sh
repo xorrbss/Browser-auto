@@ -176,4 +176,29 @@ if printf '%s' '{"snapshot":"- table \"x\""}' | node "$EX" '{"collection":{"name
 fi
 echo "  ✓ c6 field-vocabulary guard"
 
-echo "  ✓ extract-approvals-unit: all 6 cases passed"
+# ---------- case 7: duplicate non-empty doc_id -> fail loud, while empty doc_id rows still skip ----------
+ASCII_RECIPE='{"collection":{"name":"Approvals"},"columns":{"doc_id":"id","title":"title","drafter":"drafter"}}'
+cat > "$TMP/c7" <<'TREE'
+- table "Approvals"
+  - rowgroup
+    - row
+      - columnheader "id"
+      - columnheader "title"
+      - columnheader "drafter"
+    - row [ref=e1]
+      - cell "AP-1"
+      - cell "first"
+      - cell "Alice"
+    - row [ref=e2]
+      - cell
+      - cell "blank id still skipped"
+      - cell "Nobody"
+    - row [ref=e3]
+      - cell "AP-1"
+      - cell "second"
+      - cell "Bob"
+TREE
+expect_fail "$ASCII_RECIPE" "$TMP/c7" "c7 duplicate doc_id"
+echo "  ✓ c7 duplicate-doc_id guard"
+
+echo "  ✓ extract-approvals-unit: all 7 cases passed"

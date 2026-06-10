@@ -5,7 +5,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ( cd "$DIR" && node --input-type=module - <<'NODE'
 import { spawn } from 'node:child_process';
-import { enqueue, jobStatus, jobResult } from './webui/jobs.js';
+import { enqueue, jobStatus, jobResult, queueState } from './webui/jobs.js';
 
 const assert = (cond, msg) => { if (!cond) { console.error('  jobs-result-unit: ' + msg); process.exit(1); } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -48,6 +48,19 @@ await waitDone(job.id);
 jr = jobResult(job.id);
 assert(jr.status === 'done' && jr.error === 'malformed structured job result', 'malformed result records an error without failing the process status');
 assert(jobResult('missing') === null, 'missing job result returns null');
+
+job = enqueue({
+	kind: 'unit',
+	label: 'failed',
+	spawnFn: () => spawn(process.execPath, ['-e', 'process.exit(7)']),
+});
+await waitDone(job.id);
+const q = queueState();
+assert(q.metrics && q.metrics.queued === 0 && q.metrics.running === 0, 'queue metrics expose queued/running counts');
+assert(q.metrics.recent === q.recent.length, 'queue metrics recent count matches recent list');
+assert(Number.isFinite(q.metrics.avgDurationMs), 'queue metrics expose avg duration');
+assert(q.metrics.lastFailureReason === 'exit code 7', 'queue metrics expose sanitized last failure reason');
+assert(Number.isInteger(q.metrics.timeoutCount) && Number.isInteger(q.metrics.cancelledCount), 'queue metrics expose timeout/cancel counts');
 
 console.log('  jobs-result-unit: all checks passed');
 NODE

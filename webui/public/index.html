@@ -313,6 +313,7 @@
 								<h2>큐 / 작업</h2>
 								<button id="queue-refresh" class="btn small" type="button">새로고침</button>
 							</div>
+							<div id="queue-metrics" class="panel-body"></div>
 							<div id="queue-table" class="table-wrap"></div>
 						</section>
 						<section class="panel">
@@ -396,6 +397,14 @@
 							<button id="diagnostics-refresh" class="btn small" type="button">새로고침</button>
 						</div>
 						<div id="diagnostics-table" class="table-wrap"></div>
+					</section>
+					<section class="panel">
+						<div class="panel-head">
+							<h2>P0 Readiness</h2>
+							<span class="badge danger">No-Go 기본값</span>
+						</div>
+						<div id="readiness-summary" class="panel-body"></div>
+						<div id="readiness-table" class="table-wrap"></div>
 					</section>
 				</section>
 			</main>

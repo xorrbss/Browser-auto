@@ -307,12 +307,42 @@ export function subscribe(id, res) {
 	return true;
 }
 
+function safeFailureReason(job) {
+	if (!job) return null;
+	if (job.timedOut) return 'timeout';
+	if (job.exitCode != null && job.exitCode !== 0) return `exit code ${job.exitCode}`;
+	if (job.error) {
+		const text = String(job.error).toLowerCase();
+		if (text.includes('malformed structured job result')) return 'malformed structured job result';
+		return 'job error';
+	}
+	return job.status === 'failed' ? 'failed' : null;
+}
+
+function queueMetrics(recent) {
+	const all = [...jobs.values()];
+	const terminalWithDuration = all.filter((j) => j.startedAt && j.endedAt);
+	const totalDuration = terminalWithDuration.reduce((sum, j) => sum + (j.endedAt - j.startedAt), 0);
+	const lastFailed = [...all].reverse().find((j) => j.status === 'failed');
+	return {
+		queued: pending.length,
+		running: runningId ? 1 : 0,
+		recent: recent.length,
+		avgDurationMs: terminalWithDuration.length ? Math.round(totalDuration / terminalWithDuration.length) : null,
+		lastFailureReason: safeFailureReason(lastFailed),
+		timeoutCount: all.filter((j) => j.timedOut).length,
+		cancelledCount: all.filter((j) => j.status === 'cancelled' || j.cancelled).length,
+	};
+}
+
 // queueState() -> snapshot for GET /api/queue (proves serialization: one running, N pending).
 export function queueState() {
+	const recent = [...jobs.values()].slice(-10).reverse().map(publicJob);
 	return {
 		busy: runningId !== null,
 		running: runningId ? publicJob(jobs.get(runningId)) : null,
 		pending: pending.map((id) => publicJob(jobs.get(id))),
-		recent: [...jobs.values()].slice(-10).reverse().map(publicJob),
+		recent,
+		metrics: queueMetrics(recent),
 	};
 }

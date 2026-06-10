@@ -1,7 +1,7 @@
 // webui/auth.js — list cached auth apps (read-only). The actual login is approve/auth-pw.mjs
 // (spawned through the serial queue, headed Chrome, human OTP), saving the canonical
-// fixtures/auth/playwright/<app>.state.json. We only ever expose the APP NAME (the state file
-// holds secrets and is gitignored — never its content).
+// fixtures/auth/playwright/<app>.state.json. The compat read path also sees legacy
+// approve/<app>.pw-state.json files, but summaries never expose file paths or state content.
 
 import { readdir, readFile, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
@@ -9,9 +9,11 @@ import path from 'node:path';
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 const AUTH_DIR = path.join(PROBE_ROOT, 'fixtures', 'auth');
 const PLAYWRIGHT_AUTH_DIR = path.join(AUTH_DIR, 'playwright');
+const LEGACY_PLAYWRIGHT_AUTH_DIR = path.join(PROBE_ROOT, 'approve');
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const AUTH_SOURCES = Object.freeze([
-	{ engine: 'playwright', dir: PLAYWRIGHT_AUTH_DIR },
+	{ engine: 'playwright', dir: PLAYWRIGHT_AUTH_DIR, suffix: '.state.json', source: 'canonical' },
+	{ engine: 'playwright', dir: LEGACY_PLAYWRIGHT_AUTH_DIR, suffix: '.pw-state.json', source: 'legacy' },
 ]);
 
 export const validApp = (a) => typeof a === 'string' && NAME_RE.test(a);
@@ -20,8 +22,8 @@ async function stateEntries(source) {
 	try {
 		const entries = await readdir(source.dir);
 		return entries
-			.filter((f) => f.endsWith('.state.json'))
-			.map((file) => ({ ...source, file, app: file.slice(0, -'.state.json'.length) }))
+			.filter((f) => f.endsWith(source.suffix))
+			.map((file) => ({ ...source, file, app: file.slice(0, -source.suffix.length) }))
 			.filter((e) => validApp(e.app));
 	} catch {
 		return [];
@@ -40,14 +42,9 @@ function uniqSorted(values) {
 	return [...new Set(values.filter(Boolean))].sort();
 }
 
-function safeCookieHint(cookie) {
-	if (!cookie || cookie.name !== 'h_officeid') return '';
-	const value = String(cookie.value || '').trim();
-	return /^[A-Za-z0-9._-]{2,128}$/.test(value) ? value : '';
-}
-
 export async function listAuthStateSummaries() {
 	const out = [];
+	const now = Date.now();
 	for (const source of AUTH_SOURCES) {
 		for (const entry of await stateEntries(source)) {
 			const full = path.join(source.dir, entry.file);
@@ -59,11 +56,27 @@ export async function listAuthStateSummaries() {
 					app: entry.app,
 					engine: source.engine,
 					domains: uniqSorted(cookies.map((c) => String(c.domain || '').replace(/^\./, '').toLowerCase())),
-					hints: uniqSorted(cookies.map(safeCookieHint)),
 					updatedAt: st.mtimeMs,
+					ageMs: Math.max(0, now - st.mtimeMs),
+					valid: true,
+					source: source.source,
 				});
 			} catch {
-				out.push({ app: entry.app, engine: source.engine, domains: [], hints: [], updatedAt: 0 });
+				let updatedAt = 0;
+				try {
+					updatedAt = (await stat(full)).mtimeMs;
+				} catch {
+					updatedAt = 0;
+				}
+				out.push({
+					app: entry.app,
+					engine: source.engine,
+					domains: [],
+					updatedAt,
+					ageMs: updatedAt ? Math.max(0, now - updatedAt) : null,
+					valid: false,
+					source: source.source,
+				});
 			}
 		}
 	}
