@@ -138,14 +138,20 @@ prev_ids="$(jq -r '[.[].doc_id]|sort|join(",")' "$ITEMS_DIR/p001.json")"
 echo "[fetch-approvals] page 1: $(jq 'length' "$ITEMS_DIR/p001.json") rows"
 
 if [ "$PAGINATE" = "combobox" ]; then
-	# Total pages = count of NUMERIC options under the page <select> (non-numeric = filter dropdowns).
-	total="$(printf '%s' "$cur" | jq '[.refs[]|select(.role=="option" and (((.name//"")|test("^[0-9]+$"))))]|length')"
-	[ "$total" -ge 1 ] 2>/dev/null || total=1
+	# Page count + which combobox to drive via the SHARED fail-closed decision (bin/pager-decide.js →
+	# guards.pagerDecision, the SAME rule the Playwright engine trusts): a single clean 1..N <select>. A
+	# rows-per-page select, a non-1..N set, or ≥2 comboboxes ⇒ 'uncertain' ⇒ scan page 1 ONLY (never guess
+	# the first combobox, which could be a filter and would STORE wrong rows on select).
+	read -r _pk total _pref < <(printf '%s' "$cur" | node "$PROBE_ROOT/bin/pager-decide.js" "$PAGINATE") || true
+	case "${_pk:-}" in
+		pager) echo "[fetch-approvals] paginating via combobox: $total page(s)…" ;;
+		uncertain) echo "[fetch-approvals] ⚠ page combobox ambiguous / not a clean 1..N — scanning page 1 only (fail-closed)" >&2; total=1 ;;
+		*) total=1 ;;
+	esac
 	[ "$total" -gt 100 ] && total=100   # runaway guard
-	echo "[fetch-approvals] paginating via combobox: $total page(s)…"
 	for ((p=2; p<=total; p++)); do
-		ref="$(printf '%s' "$cur" | jq -r '.refs|to_entries[]|select(.value.role=="combobox")|.key' | head -1)"
-		[ -n "$ref" ] || { echo "  ⚠ no combobox on page — stopping pagination" >&2; break; }
+		read -r _k _t ref < <(printf '%s' "$cur" | node "$PROBE_ROOT/bin/pager-decide.js" "$PAGINATE") || true
+		[ -n "${ref:-}" ] || { echo "  ⚠ page combobox no longer identifiable — stopping pagination" >&2; break; }
 		ABX select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
 		# Gate: poll until the row set CHANGES (the AJAX page actually loaded), capturing it once loaded.
 		loaded=0

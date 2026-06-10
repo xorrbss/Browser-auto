@@ -122,8 +122,15 @@ P1SNAP="$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)"
 SIG1="$(_list_keysig "$P1SNAP")"
 TOTAL=1
 if [ "$PAGINATE" = "combobox" ]; then
-	TOTAL="$(printf '%s' "$P1SNAP" | jq '[.refs[]|select(.role=="option" and (((.name//"")|test("^[0-9]+$"))))]|length' 2>/dev/null || echo 1)"
-	[ "$TOTAL" -ge 1 ] 2>/dev/null || TOTAL=1
+	# Shared fail-closed page decision (bin/pager-decide.js → guards.pagerDecision, same rule as the
+	# Playwright engine): a single clean 1..N <select>; anything else ⇒ page 1 only (a doc on an unscanned
+	# page then falls through to "not found on any page" + skip — never a wrong-combobox page change).
+	read -r _pk TOTAL _pref < <(printf '%s' "$P1SNAP" | node "$PROBE_ROOT/bin/pager-decide.js" "$PAGINATE") || true
+	case "${_pk:-}" in
+		pager) : ;;
+		uncertain) echo "[enrich-system] ⚠ page combobox ambiguous / not a clean 1..N — scanning page 1 only (fail-closed)" >&2; TOTAL=1 ;;
+		*) TOTAL=1 ;;
+	esac
 	[ "$TOTAL" -gt 100 ] && TOTAL=100
 fi
 echo "[enrich-system] list has $TOTAL page(s)."
@@ -147,8 +154,8 @@ for key in "${DOCS[@]}"; do
 	for ((p=1; p<=TOTAL; p++)); do
 		if [ "$p" -gt 1 ]; then
 			cur="$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)"
-			ref="$(printf '%s' "$cur" | jq -r '.refs|to_entries[]|select(.value.role=="combobox")|.key' 2>/dev/null | head -1 || true)"
-			[ -n "$ref" ] || break
+			read -r _k _t ref < <(printf '%s' "$cur" | node "$PROBE_ROOT/bin/pager-decide.js" "$PAGINATE" 2>/dev/null) || true
+			[ -n "${ref:-}" ] || break
 			ABX select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
 			for _t in $(seq 1 12); do
 				ids="$(_list_keysig "$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)")"

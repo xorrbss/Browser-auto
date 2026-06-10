@@ -76,13 +76,19 @@ prev="$(jq -r '[.[].key]|sort|join(",")' "$ITEMS_DIR/p001.json")"
 echo "[sync-system] page 1: $(jq 'length' "$ITEMS_DIR/p001.json") rows"
 
 if [ "$PAGINATE" = "combobox" ]; then
-	total="$(printf '%s' "$cur" | jq '[.refs[]|select(.role=="option" and (((.name//"")|test("^[0-9]+$"))))]|length')"
-	[ "$total" -ge 1 ] 2>/dev/null || total=1
+	# Shared fail-closed page decision (bin/pager-decide.js → guards.pagerDecision, same rule as the
+	# Playwright engine): trust ONLY a single clean 1..N <select>; anything else ⇒ scan page 1 only (never
+	# drive a guessed first combobox, which could be a filter/rows-per-page and would STORE wrong rows).
+	read -r _pk total _pref < <(printf '%s' "$cur" | node "$PROBE_ROOT/bin/pager-decide.js" "$PAGINATE") || true
+	case "${_pk:-}" in
+		pager) echo "[sync-system] paginating: $total page(s)…" ;;
+		uncertain) echo "[sync-system] ⚠ page combobox ambiguous / not a clean 1..N — scanning page 1 only (fail-closed)" >&2; total=1 ;;
+		*) total=1 ;;
+	esac
 	[ "$total" -gt 100 ] && total=100
-	echo "[sync-system] paginating: $total page(s)…"
 	for ((p=2; p<=total; p++)); do
-		ref="$(printf '%s' "$cur" | jq -r '.refs|to_entries[]|select(.value.role=="combobox")|.key' | head -1)"
-		[ -n "$ref" ] || { echo "  ⚠ no combobox — stopping" >&2; break; }
+		read -r _k _t ref < <(printf '%s' "$cur" | node "$PROBE_ROOT/bin/pager-decide.js" "$PAGINATE") || true
+		[ -n "${ref:-}" ] || { echo "  ⚠ page combobox no longer identifiable — stopping" >&2; break; }
 		ABX select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
 		loaded=0
 		for _t in $(seq 1 12); do
