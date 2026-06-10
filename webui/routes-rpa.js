@@ -6,8 +6,8 @@
 import { classifyIntent, runQuery, runRecordsQuery } from './agent.js';
 import { validSysName, listSystemsView, getSystemView, saveSystem, removeSystem, recordsView, readProposed, systemState, systemActions, allActionsView } from './systems.js';
 
-// rpaPost(p, bodyJson, res, {sendJson, enqueue, gitBash}) -> handled? (async: /api/agent classifies)
-export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, authSpawn, nodeLeaf }) {
+// rpaPost(p, bodyJson, res, {sendJson, enqueue, authSpawn, nodeLeaf}) -> handled? (async: /api/agent classifies)
+export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, authSpawn, nodeLeaf }) {
 	if (p === '/api/sync') {
 		sendJson(res, 410, { error: 'legacy approvals sync was removed with the agent-browser runtime; register a Playwright system and use /api/systems/:name/sync.' });
 		return true;
@@ -62,12 +62,12 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, au
 		if (!sysv) { sendJson(res, 404, { error: 'no such system' }); return true; }
 		if (action === 'auth') {
 			if (!sysv.login_url || !sysv.success_url) { sendJson(res, 400, { error: 'register login_url + success_url first' }); return true; }
+			// authSpawn (server.js systemAuthSpawn) converts the success-URL glob to auth-pw.mjs's substring
+			// needle — there is deliberately NO inline fallback here (a raw glob needle would never match).
 			const job = enqueue({
-					kind: 'auth',
-					label: `auth ${name} (playwright)`,
-				spawnFn: () => authSpawn
-					? authSpawn('playwright', name, sysv.login_url, sysv.success_url)
-					: nodeLeaf('approve/auth-pw.mjs', [sysv.login_url, sysv.success_url, `fixtures/auth/playwright/${name}.state.json`]),
+				kind: 'auth',
+				label: `auth ${name} (playwright)`,
+				spawnFn: () => authSpawn('playwright', name, sysv.login_url, sysv.success_url),
 			});
 			sendJson(res, 202, { job });
 			return true;

@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const dbm = require('../lib/db.js');
 const { resolveAuthStatePath } = require('../lib/engine.js');
+import { pagerDecision } from '../approve/guards.mjs'; // THE pager fail-closed rule — shared with approve-run.mjs (one copy, no drift)
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 const DATA_DIR = path.join(PROBE_ROOT, 'data');
@@ -123,6 +124,12 @@ async function waitText(page, text, seconds = 15) {
 	await page.getByText(text, { exact: false }).first().waitFor({ state: 'visible', timeout: seconds * 1000 }).catch(() => {});
 }
 
+// readySeconds(ready, dflt): honor the recipe's documented ready.timeout (seconds), else the default.
+function readySeconds(ready, dflt) {
+	const n = Number(ready && ready.timeout);
+	return Number.isFinite(n) && n > 0 ? n : dflt;
+}
+
 async function snapshotData(page) {
 	const snapshot = await page.locator('body').ariaSnapshot({ timeout: 10000 });
 	let origin = '';
@@ -152,24 +159,20 @@ async function snapshotList(page, recipePath) {
 	return { data, items, sig: keySig(items) };
 }
 
+// pagerInfo: adapt the live page's <select> option texts to the SHARED fail-closed pager rule
+// (approve/guards.mjs::pagerDecision — the same rule the approve leaf's all-pages scan trusts).
+// 'none' ⇒ single page; 'uncertain' (windowed/ambiguous/non-1..N pager) ⇒ throw, never under-scan.
 async function pagerInfo(page, recipe) {
-	if ((recipe?.pagination?.mode || '') !== 'combobox') return null;
+	const mode = recipe?.pagination?.mode || '';
+	if (!mode) return null;
 	const selects = page.locator('select');
 	const n = await selects.count();
-	const candidates = [];
-	for (let i = 0; i < n; i++) {
-		const loc = selects.nth(i);
-		const labels = (await loc.locator('option').allTextContents()).map((s) => String(s).trim());
-		const nums = labels.map((s) => (/^[0-9]+$/.test(s) ? Number(s) : null)).filter((x) => x != null);
-		if (!nums.length) continue;
-		const uniq = [...new Set(nums)].sort((a, b) => a - b);
-		if (uniq[0] !== 1) continue;
-		if (uniq.some((v, idx) => v !== idx + 1)) continue;
-		candidates.push({ locator: loc, total: uniq.length });
-	}
-	if (!candidates.length) return null;
-	if (candidates.length > 1) throw new Error('pagination combobox is ambiguous (multiple 1..N selects)');
-	return candidates[0];
+	const optionTexts = [];
+	for (let i = 0; i < n; i++) optionTexts.push(await selects.nth(i).locator('option').allTextContents());
+	const d = pagerDecision(mode, optionTexts);
+	if (d.kind === 'none') return null;
+	if (d.kind !== 'pager') throw new Error('pagination combobox is ambiguous/untrustworthy (fail-closed; see guards.pagerDecision)');
+	return { locator: selects.nth(d.index), total: d.total };
 }
 
 async function selectPage(pager, p) {
@@ -249,7 +252,7 @@ async function analyze(system, recipePath) {
 	try {
 		log(prefix, `'${system.name}' -> launching Playwright (cached auth)...`);
 		await gotoTarget(page, system.target_url, prefix);
-		await waitText(page, system.recipe?.ready?.text || '', 15);
+		await waitText(page, system.recipe?.ready?.text || '', readySeconds(system.recipe?.ready, 15));
 		const data = await snapshotData(page);
 		fs.writeFileSync(snapPath, JSON.stringify(data, null, 2) + '\n');
 		log(prefix, `snapshot saved -> ${snapPath}`);
@@ -272,7 +275,7 @@ async function sync(system, recipePath) {
 	try {
 		log(prefix, `'${system.name}' -> launching Playwright (cached auth)...`);
 		await gotoTarget(page, system.target_url, prefix);
-		await waitText(page, system.recipe?.ready?.text || '', 15);
+		await waitText(page, system.recipe?.ready?.text || '', readySeconds(system.recipe?.ready, 15));
 		const pages = [];
 		let cur = await snapshotList(page, recipePath);
 		pages.push(cur.items);
@@ -316,7 +319,7 @@ function recordsToEnrich(systemName) {
 
 async function openRecord(page, system, recipePath, key, listReady) {
 	await page.goto(system.target_url, { waitUntil: 'domcontentloaded' });
-	await waitText(page, listReady, 12);
+	await waitText(page, listReady, readySeconds(system.recipe?.ready, 12));
 	let cur = await snapshotList(page, recipePath).catch(() => ({ sig: '' }));
 	const pager = await pagerInfo(page, system.recipe);
 	const total = pager ? Math.min(pager.total, 100) : 1;
@@ -374,7 +377,7 @@ async function enrich(system, recipePath) {
 				log(prefix, `  click did not open a detail page (no ${urlGlob}) - skipping ${key}`);
 				continue;
 			}
-			await waitText(page, readyText, 12);
+			await waitText(page, readyText, readySeconds(detail.ready, 12));
 			try {
 				const data = await snapshotData(page);
 				const item = extractDetail(data, recipePath, key);

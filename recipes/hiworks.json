@@ -17,7 +17,6 @@
   "strip": { "title": "첨부 파일 표시" },
   "pagination": { "mode": "combobox" },
   "detail": {
-    "open": "click-doc-id",
     "ready": { "text": "기안 부서" },
     "urlGlob": "**/document/view/**",
     "idLabel": "문서 번호",

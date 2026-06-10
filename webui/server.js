@@ -40,7 +40,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { listRuns, getRun, getTrends, pruneArtifacts, ARTIFACTS_DIR } from './index.js';
 import { enqueue, jobStatus, jobResult, subscribe, queueState, cancel, stop, killRunning } from './jobs.js';
-import { gitBash, browserBash, recordCmd, nodeLeaf } from './spawn.js';
+import { gitBash, recordCmd, nodeLeaf } from './spawn.js';
 import { listFlows, getFlow, resolveStep, resolveClickedRecordStep, saveValues, validName, flowExists } from './flows.js';
 import { getSystemView } from './systems.js';
 import { listAuthStates, listAuthStateSummaries, validApp, deleteAuthState } from './auth.js';
@@ -286,7 +286,7 @@ const server = http.createServer(async (req, res) => {
 					return sendJson(res, 400, { error: 'invalid test glob' });
 				}
 				const label = glob ? `run.sh ${glob}` : 'run.sh (all)';
-				const job = enqueue({ kind: 'run', label, spawnFn: () => browserBash('run.sh', glob ? [glob] : []) });
+				const job = enqueue({ kind: 'run', label, spawnFn: () => gitBash('run.sh', glob ? [glob] : []) });
 				return sendJson(res, 202, { job });
 			}
 			const mCancel = /^\/api\/jobs\/([^/]+)\/cancel$/.exec(p);
@@ -375,9 +375,9 @@ const server = http.createServer(async (req, res) => {
 			}
 
 				// 결재/RPA routes (sync, NL command router, system registry) — see webui/routes-rpa.js.
-				if (await commandPlanPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash, nodeLeaf })) return;
+				if (await commandPlanPost(p, bodyJson, res, { sendJson, enqueue, gitBash, nodeLeaf })) return;
 				if (approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf })) return;
-				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash: browserBash, authSpawn: systemAuthSpawn, nodeLeaf })) return;
+				if (await rpaPost(p, bodyJson, res, { sendJson, enqueue, authSpawn: systemAuthSpawn, nodeLeaf })) return;
 
 			if (p === '/api/auth') {
 				const app = String(bodyJson.app || '').trim();

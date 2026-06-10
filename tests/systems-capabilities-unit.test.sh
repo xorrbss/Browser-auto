@@ -3,7 +3,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"; rm -f "$DIR/fixtures/auth/capunit.state.json" "$DIR/approve/capunit.pw-state.json"; rm -rf "$DIR/fixtures/auth/playwright/capunit.state.json"' EXIT
+trap 'rm -rf "$TMP"; rm -f "$DIR/approve/capunit.pw-state.json" "$DIR/fixtures/auth/playwright/capunit.state.json"' EXIT
 
 ( cd "$DIR" && AQA_DB_PATH="$TMP/t.db" node --input-type=module - <<'NODE'
 import fs from 'node:fs';
@@ -13,12 +13,10 @@ process.env.AQA_DB_PATH = process.env.AQA_DB_PATH;
 const require = createRequire(import.meta.url);
 const dbm = require('./lib/db.js');
 
-fs.mkdirSync('fixtures/auth', { recursive: true });
 fs.mkdirSync('fixtures/auth/playwright', { recursive: true });
 fs.mkdirSync('approve', { recursive: true });
-fs.writeFileSync('fixtures/auth/capunit.state.json', '{}');
 fs.writeFileSync('fixtures/auth/playwright/capunit.state.json', '{}');
-fs.writeFileSync('approve/capunit.pw-state.json', '{}');
+fs.writeFileSync('approve/capunit.pw-state.json', '{}'); // legacy compat location — still honored read-side
 
 const recipe = {
 	collection: { name: 'Rows' },

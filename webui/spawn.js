@@ -26,12 +26,6 @@ export function gitBash(scriptRel, args = [], extraEnv = null) {
 	return spawn(GIT_BASH, [scriptRel, ...args], spawnOpts(extraEnv));
 }
 
-// Compatibility wrapper for bash browser jobs. WebUI record/auth/verify use
-// Playwright leaves.
-export function browserBash(scriptRel, args = [], extraEnv = null) {
-	return gitBash(scriptRel, args, extraEnv);
-}
-
 export function recordCmd(name, startUrl, { app, seconds, stopFile, engine } = {}) {
 	if (engine && engine !== 'playwright') {
 		throw new Error(`record.engine: invalid engine "${engine}" (WebUI is Playwright-only)`);

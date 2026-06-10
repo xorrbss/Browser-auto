@@ -1442,12 +1442,7 @@ function selectedSystemObj() {
 	return state.systems.find((s) => s.name === state.selectedSystem) || null;
 }
 
-function ensureSystemEngineField() {
-	return;
-}
-
 function renderSystemForm() {
-	ensureSystemEngineField();
 	const sys = selectedSystemObj();
 	const badgeNode = $('#sys-selected-badge');
 	if (!badgeNode) return;

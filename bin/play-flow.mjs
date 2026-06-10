@@ -14,7 +14,6 @@ const aria = require('../lib/aria.js');
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 const ASSERT_KINDS = new Set(['url', 'text', 'value', 'visible', 'count', 'absent']);
-const EFFECTFUL = new Set(['click', 'fill', 'type', 'select', 'check', 'uncheck']);
 const SAFE_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 const argv = process.argv.slice(2);
