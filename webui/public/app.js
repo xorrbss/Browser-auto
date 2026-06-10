@@ -5,6 +5,13 @@ import { $, el, getJson, fmtTime, streamJob, cancelJob, stopJob } from './util.j
 
 const DEFAULT_ENGINE = 'playwright';
 const FLOW_NAME_RE = /^[A-Za-z0-9_-]+$/;
+const RBAC_ENDPOINTS = ['/api/rbac', '/api/session'];
+const RBAC_PERMISSIONS = ['read', 'sync', 'enrich', 'auth', 'record', 'verify', 'compile', 'run', 'live-action', 'approve'];
+const ROLE_PERMISSIONS = {
+	viewer: ['read'],
+	operator: ['read', 'sync', 'enrich', 'auth', 'record', 'verify', 'compile', 'run'],
+	owner: RBAC_PERMISSIONS,
+};
 
 const VIEW_TITLES = {
 	automation: '자동화 만들기',
@@ -31,6 +38,7 @@ const state = {
 	flows: [],
 	auth: [],
 	authStates: [],
+	rbac: null,
 	readiness: null,
 	actionStates: new Map(),
 	actions: [],
@@ -83,6 +91,250 @@ function statusKind(value) {
 function statusBadge(value, override) {
 	const label = safeText(value, 'unknown');
 	return badge(label, override || statusKind(label));
+}
+
+function cleanAccessToken(value) {
+	return String(value || '').trim();
+}
+
+function canonicalPermission(value) {
+	const s = cleanAccessToken(value).toLowerCase();
+	if (!s) return '';
+	if (RBAC_PERMISSIONS.includes(s)) return s;
+	if (/(^|[.:/-])live($|[.:/-])|live[-_ ]?action/.test(s)) return 'live-action';
+	if (/approve|approval|confirm/.test(s)) return 'approve';
+	if (/compile/.test(s)) return 'compile';
+	if (/verify/.test(s)) return 'verify';
+	if (/record|capture/.test(s)) return 'record';
+	if (/auth|login/.test(s)) return 'auth';
+	if (/enrich|analy[sz]e|detail|summary/.test(s)) return 'enrich';
+	if (/sync|refresh/.test(s)) return 'sync';
+	if (/run|execute|cancel|stop|plan/.test(s)) return 'run';
+	if (/read|view|list|audit|diagnostic/.test(s)) return 'read';
+	return s;
+}
+
+function normalizeCapabilityValue(value) {
+	if (typeof value === 'boolean') return { allowed: value, reason: value ? '' : 'capability denied' };
+	if (!value || typeof value !== 'object') return { allowed: true, reason: '' };
+	const allowed = value.allowed ?? value.ok ?? value.enabled ?? value.granted;
+	const stateValue = String(value.state || value.status || '').toLowerCase();
+	const inferred = allowed == null && stateValue
+		? ['enabled', 'allowed', 'granted', 'ok', 'ready'].includes(stateValue)
+		: undefined;
+	const finalAllowed = allowed == null ? (inferred ?? true) : !!allowed;
+	return {
+		allowed: finalAllowed,
+		reason: cleanAccessToken(value.reason || value.disabledReason || value.error || (finalAllowed ? '' : 'capability denied')),
+	};
+}
+
+function collectAccessList(target, values) {
+	if (!Array.isArray(values)) return;
+	for (const value of values) {
+		if (typeof value === 'string') {
+			const permission = canonicalPermission(value);
+			if (permission) target.permissionSet.add(permission);
+			continue;
+		}
+		if (!value || typeof value !== 'object') continue;
+		const permission = canonicalPermission(value.permission || value.name || value.id || value.key || value.capability);
+		if (!permission) continue;
+		const status = normalizeCapabilityValue(value);
+		target.capabilities.set(permission, status);
+		if (status.allowed) target.permissionSet.add(permission);
+	}
+}
+
+function collectAccessObject(target, value) {
+	if (!value || Array.isArray(value) || typeof value !== 'object') return;
+	for (const [key, raw] of Object.entries(value)) {
+		const permission = canonicalPermission(key);
+		if (!permission) continue;
+		const status = normalizeCapabilityValue(raw);
+		target.capabilities.set(permission, status);
+		if (status.allowed) target.permissionSet.add(permission);
+	}
+}
+
+function normalizeRbacPayload(data, endpoint) {
+	const root = data && typeof data === 'object' ? data : {};
+	const actor = root.actor || root.currentActor || root.current || root.principal || root.user || {};
+	const actorId = cleanAccessToken(actor.id || actor.actor || actor.name || root.actorId || root.actorName || root.actor) || 'local-operator';
+	const role = cleanAccessToken(actor.role || root.role || root.actorRole).toLowerCase();
+	const access = {
+		available: true,
+		endpoint,
+		actorId,
+		role,
+		permissionSet: new Set(),
+		capabilities: new Map(),
+		hasExplicitPermissions: false,
+		error: '',
+		raw: root,
+	};
+	for (const values of [root.permissions, actor.permissions, root.capabilities, actor.capabilities]) {
+		if (values != null) access.hasExplicitPermissions = true;
+		collectAccessList(access, values);
+	}
+	for (const value of [root.permissions, actor.permissions, root.capabilities, actor.capabilities]) {
+		if (value && !Array.isArray(value) && typeof value === 'object') access.hasExplicitPermissions = true;
+		collectAccessObject(access, value);
+	}
+	return access;
+}
+
+function fallbackRbac(error = '') {
+	return {
+		available: false,
+		endpoint: '/api/rbac',
+		actorId: 'local-operator',
+		role: '',
+		permissionSet: new Set(),
+		capabilities: new Map(),
+		hasExplicitPermissions: false,
+		error,
+		raw: null,
+	};
+}
+
+async function loadRbac() {
+	for (const endpoint of RBAC_ENDPOINTS) {
+		try {
+			const r = await fetch(endpoint, { cache: 'no-store' });
+			if (r.status === 404) continue;
+			if (!r.ok) {
+				state.rbac = fallbackRbac(`${r.status} ${r.statusText} for ${endpoint}`);
+				renderAccess();
+				return;
+			}
+			const data = await r.json().catch(() => ({}));
+			state.rbac = normalizeRbacPayload(data, endpoint);
+			renderAccess();
+			return;
+		} catch (e) {
+			state.rbac = fallbackRbac(e.message);
+		}
+	}
+	state.rbac = fallbackRbac();
+	renderAccess();
+}
+
+function roleAllows(role, permission) {
+	const permissions = ROLE_PERMISSIONS[role];
+	return Array.isArray(permissions) && permissions.includes(permission);
+}
+
+function accessDecision(required) {
+	const permissions = (Array.isArray(required) ? required : [required]).map(canonicalPermission).filter(Boolean);
+	if (!permissions.length) return { allowed: true, reason: '', permissions };
+	const access = state.rbac;
+	if (!access || !access.available) return { allowed: true, reason: '', permissions };
+	const denied = [];
+	for (const permission of permissions) {
+		const capability = access.capabilities.get(permission);
+		if (capability) {
+			if (!capability.allowed) denied.push(capability.reason || `permission "${permission}" denied`);
+			continue;
+		}
+		if (access.hasExplicitPermissions) {
+			if (!access.permissionSet.has(permission)) denied.push(`role "${access.role || 'unknown'}" lacks permission "${permission}"`);
+			continue;
+		}
+		if (access.role && ROLE_PERMISSIONS[access.role]) {
+			if (!roleAllows(access.role, permission)) denied.push(`role "${access.role}" lacks permission "${permission}"`);
+			continue;
+		}
+		if (access.role) denied.push(`unknown role "${access.role}"`);
+	}
+	return denied.length ? { allowed: false, reason: denied.join(' / '), permissions } : { allowed: true, reason: '', permissions };
+}
+
+function requireAccess(required, label) {
+	const decision = accessDecision(required);
+	if (decision.allowed) return true;
+	alert(`${label || '작업'} 권한 제한: ${decision.reason}`);
+	return false;
+}
+
+function accessTitle(decision, fallback = '') {
+	if (decision?.allowed === false) return `권한 제한: ${decision.reason}`;
+	return fallback || '';
+}
+
+function accessAttrs(decision) {
+	return decision?.allowed === false ? { disabled: 'disabled', title: accessTitle(decision) } : {};
+}
+
+function systemActionPermission(action) {
+	const key = String(action || '').toLowerCase();
+	if (key === 'auth') return 'auth';
+	if (key === 'sync') return 'sync';
+	if (key === 'enrich' || key === 'analyze') return 'enrich';
+	if (key === 'delete') return 'live-action';
+	if (key === 'save') return 'live-action';
+	return 'run';
+}
+
+function actionPermissions(action) {
+	const perms = new Set();
+	const name = String(action?.action || '').toLowerCase();
+	const permission = canonicalPermission(action?.permission);
+	if (permission) perms.add(permission);
+	if (name === 'auth') perms.add('auth');
+	else if (name === 'sync') perms.add('sync');
+	else if (name === 'enrich' || name === 'analyze') perms.add('enrich');
+	else if (name === 'record') perms.add('record');
+	else if (name === 'verify') perms.add('verify');
+	else if (name === 'compile') perms.add('compile');
+	else if (name === 'run') perms.add('run');
+	else if (name === 'approve') perms.add('approve');
+	if (String(action?.riskClass || '').toLowerCase() === 'irreversible') perms.add('live-action');
+	return [...perms];
+}
+
+function permissionLabel(permissions) {
+	const list = (Array.isArray(permissions) ? permissions : [permissions]).filter(Boolean);
+	return list.length ? list.join(' + ') : 'read';
+}
+
+function accessKind() {
+	if (!state.rbac?.available) return state.rbac?.error ? 'warning' : 'neutral';
+	if (state.rbac.role === 'owner') return 'success';
+	if (state.rbac.role === 'operator') return 'info';
+	if (state.rbac.role === 'viewer') return 'warning';
+	return 'danger';
+}
+
+function permissionSummary() {
+	const access = state.rbac;
+	if (!access?.available) return 'RBAC API 대기';
+	if (access.permissionSet.size) return [...access.permissionSet].sort().join(', ');
+	if (access.role && ROLE_PERMISSIONS[access.role]) return ROLE_PERMISSIONS[access.role].join(', ');
+	return '권한 미확인';
+}
+
+function renderAccess() {
+	const meta = document.querySelector('.page-meta');
+	const actorPill = meta?.querySelector('.pill');
+	if (actorPill) {
+		actorPill.textContent = `작업자: ${state.rbac?.actorId || 'local-operator'}`;
+		actorPill.className = 'pill';
+		actorPill.title = state.rbac?.available ? 'RBAC actor' : 'RBAC API가 없으면 기존 로컬 UI 상태만 표시합니다.';
+	}
+	let rolePill = $('#top-rbac-pill');
+	if (!rolePill && meta) {
+		rolePill = el('span', { id: 'top-rbac-pill', class: 'pill muted' });
+		const host = $('#top-host-pill');
+		if (host) host.after(rolePill);
+		else meta.append(rolePill);
+	}
+	if (!rolePill) return;
+	const role = state.rbac?.role || (state.rbac?.available ? 'unknown' : 'local');
+	rolePill.textContent = state.rbac?.available ? `역할: ${role}` : '권한: API 대기';
+	rolePill.className = `pill ${accessKind() === 'neutral' ? 'muted' : accessKind()}`;
+	rolePill.title = state.rbac?.error || permissionSummary();
+	document.body.dataset.rbacRole = role;
 }
 
 async function postJson(url, body) {
@@ -152,6 +404,7 @@ function inferAction(text) {
 }
 
 async function makePlan(source) {
+	if (!requireAccess('run', '플랜 미리보기')) return null;
 	const text = String(source || '').trim() || 'Review selected pending approvals';
 	const body = { text, system: state.selectedSystem || 'hiworks', mode: 'reviewed' };
 	const action = inferAction(text);
@@ -180,6 +433,7 @@ async function makePlan(source) {
 
 	// 동기화: 등록된 Playwright system sync를 직렬 큐에 올리고, 끝나면 대상 검토 표를 새로고침한다.
 async function runApprovalsSync() {
+	if (!requireAccess('sync', '동기화')) return;
 	const app = state.selectedSystem || 'hiworks';
 	const log = $('#job-log');
 	if (log) {
@@ -208,7 +462,7 @@ function addTimeline(title, detail, kind = 'info') {
 }
 
 async function loadCoreData() {
-	await Promise.allSettled([loadApprovals(), loadSystems(), loadQueue(), loadAudit(), loadFlowsList(), loadAuthStates()]);
+	await Promise.allSettled([loadRbac(), loadApprovals(), loadSystems(), loadQueue(), loadAudit(), loadFlowsList(), loadAuthStates()]);
 	renderAll();
 }
 
@@ -286,6 +540,7 @@ async function loadAudit() {
 
 async function loadDiagnostics() {
 	await Promise.allSettled([
+		loadRbac(),
 		getJson('/api/runs').then((d) => { state.runs = d.runs || []; }),
 		getJson('/api/flows').then((d) => { state.flows = d.flows || []; }),
 		getJson('/api/readiness').then((d) => { state.readiness = d || null; }),
@@ -327,6 +582,7 @@ function loadView(view) {
 }
 
 function renderAll() {
+	renderAccess();
 	renderAutomation();
 	renderCommandCenter();
 	renderPlan();
@@ -780,6 +1036,11 @@ function renderAutomation() {
 	const loggedIn = automationLoggedIn(form);
 	const busy = queueBusy();
 	const busyText = queueBusyText();
+	const authAccess = accessDecision('auth');
+	const recordAccess = accessDecision('record');
+	const verifyAccess = accessDecision('verify');
+	const compileAccess = accessDecision('compile');
+	const runAccess = accessDecision('run');
 	const badges = $('#auto-status-badges');
 	if (badges) {
 		setChildren(
@@ -799,14 +1060,14 @@ function renderAutomation() {
 	}
 	const stopBtn = $('#auto-stop-record');
 	if (stopBtn) {
-		stopBtn.disabled = !recordRunning;
-		stopBtn.title = recordQueued ? '앞선 작업이 끝나고 녹화가 시작되면 종료할 수 있습니다.' : '';
+		stopBtn.disabled = !recordRunning || !recordAccess.allowed;
+		stopBtn.title = accessTitle(recordAccess, recordQueued ? '앞선 작업이 끝나고 녹화가 시작되면 종료할 수 있습니다.' : '');
 	}
 	const startBtn = $('#auto-start-record');
 	if (startBtn) {
-		startBtn.disabled = activeRecord || activeVerify || activeRun || busy || !form.recordUrl;
-		startBtn.textContent = activeRecord ? (recordQueued ? '녹화 대기 중' : '녹화 중') : busy ? '작업 대기 중' : '녹화 시작';
-		startBtn.title = !form.recordUrl ? '로그인 이후 실제 업무 화면 URL을 입력하세요.' : !activeRecord && busy ? busyText : '';
+		startBtn.disabled = activeRecord || activeVerify || activeRun || busy || !form.recordUrl || !recordAccess.allowed;
+		startBtn.textContent = !recordAccess.allowed ? '권한 제한' : activeRecord ? (recordQueued ? '녹화 대기 중' : '녹화 중') : busy ? '작업 대기 중' : '녹화 시작';
+		startBtn.title = accessTitle(recordAccess, !form.recordUrl ? '로그인 이후 실제 업무 화면 URL을 입력하세요.' : !activeRecord && busy ? busyText : '');
 	}
 	const authBadge = $('#auto-auth-badge');
 	if (authBadge) {
@@ -819,30 +1080,30 @@ function renderAutomation() {
 	}
 	const authBtn = $('#auto-auth');
 	if (authBtn) {
-		authBtn.disabled = loggedIn || busy || !form.app || !form.loginUrl || !form.successUrl;
-		authBtn.textContent = loggedIn ? '로그인 등록됨' : busy ? '작업 대기 중' : '로그인 등록';
+		authBtn.disabled = loggedIn || busy || !form.app || !form.loginUrl || !form.successUrl || !authAccess.allowed;
+		authBtn.textContent = !authAccess.allowed ? '권한 제한' : loggedIn ? '로그인 등록됨' : busy ? '작업 대기 중' : '로그인 등록';
 		// form.successUrl is derived from recordUrl||loginUrl, so it is empty only when the login URL
 		// itself is missing or malformed (a valid login URL always yields a host needle).
-		authBtn.title = !form.loginUrl
+		authBtn.title = accessTitle(authAccess, !form.loginUrl
 			? '로그인 URL을 입력하세요.'
 			: !form.successUrl
 				? '로그인 URL 형식을 확인하세요.'
-				: !loggedIn && busy ? busyText : '';
+				: !loggedIn && busy ? busyText : '');
 	}
 	const authJob = queueJob(state.automation.authJob);
 	const authRunning = authJob?.status === 'running';
 	const authStopBtn = $('#auto-auth-stop');
 	if (authStopBtn) {
-		authStopBtn.disabled = !authRunning;
-		authStopBtn.title = authRunning
+		authStopBtn.disabled = !authRunning || !authAccess.allowed;
+		authStopBtn.title = accessTitle(authAccess, authRunning
 			? '로그인을 마쳤다면 누르세요. 현재 로그인 상태를 저장하고 창을 닫습니다.'
-			: '로그인 등록을 시작하면 활성화됩니다.';
+			: '로그인 등록을 시작하면 활성화됩니다.');
 	}
 	const authClearBtn = $('#auto-auth-clear');
 	if (authClearBtn) {
 		authClearBtn.hidden = !loggedIn; // appears only once a login is registered, so it can be reset
-		authClearBtn.disabled = busy || !form.app;
-		authClearBtn.title = busy ? busyText : '저장된 로그인을 지워 다시 로그인할 수 있게 합니다.';
+		authClearBtn.disabled = busy || !form.app || !authAccess.allowed;
+		authClearBtn.title = accessTitle(authAccess, busy ? busyText : '저장된 로그인을 지워 다시 로그인할 수 있게 합니다.');
 	}
 	const authHint = $('#auto-auth-hint');
 	if (authHint) {
@@ -865,19 +1126,25 @@ function renderAutomation() {
 	const verifyBtn = $('#auto-verify');
 	if (verifyBtn) {
 		const needsReview = !!(flow && flow.needsReviewSteps?.length);
-		verifyBtn.disabled = !flow || needsReview || activeRecord || activeVerify || activeRun || busy;
-		verifyBtn.textContent = needsReview ? '후보 선택 필요' : activeVerify ? '검증 중' : '검증';
-		verifyBtn.title = needsReview ? '아래 후보를 먼저 선택해야 검증할 수 있습니다.' : '';
+		verifyBtn.disabled = !flow || needsReview || activeRecord || activeVerify || activeRun || busy || !verifyAccess.allowed;
+		verifyBtn.textContent = !verifyAccess.allowed ? '권한 제한' : needsReview ? '후보 선택 필요' : activeVerify ? '검증 중' : '검증';
+		verifyBtn.title = accessTitle(verifyAccess, needsReview ? '아래 후보를 먼저 선택해야 검증할 수 있습니다.' : '');
 	}
 	const compileBtn = $('#auto-compile');
 	if (compileBtn) {
-		compileBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun;
-		compileBtn.title = flow && !flow.compilable ? flowReadyReason(flow) : '';
+		compileBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun || !compileAccess.allowed;
+		compileBtn.title = accessTitle(compileAccess, flow && !flow.compilable ? flowReadyReason(flow) : '');
 	}
 	const runBtn = $('#auto-run');
 	if (runBtn) {
-		runBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun || busy;
-		runBtn.textContent = flow && !flow.compiled ? '컴파일 후 실행' : '실행';
+		runBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun || busy || !runAccess.allowed;
+		runBtn.textContent = !runAccess.allowed ? '권한 제한' : flow && !flow.compiled ? '컴파일 후 실행' : '실행';
+		runBtn.title = accessTitle(runAccess);
+	}
+	const previewBtn = $('#auto-preview');
+	if (previewBtn) {
+		previewBtn.disabled = !runAccess.allowed;
+		previewBtn.title = accessTitle(runAccess);
 	}
 	renderAutomationPreview(form.goal);
 	renderAutomationFlow(flow);
@@ -925,6 +1192,7 @@ function renderAutomationFlow(flow) {
 		metric('입력값', flow.inputTokens.length, flow.missingValues.length ? '누락 있음' : '준비됨'),
 		metric('상태', flow.compiled ? 'compiled' : flowReadyReason(flow), flow.engine),
 	);
+	const recordAccess = accessDecision('record');
 	const steps = el('div', { class: 'step-list' });
 	flow.steps.forEach((s, i) => {
 		const dynamicFirst = s.kind === 'find' && (s.action || 'click') === 'click' && i === 0;
@@ -934,6 +1202,7 @@ function renderAutomationFlow(flow) {
 			dynamicFirst ? el('button', {
 				class: 'btn small ghost',
 				type: 'button',
+				...accessAttrs(recordAccess),
 				onclick: () => resolveAutomationClickedRecord(flow.name, i),
 			}, '클릭한 행 위치로 열기') : null,
 		));
@@ -944,6 +1213,7 @@ function renderAutomationFlow(flow) {
 			actions.append(el('button', {
 				class: 'candidate-button dynamic',
 				type: 'button',
+				...accessAttrs(recordAccess),
 				onclick: () => resolveAutomationClickedRecord(flow.name, item.index),
 			}, '클릭한 행 위치로 열기'));
 		}
@@ -951,6 +1221,7 @@ function renderAutomationFlow(flow) {
 			actions.append(el('button', {
 				class: 'candidate-button',
 				type: 'button',
+				...accessAttrs(recordAccess),
 				onclick: () => resolveAutomationStep(flow.name, item.index, ci),
 			}, `이 후보 사용: ${c.by}: ${c.value}${c.name ? ` / ${c.name}` : ''}`));
 		}
@@ -972,7 +1243,7 @@ function renderAutomationFlow(flow) {
 		valuesBlock = el('div', { class: 'review-block' },
 			el('strong', {}, '입력값'),
 			inputs,
-			el('div', { class: 'button-row' }, el('button', { class: 'btn small', type: 'button', onclick: () => saveAutomationValues(flow.name) }, '값 저장')),
+			el('div', { class: 'button-row' }, el('button', { class: 'btn small', type: 'button', ...accessAttrs(recordAccess), onclick: () => saveAutomationValues(flow.name) }, '값 저장')),
 		);
 	}
 	const compileOut = state.automation.compileOutput ? el('pre', { class: 'joblog compact-log' }, state.automation.compileOutput) : null;
@@ -1008,6 +1279,7 @@ async function loadAutomationFlow(name) {
 }
 
 async function startAutomationRecord(overwrite = false) {
+	if (!requireAccess('record', '녹화')) return;
 	const form = automationForm();
 	if (!form.recordUrl) return alert('녹화 URL을 입력하세요.');
 	const log = $('#auto-record-log');
@@ -1060,6 +1332,7 @@ async function startAutomationRecord(overwrite = false) {
 }
 
 async function stopAutomationRecord() {
+	if (!requireAccess('record', '녹화 종료')) return;
 	const id = state.automation.recordJob;
 	if (!id) return;
 	const log = $('#auto-record-log');
@@ -1072,6 +1345,7 @@ async function stopAutomationRecord() {
 // "로그인 등록됨" purely from a saved state file and cannot tell the session EXPIRED (server-side
 // timeout), so this is the supported reset path. The delete is engine-agnostic server-side (auth.js).
 async function runAutomationAuthClear() {
+	if (!requireAccess('auth', '로그인 초기화')) return;
 	const form = automationForm();
 	if (!form.app) return alert('녹화 URL 또는 로그인 URL을 입력하면 앱 ID는 자동으로 생성됩니다.');
 	if (!automationLoggedIn(form)) return alert('초기화할 저장된 로그인이 없습니다.');
@@ -1093,6 +1367,7 @@ async function runAutomationAuthClear() {
 }
 
 async function runAutomationAuth() {
+	if (!requireAccess('auth', '로그인 등록')) return;
 	const form = automationForm();
 	if (!form.app) return alert('녹화 URL 또는 로그인 URL을 입력하면 앱 ID는 자동으로 생성됩니다.');
 	if (automationLoggedIn(form)) return alert(`${form.app} 로그인 상태가 이미 저장되어 있습니다.`);
@@ -1145,6 +1420,7 @@ async function runAutomationAuth() {
 }
 
 async function stopAutomationAuth() {
+	if (!requireAccess('auth', '로그인 저장')) return;
 	const id = state.automation.authJob;
 	if (!id) return;
 	const log = $('#auto-record-log');
@@ -1156,6 +1432,7 @@ async function stopAutomationAuth() {
 }
 
 async function createAutomationPreview() {
+	if (!requireAccess('run', '미리보기 생성')) return;
 	const form = automationForm();
 	if (!form.goal) return alert('하고 싶은 일을 입력하세요.');
 	state.automation.plan = null;
@@ -1175,6 +1452,7 @@ async function createAutomationPreview() {
 }
 
 async function resolveAutomationStep(name, step, candidate) {
+	if (!requireAccess('record', 'locator 선택')) return;
 	try {
 		await postJson(`/api/flows/${encodeURIComponent(name)}/resolve`, { step, candidate });
 		await loadAutomationFlow(name);
@@ -1184,6 +1462,7 @@ async function resolveAutomationStep(name, step, candidate) {
 }
 
 async function resolveAutomationClickedRecord(name, step) {
+	if (!requireAccess('record', '클릭한 행 위치 설정')) return;
 	const flow = state.automation.flow;
 	const recipe = flowRecipeSuggestion(flow);
 	try {
@@ -1196,6 +1475,7 @@ async function resolveAutomationClickedRecord(name, step) {
 }
 
 async function saveAutomationValues(name) {
+	if (!requireAccess('record', '값 저장')) return;
 	const values = {};
 	document.querySelectorAll('.auto-value-input').forEach((input) => {
 		values[input.dataset.token] = input.value;
@@ -1209,6 +1489,7 @@ async function saveAutomationValues(name) {
 }
 
 async function verifyAutomationFlow() {
+	if (!requireAccess('verify', '검증')) return;
 	const flow = state.automation.flow;
 	if (!flow) return;
 	const log = $('#auto-run-log');
@@ -1243,6 +1524,7 @@ async function verifyAutomationFlow() {
 }
 
 async function compileAutomationFlow() {
+	if (!requireAccess('compile', '컴파일')) return false;
 	const flow = state.automation.flow;
 	if (!flow) return false;
 	state.automation.compileOutput = '컴파일 중...';
@@ -1260,6 +1542,7 @@ async function compileAutomationFlow() {
 }
 
 async function runAutomationFlow() {
+	if (!requireAccess('run', '실행')) return;
 	let flow = state.automation.flow;
 	if (!flow) return;
 	if (!flow.compiled) {
@@ -1387,18 +1670,37 @@ function renderTimeline(selector) {
 function updateActionButtons() {
 	const selected = selectedDocs().length;
 	const editableStatuses = ['planned', 'dry_failed', 'dry_running', 'awaiting_confirmation'];
-	const canDry = !!state.plan && state.plan.action === 'approve' && editableStatuses.includes(state.plan.status) && selected > 0 && !state.activeApproveJob;
-	const canConfirm = canDry && state.dryRunPassed && state.plan.status === 'awaiting_confirmation' && !state.plan.confirmation;
+	const dryAccess = accessDecision('run');
+	const confirmAccess = accessDecision(['live-action', 'approve']);
+	const canDry = dryAccess.allowed && !!state.plan && state.plan.action === 'approve' && editableStatuses.includes(state.plan.status) && selected > 0 && !state.activeApproveJob;
+	const canConfirm = confirmAccess.allowed && canDry && state.dryRunPassed && state.plan.status === 'awaiting_confirmation' && !state.plan.confirmation;
 	for (const id of ['#cc-dry-run', '#tr-dry-run']) {
 		const btn = $(id);
-		if (btn) btn.disabled = !canDry;
+		if (btn) {
+			btn.disabled = !canDry;
+			btn.title = accessTitle(dryAccess);
+		}
 	}
 	for (const id of ['#cc-confirm', '#tr-confirm']) {
 		const btn = $(id);
 		if (btn) {
 			btn.disabled = !canConfirm;
-			btn.textContent = `확정 실행 (${selected})`;
+			btn.textContent = confirmAccess.allowed ? `확정 실행 (${selected})` : '권한 제한';
+			btn.title = accessTitle(confirmAccess);
 		}
+	}
+	for (const id of ['#cc-create-plan', '#cc-select-all', '#cc-clear-selection', '#tr-select-all']) {
+		const btn = $(id);
+		if (btn) {
+			btn.disabled = !dryAccess.allowed;
+			btn.title = accessTitle(dryAccess);
+		}
+	}
+	const syncAccess = accessDecision('sync');
+	const syncBtn = $('#cc-sync');
+	if (syncBtn) {
+		syncBtn.disabled = !syncAccess.allowed;
+		syncBtn.title = accessTitle(syncAccess);
 	}
 }
 
@@ -1426,7 +1728,10 @@ function renderTargetsTable(selector, rows, { compact = false } = {}) {
 		const doc = safeText(a.doc_id);
 		const checked = state.selectedTargets.has(doc);
 		const cb = el('input', { type: 'checkbox', class: 'check', title: '대상 선택', dataset: { doc } });
+		const selectAccess = accessDecision('run');
 		cb.checked = checked;
+		cb.disabled = !selectAccess.allowed;
+		cb.title = accessTitle(selectAccess, '대상 선택');
 		cb.addEventListener('change', () => {
 			if (cb.checked) state.selectedTargets.add(doc);
 			else state.selectedTargets.delete(doc);
@@ -1459,6 +1764,7 @@ function renderTargetsView() {
 }
 
 async function runDryRun() {
+	if (!requireAccess('run', '모의실행')) return;
 	const docs = selectedDocs();
 	if (!docs.length) return;
 	if (!state.plan) await makePlan($('#cc-command').value);
@@ -1505,6 +1811,7 @@ async function runDryRun() {
 }
 
 async function runLiveConfirm() {
+	if (!requireAccess(['live-action', 'approve'], '실제 확정')) return;
 	const docs = selectedDocs();
 	if (!state.plan || !state.dryRunPassed || !docs.length) return;
 	const msg = `선택한 문서 ${docs.length}건에 대해 실제 결재를 요청합니다.\n\n플랜: ${state.plan.id}\n해시: ${state.plan.hash}\n\n계속할까요?`;
@@ -1551,6 +1858,7 @@ async function runLiveConfirm() {
 }
 
 function selectVisibleTargets() {
+	if (!requireAccess('run', '대상 선택')) return;
 	for (const a of pendingApprovals()) {
 		if (a.doc_id) state.selectedTargets.add(a.doc_id);
 	}
@@ -1564,6 +1872,7 @@ function selectVisibleTargets() {
 }
 
 function clearTargets() {
+	if (!requireAccess('run', '대상 선택 해제')) return;
 	state.selectedTargets.clear();
 	if (state.plan && state.plan.action === 'approve') {
 		state.plan.targets = [];
@@ -1575,6 +1884,7 @@ function clearTargets() {
 }
 
 async function runNlCommand() {
+	if (!requireAccess('run', '자연어 명령')) return;
 	const input = $('#nl-command-input');
 	const text = input.value.trim();
 	if (!text) return;
@@ -1636,6 +1946,7 @@ function renderSystems() {
 	renderSystemsTable();
 	renderSystemForm();
 	renderRecords();
+	updateSystemActionButtons();
 }
 
 function renderSystemsTable() {
@@ -1694,6 +2005,24 @@ function renderSystemForm() {
 	}
 }
 
+function updateSystemActionButtons() {
+	const controls = [
+		['#sys-save', 'save'],
+		['#sys-auth', 'auth'],
+		['#sys-analyze', 'analyze'],
+		['#sys-sync', 'sync'],
+		['#sys-enrich', 'enrich'],
+		['#sys-delete', 'delete'],
+	];
+	for (const [selector, action] of controls) {
+		const btn = $(selector);
+		if (!btn) continue;
+		const decision = accessDecision(systemActionPermission(action));
+		btn.disabled = !decision.allowed;
+		btn.title = accessTitle(decision);
+	}
+}
+
 function systemFormBody() {
 	let recipe;
 	const text = $('#sys-recipe').value.trim();
@@ -1710,6 +2039,7 @@ function systemFormBody() {
 }
 
 async function saveSystem() {
+	if (!requireAccess(systemActionPermission('save'), '시스템 저장')) return;
 	let body;
 	try { body = systemFormBody(); } catch (e) { alert(`레시피 JSON 형식이 올바르지 않습니다: ${e.message}`); return; }
 	if (!body.name) { alert('시스템 이름은 필수입니다.'); return; }
@@ -1724,6 +2054,7 @@ async function saveSystem() {
 }
 
 async function runSystemAction(action) {
+	if (!requireAccess(systemActionPermission(action), `시스템 ${action}`)) return;
 	const name = $('#sys-name').value.trim() || state.selectedSystem;
 	if (!name) return alert('먼저 시스템을 선택하거나 입력하세요.');
 	if (action === 'delete' && !window.confirm(`${name} 시스템과 그 레코드를 삭제할까요?`)) return;
@@ -1780,15 +2111,27 @@ function renderActions() {
 	const box = $('#actions-table');
 	if (!box) return;
 	if (state.actionsError) return setChildren(box, errorBox(state.actionsError));
-	const rows = (state.actions || []).map((a) => ({
-		system: a.system,
-		action: a.action,
-		engine: a.engine || '',
-		risk: a.riskClass,
-		state: a.state || (a.enabled ? 'enabled' : 'disabled'),
-		requirements: a.disabledReason || [a.permission, a.dryRunRequired ? '모의실행' : '', a.humanConfirmRequired ? '사람 확인' : ''].filter(Boolean).join(' / '),
-	}));
-	setChildren(box, renderGenericTable(rows, ['system', 'action', 'risk', 'state', 'requirements'], '액션'));
+	const rows = (state.actions || []).map((a) => {
+		const permissions = actionPermissions(a);
+		const decision = accessDecision(permissions);
+		const stateValue = decision.allowed ? (a.state || (a.enabled ? 'enabled' : 'disabled')) : 'blocked';
+		const requirements = [
+			decision.allowed ? '' : `RBAC: ${decision.reason}`,
+			a.disabledReason || '',
+			a.dryRunRequired ? '모의실행' : '',
+			a.humanConfirmRequired ? '사람 확인' : '',
+		].filter(Boolean).join(' / ');
+		return {
+			system: a.system,
+			action: a.action,
+			engine: a.engine || '',
+			risk: a.riskClass,
+			state: stateValue,
+			permission: permissionLabel(permissions),
+			requirements: requirements || '-',
+		};
+	});
+	setChildren(box, renderGenericTable(rows, ['system', 'action', 'risk', 'state', 'permission', 'requirements'], '액션'));
 }
 
 function renderQueueGlobal() {
@@ -1878,8 +2221,10 @@ function renderQueueView() {
 	for (const j of unique) {
 		const open = el('button', { class: 'btn small', type: 'button' }, '로그');
 		open.addEventListener('click', () => openJobLog(j.id, j.label));
+		const cancelAccess = accessDecision('run');
 		const cancel = el('button', { class: 'btn small quiet', type: 'button' }, '취소');
-		cancel.disabled = ['done', 'failed', 'cancelled'].includes(j.status);
+		cancel.disabled = ['done', 'failed', 'cancelled'].includes(j.status) || !cancelAccess.allowed;
+		cancel.title = accessTitle(cancelAccess);
 		cancel.addEventListener('click', async () => { await cancelJob(j.id); await loadQueue(); renderQueueView(); });
 		body.append(el('tr', {},
 			el('td', { class: 'col-key' }, j.id),
@@ -1928,8 +2273,17 @@ async function renderApprovalState() {
 	try {
 		const data = await getJson(`/api/approve/state?app=${encodeURIComponent(app)}`);
 		const loginLog = el('pre', { class: 'job-log', hidden: true });
+		const loginAccess = accessDecision('auth');
 		const loginBtn = el('button', { class: 'btn small', type: 'button', onclick: () => runApproveLogin(app, loginBtn, loginLog) },
 			data.loggedIn ? '🔐 결재 재로그인' : '🔐 결재 로그인');
+		loginBtn.disabled = !loginAccess.allowed;
+		loginBtn.title = accessTitle(loginAccess);
+		const stopBtn = $('#approval-stop');
+		const stopAccess = accessDecision('run');
+		if (stopBtn) {
+			stopBtn.disabled = !stopAccess.allowed;
+			stopBtn.title = accessTitle(stopAccess);
+		}
 		setChildren(box,
 			el('div', { class: 'metric-grid' },
 				metric('앱', data.app || app, '선택됨'),
@@ -1953,6 +2307,7 @@ async function renderApprovalState() {
 // human gesture). On success the leaf saves the canonical fixtures/auth/playwright/<app>.state.json and
 // the job ends; we re-render state.
 async function runApproveLogin(app, btn, log) {
+	if (!requireAccess('auth', '결재 로그인')) return;
 	if (btn) { btn.disabled = true; btn.textContent = '로그인 창 대기 중…'; }
 	if (log) { log.hidden = false; log.textContent = '데스크톱에 뜬 Chrome 창에서 로그인(OTP 포함)을 완료하세요…\n'; }
 	try {
@@ -1971,6 +2326,7 @@ async function runApproveLogin(app, btn, log) {
 }
 
 async function requestKillSwitch() {
+	if (!requireAccess('run', '긴급 중단')) return;
 	if (!window.confirm('결재 긴급 중단을 요청할까요? 실행 중인 실제 배치는 다음 문서 전에 멈춥니다.')) return;
 	try {
 		await postJson('/api/approve/stop', {});
@@ -1983,6 +2339,7 @@ async function requestKillSwitch() {
 }
 
 async function runSuite() {
+	if (!requireAccess('run', '스위트 실행')) return;
 	const glob = $('#run-glob').value.trim();
 	const log = $('#run-log');
 	log.hidden = false;
@@ -2014,6 +2371,7 @@ function renderDiagnosticsLinks() {
 		['실행 API', '/api/runs', '과거 실행 리포트'],
 		['플로우 API', '/api/flows', '녹화된 선언적 플로우'],
 		['P0 Readiness API', '/api/readiness', '문서 체크리스트 기반 No-Go 상태'],
+		['RBAC API', state.rbac?.endpoint || '/api/rbac', '현재 actor, role, permission 상태'],
 	];
 	setChildren(box, el('div', { class: 'link-grid' }, ...links.map(([title, href, desc]) =>
 		el('a', { class: 'link-card', href, target: '_blank', rel: 'noreferrer' }, el('strong', {}, title), el('span', {}, desc)),
@@ -2023,10 +2381,17 @@ function renderDiagnosticsLinks() {
 function renderDiagnostics() {
 	const box = $('#diagnostics-table');
 	if (!box) return;
+	const runAccess = accessDecision('run');
+	const runBtn = $('#run-suite');
+	if (runBtn) {
+		runBtn.disabled = !runAccess.allowed;
+		runBtn.title = accessTitle(runAccess);
+	}
 	const rows = [
 		{ area: '실행', count: state.runs.length, state: state.runs.length ? `${state.runs[0].runId || 'loaded'}` : '레코드 없음', endpoint: '/api/runs' },
 		{ area: '플로우', count: state.flows.length, state: state.flows.some((f) => f.needsReview) ? '검토 필요' : '로드됨', endpoint: '/api/flows' },
 		{ area: '인증 상태', count: state.auth.length, state: state.auth.length ? state.auth.join(', ') : '없음', endpoint: '/api/auth' },
+		{ area: '권한', count: state.rbac?.available ? permissionSummary().split(',').filter(Boolean).length : '-', state: state.rbac?.available ? `${state.rbac.actorId} / ${state.rbac.role || 'unknown'}` : 'API 대기', endpoint: state.rbac?.endpoint || '/api/rbac' },
 		{ area: 'P0 readiness', count: state.readiness?.open ?? '-', state: state.readiness?.decision || 'No-Go', endpoint: '/api/readiness' },
 		{ area: '프리플라이트', count: '-', state: 'CLI 전용', endpoint: 'bash lib/preflight.sh' },
 		{ area: '전체 스위트', count: '-', state: 'POST /api/run 로 실행 가능', endpoint: 'bash run.sh' },
@@ -2092,7 +2457,7 @@ function columnClass(name) {
 	if (['status', 'state', 'stage', 'risk', 'mode'].includes(n)) return 'col-status';
 	if (['count', 'kind', 'action'].includes(n)) return 'col-short';
 	if (['at', 'created', 'fetched_at', 'submitted_at'].includes(n)) return 'col-time';
-	return n === 'detail' || n === 'requirements' || n === 'data' || n === 'summary' || n === 'operational impact' ? 'cell-wrap' : '';
+	return n === 'detail' || n === 'requirements' || n === 'permission' || n === 'data' || n === 'summary' || n === 'operational impact' ? 'cell-wrap' : '';
 }
 
 function bindEvents() {

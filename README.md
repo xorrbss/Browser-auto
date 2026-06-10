@@ -122,12 +122,12 @@ Keep CI and live-operator checks separate:
 
 - **CI / fixture lane:** run `node --check` and browser-free or localhost tests. This lane must not
   require target-system auth, OTP, public network access, or live business data.
+- **Non-local read lane:** run only by explicit operator action for `environment:"staging"` or
+  `environment:"live-readonly"` flows, with the matching `AQA_RUN_MODE` and target allowlist. Agents
+  may prepare or validate the flow, but a human operator chooses when it touches a real target.
 - **Live-auth lane:** run explicitly on an operator host after `bash setup/auth.sh <app> ...` refreshes
   `fixtures/auth/playwright/<app>.state.json`. Use `bash run.sh <name>` for named flows, or opt into
   app-bound flows with `AQA_INCLUDE_LIVE_AUTH=1`.
-- **Non-local read lane:** flows with `environment:"staging"` or `environment:"live-readonly"` are skipped
-  by the default suite. Run them by explicit name or set `AQA_INCLUDE_NONLOCAL=1` with the matching
-  `AQA_RUN_MODE`.
 - **Live-action lane:** never runs unattended or in CI. Flows use `environment:"live-action"` and
   `riskClass:"effectful"` or `"destructive"`, plus an `irreversibleAt` gate. `bin/play-flow.mjs` also
   requires `AQA_RUN_MODE=live-action`, `AQA_LIVE_ALLOWLIST`, and `AQA_LIVE_ACTION_APPROVE`. Start from
@@ -136,6 +136,12 @@ Keep CI and live-operator checks separate:
   local until reviewed.
 
 The operator runbook for this separation is `dev/active/live-readiness/RUNBOOK.md`.
+
+Local RBAC is currently procedural, not service-enforced: **viewer** reads redacted status and reports,
+**operator** runs fixture/local jobs and supervised non-local/live-auth checks, and **owner** approves
+target systems, live-action scope, rollback ownership, artifact release, and role changes. Agents must
+not perform SSO/OTP login, use or copy live auth state, approve effectful/destructive work, choose live
+targets, bypass policy gates, expose WebUI/noVNC, or publish sensitive artifacts.
 
 ## Flow Format
 

@@ -7,15 +7,27 @@ Scope: WebUI and operator workflow for Browser-auto live-readiness checks.
 This runbook keeps the WebUI as a local CLI control plane. It does not add a second runner, a second
 policy engine, or any model-driven pass/fail decision.
 
+## Local RBAC Model
+
+Until external-service RBAC is implemented, roles are enforced by local access, operator discipline,
+and review. Do not treat the loopback WebUI as a public multi-user boundary.
+
+| role | may do | must not do |
+| --- | --- | --- |
+| Viewer | read redacted readiness, reports, and reviewed artifacts | start jobs, handle auth, view secrets, release artifacts |
+| Operator | run fixture/local jobs, record/verify/compile flows, refresh owned auth, run supervised non-local and live-auth lanes | approve their own live-action scope, bypass gates, use borrowed auth |
+| Owner | approve target systems, live-action scope, rollback owner, artifact release, and role changes | delegate SSO/OTP or irreversible confirmation to an agent |
+
 ## Lane Separation
 
-Use three lanes and do not blur them:
+Use four lanes and do not blur them:
 
 | lane | purpose | allowed inputs | forbidden |
 | --- | --- | --- | --- |
 | CI / fixture | deterministic product gate | repo files, localhost fixtures, browser-free unit tests | target auth, OTP, live business data, live approve |
-| Live-auth | prove a named flow against an operator session | `fixtures/auth/playwright/<app>.state.json`, named flow, supervised browser | replacing CI, unattended scheduler, stale or borrowed auth |
-| Live-effect | supervised effectful action rehearsal or capped live test | synced records, reviewed targets, dry-run evidence, explicit confirmation | CI, unattended runs, unreviewed target sets, missing rollback owner |
+| Non-local read | read-only staging or live-readonly check | explicit named flow, matching `AQA_RUN_MODE`, target allowlist | CI substitution, writes, unapproved target systems |
+| Live-auth | prove a named flow against an operator-owned session | `fixtures/auth/playwright/<app>.state.json`, named flow, supervised browser | replacing CI, unattended scheduler, stale or borrowed auth |
+| Live-action | supervised effectful action rehearsal or capped live test | synced records, reviewed targets, dry-run evidence, owner confirmation | CI, unattended runs, unreviewed target sets, missing rollback owner |
 
 ## CI / Fixture Lane
 
@@ -32,6 +44,20 @@ bash tests/play-flow-smoke.test.sh
 Broaden to `bash run.sh` for the normal suite. The default suite skips app-bound compiled flows unless
 `AQA_INCLUDE_LIVE_AUTH=1` is set, so CI does not depend on a local SSO/OTP session.
 
+## Non-Local Read Lane
+
+Use this lane only after an operator confirms the target system and account are allowed for read-only
+checking:
+
+```bash
+node bin/play-flow.mjs --flow flows/<name>.flow.json --validate-only
+AQA_RUN_MODE=staging AQA_INCLUDE_NONLOCAL=1 bash run.sh <name>
+AQA_RUN_MODE=live-readonly AQA_INCLUDE_NONLOCAL=1 bash run.sh <name>
+```
+
+Run by explicit flow name where possible. Agents may draft, repair, and validate the flow, but the
+operator chooses the account, target, timing, and whether the real target is contacted.
+
 ## Live-Auth Lane
 
 Use this lane only on the operator machine that owns the session:
@@ -47,7 +73,7 @@ bash run.sh <name>
 Refresh auth when the WebUI shows `auth / OTP renewal`, when a run lands on login/MFA, when the tenant
 or account changes, or when the target owner asks for session rotation.
 
-## Live-Effect Lane
+## Live-Action Lane
 
 Before any effectful action:
 
@@ -59,7 +85,7 @@ Before any effectful action:
 - Keep live batches capped with `--max N` and watched by an operator.
 - Know the stop path: WebUI cancel/stop, `/api/approve/stop`, and `data/approve-STOP`.
 
-Scheduler paths are not a live-effect lane. `bin/scheduled-task.sh` exports `AQA_SCHEDULED_NO_LIVE=1`.
+Scheduler paths are not a live-action lane. `bin/scheduled-task.sh` exports `AQA_SCHEDULED_NO_LIVE=1`.
 
 ## WebUI Readiness Fields
 
@@ -83,7 +109,7 @@ commit, paste, or upload them without review and redaction.
 
 ## No-Go Conditions
 
-Stop and repair before live-auth or live-effect work if any of these are true:
+Stop and repair before live-auth or live-action work if any of these are true:
 
 - WebUI/noVNC is publicly exposed without authentication.
 - Auth state is missing, stale, wrong-account, or wrong-tenant.
@@ -91,3 +117,12 @@ Stop and repair before live-auth or live-effect work if any of these are true:
 - Latest run failed and the failure has not been explained.
 - The operator cannot identify artifact location, rollback owner, and stop path.
 - A requested action would make the WebUI decide pass/fail outside the deterministic CLI path.
+
+Agents must not perform these actions:
+
+- Complete SSO, OTP, MFA, or account recovery.
+- Use, copy, rotate, paste, export, or publish live auth state, cookies, `.values.json`, or credentials.
+- Decide that a non-local target may be contacted, choose live target records, or widen an allowlist.
+- Confirm `AQA_LIVE_ACTION_APPROVE`, approve effectful/destructive scope, or cross an `irreversibleAt` gate.
+- Run unattended live-action work, remove `--max` caps, suppress stop paths, or hide failed artifacts.
+- Expose WebUI/noVNC, change local roles, release artifacts, or redact sensitive data without owner review.

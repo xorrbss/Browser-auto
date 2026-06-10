@@ -519,6 +519,10 @@ input:focus, textarea:focus, select:focus {
 	white-space: nowrap;
 }
 .pill.muted, .badge.neutral { background: var(--surface-2); color: var(--muted); }
+.pill.info { background: #eef4ff; border-color: #c9dafb; color: var(--blue); }
+.pill.success { background: #e8f5ee; border-color: #bde4cf; color: var(--green); }
+.pill.warning { background: #fff4dc; border-color: #eed49c; color: var(--amber); }
+.pill.danger { background: #fff0ee; border-color: #fac5bd; color: var(--red); }
 .badge.info { background: #eef4ff; border-color: #c9dafb; color: var(--blue); }
 .badge.success { background: #e8f5ee; border-color: #bde4cf; color: var(--green); }
 .badge.warning { background: #fff4dc; border-color: #eed49c; color: var(--amber); }

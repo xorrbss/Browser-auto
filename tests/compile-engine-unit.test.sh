@@ -3,6 +3,11 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fail(){ echo "  compile-engine-unit: $1" >&2; exit 1; }
+assert_no_bom(){
+	local file="$1" sig
+	sig="$(head -c 3 "$file" | od -An -tx1 | tr -d ' \n')"
+	[ "$sig" != "efbbbf" ] || fail "$file starts with a UTF-8 BOM"
+}
 
 PW="_eng_pw_frame_$$"
 PWOPEN="_eng_pw_open_record_$$"
@@ -20,6 +25,7 @@ cat > "$DIR/flows/$PW.flow.json" <<JSON
 JSON
 bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$PW.flow.json" >/dev/null 2>&1 || fail "playwright flow compile failed"
 grep -q 'bin/play-flow.mjs' "$DIR/tests/$PW.test.sh" || fail "playwright compile did not emit play-flow wrapper"
+assert_no_bom "$DIR/tests/$PW.test.sh"
 if grep -q 'lib/env.sh' "$DIR/tests/$PW.test.sh"; then fail "playwright wrapper must not source agent-browser env"; fi
 if grep -Eq '\bAB(_AUTH|_JSON|X)?\b|BATCH|wait_url|record start' "$DIR/tests/$PW.test.sh"; then fail "playwright wrapper leaked legacy agent-browser commands"; fi
 bash -n "$DIR/tests/$PW.test.sh" || fail "playwright wrapper bash syntax invalid"

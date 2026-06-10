@@ -51,6 +51,7 @@ import { approvePost, approveGet, successNeedle } from './routes-approve.js';
 import { commandPlanPost, commandPlanGet, recordCommandGateRefusal } from './routes-command-plan.js';
 import { issueSessionIfNeeded, approveGate } from './session.js';
 import { getP0Readiness } from './readiness.js';
+import { actorAccessView, authorizeWebuiPost } from './access.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 // Bind address. Default 127.0.0.1 (localhost-only — the safe default for native Windows/macOS use).
@@ -94,6 +95,22 @@ function sendJson(res, code, obj) {
 }
 
 const notFound = (res, msg = 'not found') => sendJson(res, 404, { error: msg });
+
+function denyAccess(res, decision) {
+	return sendJson(res, 403, {
+		error: 'forbidden',
+		reason: decision.reason || 'permission denied',
+		actor: decision.actor,
+		requiredPermissions: decision.requiredPermissions,
+	});
+}
+
+function requirePostAccess(p, bodyJson, res) {
+	const decision = authorizeWebuiPost(p, bodyJson || {});
+	if (decision.ok) return true;
+	denyAccess(res, decision);
+	return false;
+}
 
 // Collect a (small) request body. Rejects if it exceeds `limit` bytes.
 function readBody(req, limit = 1 << 20) {
@@ -269,6 +286,7 @@ const server = http.createServer(async (req, res) => {
 				return;
 			}
 			if (p === '/api/run') {
+				if (!requirePostAccess(p, null, res)) return;
 				let body;
 				try {
 					body = await readBody(req);
@@ -293,6 +311,7 @@ const server = http.createServer(async (req, res) => {
 			}
 			const mCancel = /^\/api\/jobs\/([^/]+)\/cancel$/.exec(p);
 			if (mCancel) {
+				if (!requirePostAccess(p, null, res)) return;
 				return cancel(mCancel[1]) ? sendJson(res, 200, { ok: true }) : notFound(res, 'no such job');
 			}
 
@@ -303,6 +322,7 @@ const server = http.createServer(async (req, res) => {
 			} catch {
 				return sendJson(res, 400, { error: 'invalid JSON body' });
 			}
+			if (!requirePostAccess(p, bodyJson, res)) return;
 
 			if (p === '/api/record') {
 				const name = String(bodyJson.name || '').trim();
@@ -504,6 +524,10 @@ const server = http.createServer(async (req, res) => {
 
 		if (p === '/api/trends') {
 			return sendJson(res, 200, await getTrends());
+		}
+
+		if (p === '/api/rbac' || p === '/api/session') {
+			return sendJson(res, 200, actorAccessView());
 		}
 
 		if (p === '/api/auth') {

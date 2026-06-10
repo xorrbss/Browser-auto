@@ -16,9 +16,14 @@ import { resolveAction } from '../approve/guards.mjs';
 const require = createRequire(import.meta.url);
 const dbm = require('../lib/db.js');
 const { resolveAuthStatePath } = require('../lib/engine.js');
+const rbac = require('../lib/rbac.js');
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
-const ACTOR = 'local-operator';
+const ACTOR = rbac.actorFromEnv({
+	...process.env,
+	AQA_ACTOR_ID: process.env.AQA_ACTOR_ID || process.env.AQA_WEBUI_ACTOR || process.env.AQA_WEBUI_ACTOR_ID,
+	AQA_ACTOR_ROLE: process.env.AQA_ACTOR_ROLE || process.env.AQA_WEBUI_ROLE || process.env.AQA_WEBUI_ACTOR_ROLE,
+}).id;
 const READ_ACTIONS = new Set(['query', 'sync', 'enrich', 'summarize']);
 
 function canonical(value) {
