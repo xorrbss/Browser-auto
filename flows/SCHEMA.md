@@ -40,6 +40,25 @@ for new auth/record/play work and never migrates existing flows. Compile, verify
 and replay must fail closed if the requested engine and `flow.engine` disagree;
 there is no silent fallback to the other engine. New captures write the field.
 
+## Irreversible point-of-no-return (optional, `irreversibleAt`)
+
+Two OPTIONAL top-level fields let a Playwright flow opt into the **audited, fail-closed
+point-of-no-return gate** (the same gate `approve/flow-runner.mjs` enforces) when it is
+replayed by `bin/play-flow.mjs`:
+
+- `irreversibleAt` — an integer step index. The step at that index MUST be an *effectful*
+  `find` (click/fill/type/select/check/uncheck) — it is the real commit. When set, play
+  replay runs with `reversible:false`: before that step it calls an `onBeforeIrreversible`
+  callback that appends the commit to an fsync'd `data/play-audit.jsonl` trail, and the
+  runner refuses (throws) if the marker is mis-set (out of range / not effectful).
+- `reversible` — an explicit boolean opt-out. `reversible:true` keeps replay un-gated even
+  for an effectful flow.
+
+**Back-compat:** absent both fields, a flow replays reversible exactly as before — every
+existing flow is unaffected (none declare these). The fields only *add* the ability to gate
+a commit; they do not retroactively gate undeclared flows. The agent-browser compile path
+does not consume them (Playwright replay only).
+
 ## Step kinds
 
 - `find`  — `by` ∈ {testid,role,label,text,placeholder,alt,title}, `value`, `action`

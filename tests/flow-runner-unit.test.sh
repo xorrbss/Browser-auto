@@ -9,7 +9,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ( cd "$DIR" && node --input-type=module -e '
-import { validateSteps, runSteps } from "./approve/flow-runner.mjs";
+import { validateSteps, runSteps, irreversibleOptsFor } from "./approve/flow-runner.mjs";
 const assert = (c, m) => { if (!c) { console.error("  ✗ flow-runner: " + m); process.exit(1); } };
 
 // --- validateSteps: fail-closed ---
@@ -27,6 +27,21 @@ assert(validateSteps([{ kind: "find", needs_review: true }]).ok === false, "need
 assert(validateSteps([{ kind: "find", by: "css", value: "x", action: "click" }]).ok === false, "bad find.by ⇒ refused");
 assert(validateSteps([{ kind: "find", by: "role", value: "b", action: "frob" }]).ok === false, "bad find.action ⇒ refused");
 assert(validateSteps([{ kind: "wait", until: "nope", value: "x" }]).ok === false, "bad wait.until ⇒ refused");
+// fill/type/select MUST carry the recorded value — a value-less effectful field action would clear/mis-set the field.
+assert(validateSteps([{ kind: "find", by: "label", value: "Name", action: "fill" }]).ok === false, "fill without text ⇒ refused (no silent empty-fill)");
+assert(validateSteps([{ kind: "find", by: "label", value: "Name", action: "fill", text: "" }]).ok === false, "fill with empty text ⇒ refused");
+assert(validateSteps([{ kind: "find", by: "label", value: "Name", action: "type" }]).ok === false, "type without text ⇒ refused");
+assert(validateSteps([{ kind: "find", by: "label", value: "Name", action: "fill", text: "{{input_1}}" }]).ok === true, "fill WITH a token text ⇒ valid");
+assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "select" }]).ok === false, "select without val/text ⇒ refused");
+assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "select", val: "kr" }]).ok === true, "select WITH val ⇒ valid");
+
+// --- irreversibleOptsFor: derive the gate config from the flow (back-compat reversible:true by default) ---
+assert(irreversibleOptsFor({ steps: [{ kind: "find", by: "text", value: "x", action: "click" }] }).reversible === true, "effectful flow with NO irreversibleAt ⇒ reversible:true (back-compat)");
+assert(irreversibleOptsFor({ steps: [{ kind: "wait", until: "load", value: "networkidle" }] }).reversible === true, "non-effectful flow ⇒ reversible:true");
+{ const g = irreversibleOptsFor({ irreversibleAt: 1, steps: [{ kind: "find", by: "label", value: "a", action: "fill", text: "{{input_1}}" }, { kind: "find", by: "text", value: "확인", action: "click" }] });
+  assert(g.reversible === false && g.irreversibleAt === 1, "flow declaring irreversibleAt + effectful ⇒ gated (reversible:false, irreversibleAt passed)"); }
+assert(irreversibleOptsFor({ reversible: true, irreversibleAt: 1, steps: [{ kind: "find", by: "text", value: "x", action: "click" }] }).reversible === true, "explicit reversible:true wins (opt-out)");
+assert(irreversibleOptsFor({ irreversibleAt: 0, steps: [{ kind: "wait", until: "load", value: "networkidle" }] }).reversible === true, "irreversibleAt but NO effectful step ⇒ stays reversible (nothing to gate)");
 
 // --- mock page (records calls) ---
 function mockPage(calls, countVal = 1) {

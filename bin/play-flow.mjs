@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { runSteps, validateSteps, buildLocator } from '../approve/flow-runner.mjs';
+import { runSteps, validateSteps, buildLocator, irreversibleOptsFor } from '../approve/flow-runner.mjs';
 
 const require = createRequire(import.meta.url);
 const {
@@ -86,6 +86,19 @@ async function loadChromium() {
 	return pwRequire('playwright').chromium;
 }
 
+// appendPlayAudit: when a flow declares an irreversible point-of-no-return (flow.irreversibleAt), record
+// the commit to an append-only fsync'd trail BEFORE it runs — the play-side analogue of the approve leaf's
+// audit, so a gated replay is never un-audited. Best-effort (never blocks the run on an audit-write error).
+function appendPlayAudit(flowFile, flow, i, step) {
+	try {
+		const dir = path.join(PROBE_ROOT, 'data');
+		fs.mkdirSync(dir, { recursive: true });
+		const line = JSON.stringify({ at: new Date().toISOString(), flow: flow.name || path.basename(flowFile), startUrl: flow.startUrl, irreversibleStep: i, action: step && step.action, by: step && step.by, value: step && step.value }) + '\n';
+		const fd = fs.openSync(path.join(dir, 'play-audit.jsonl'), 'a');
+		try { fs.writeSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+	} catch { /* observability only — never fail the run on an audit-write error */ }
+}
+
 async function newContext(browser, flow) {
 	if (!flow.app) return browser.newContext();
 	const statePath = resolveAuthStatePath(PROBE_ROOT, 'playwright', flow.app);
@@ -155,6 +168,7 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 	let verified = 0;
 	let repaired = 0;
 	let promoted = 0;
+	let failedStep = null; // a NON-find step (wait/press/scroll) that failed at replay — a real divergence, not repairable
 	for (let i = 0; i < nextSteps.length; i++) {
 		const s = nextSteps[i];
 		if (s.needs_review) throw new Error(`step ${i}: already needs_review`);
@@ -191,6 +205,11 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 					...(s.frame ? { frame: s.frame } : {}),
 				};
 				promoted++;
+			} else {
+				// A non-find step (wait/press/scroll) failing at replay means the journey DIVERGED — it cannot
+				// be repaired or promoted (it has no locator). Record it and fail loud below; a silent break here
+				// would let verify report status:'ok' on a broken journey (matches the bash twin verify-flow.sh).
+				failedStep = { i, kind: s.kind, error: String(e && e.message || e) };
 			}
 			break;
 		}
@@ -200,6 +219,7 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 		fs.writeFileSync(tmp, JSON.stringify({ ...flow, steps: nextSteps }, null, 2) + '\n');
 		fs.renameSync(tmp, flowFile);
 	}
+	if (failedStep) throw new Error(`verify: step ${failedStep.i} (${failedStep.kind}) failed at replay: ${failedStep.error}`);
 	return { verified, repaired, promoted };
 }
 
@@ -232,7 +252,13 @@ try {
 			if (v.promoted) throw new Error(`verify promoted ${v.promoted} step(s) to needs_review`);
 			summary = { status: 'ok', mode: 'verify', ...v };
 		} else {
-			await runSteps(page, flow.steps, { reversible: true, dryRun: false, resolveValue });
+			// Gate config from the flow itself (NOT a hardcoded reversible:true): a flow that declares an
+			// irreversible point-of-no-return replays through the audited fail-closed gate; every other flow
+			// stays reversible exactly as before. See approve/flow-runner.mjs irreversibleOptsFor.
+			const gate = irreversibleOptsFor(flow);
+			const runOpts = { dryRun: false, resolveValue, ...gate };
+			if (gate.reversible === false) runOpts.onBeforeIrreversible = (i, step) => appendPlayAudit(absFlow, flow, i, step);
+			await runSteps(page, flow.steps, runOpts);
 			await runAsserts(page, flow.asserts || [], resolveValue);
 			summary = { status: 'ok', mode: 'play', flow: flow.name || path.basename(absFlow) };
 		}

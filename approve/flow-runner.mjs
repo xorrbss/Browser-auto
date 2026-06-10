@@ -31,6 +31,14 @@ export function validateSteps(steps) {
 			if (!FIND_BY.has(s.by)) return { ok: false, reason: `step ${i}: find.by "${s.by}" invalid` };
 			if (typeof s.value !== 'string' || !s.value) return { ok: false, reason: `step ${i}: find.value required` };
 			if (!FIND_ACTION.has(s.action)) return { ok: false, reason: `step ${i}: find.action "${s.action}" invalid` };
+			// fill/type/select MUST carry the recorded value (the {{input_N}} token or a literal). A value-less
+			// effectful field action would default to fill('') / selectOption(undefined) at runStep and SILENTLY
+			// CLEAR or mis-set the field — a wrong-data submission in an RPA flow. The recorder always emits a
+			// token, so an absent one means it was dropped downstream; refuse it fail-loud rather than replay it.
+			if ((s.action === 'fill' || s.action === 'type') && !(typeof s.text === 'string' && s.text !== ''))
+				return { ok: false, reason: `step ${i}: ${s.action} requires a non-empty text (the recorded value/token) — refusing to replay an empty ${s.action}` };
+			if (s.action === 'select' && !(s.val != null || (typeof s.text === 'string' && s.text !== '')))
+				return { ok: false, reason: `step ${i}: select requires val or a non-empty text` };
 			if (s.frame !== undefined) { // optional iframe scope — validate it (fail-closed on a bad/unsafe frame locator)
 				const f = s.frame;
 				if (!f || typeof f !== 'object' || !FRAME_BY.has(f.by) || f.value == null) return { ok: false, reason: `step ${i}: invalid frame locator` };
@@ -109,6 +117,21 @@ async function runStep(page, s, resolveValue) {
 		case 'hover': return t.hover();
 		default: throw new Error(`unknown find.action ${s.action}`);
 	}
+}
+
+// irreversibleOptsFor(flow): derive the runSteps gate config from a flow.json's OPTIONAL top-level
+// declaration, so the generic replayer (bin/play-flow.mjs) stops hardcoding reversible:true — a blanket
+// opt-out that would run an approval commit UN-audited + UN-capped, a side door around the approve gate.
+// A flow OPTS IN to the audited point-of-no-return by declaring `irreversibleAt` (an int step index);
+// the caller then passes reversible:false + irreversibleAt + an onBeforeIrreversible audit, engaging the
+// same fail-closed gate the approve leaf uses. Without the field (or with an explicit reversible:true),
+// replay stays reversible — BYTE-IDENTICAL to the prior behavior for every existing flow (none declare it).
+export function irreversibleOptsFor(flow) {
+	const steps = (flow && Array.isArray(flow.steps)) ? flow.steps : [];
+	const hasEffectful = steps.some((s) => s && s.kind === 'find' && EFFECTFUL.has(s.action));
+	if (flow && flow.reversible === true) return { reversible: true };
+	if (flow && Number.isInteger(flow.irreversibleAt) && hasEffectful) return { reversible: false, irreversibleAt: flow.irreversibleAt };
+	return { reversible: true };
 }
 
 // runSteps(page, steps, opts): drive the validated step sequence. opts:
