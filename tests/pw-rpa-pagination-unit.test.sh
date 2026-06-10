@@ -40,21 +40,31 @@ assert(!r.error && r.items.length === 3, "pages 2+: settles on the stable full r
 r = await waitListSettled(seq([list("P"), list("P"), list("P")]), { prevSig: list("P").sig, tries: 5 });
 assert(r.error, "pages 2+: unchanged page never settles (fail-closed)");
 
-// pages 2+: an empty list never settles (rows must render)
+// pages 2+: a BRIEF empty is "still loading" (clear-then-render transition) — never settles early...
 r = await waitListSettled(seq([{ items: [], sig: "" }]), { prevSig: "P", tries: 5 });
-assert(r.error, "pages 2+: empty page never settles");
+assert(r.error, "pages 2+: brief empty (< EMPTY_STABLE_READS) does not settle");
+// ...but a PERSISTENTLY empty page is real (a 대기 page whose docs were all approved) — settles empty.
+r = await waitListSettled(seq([{ items: [], sig: "" }]), { prevSig: "P", tries: 10 });
+assert(!r.error && r.items.length === 0, "pages 2+: persistently-empty page settles as a real empty page");
+// clear-then-render: empty reads followed by stable rows settle on the rows, never the transient empty
+r = await waitListSettled(seq([{ items: [], sig: "" }, { items: [], sig: "" }, { items: [], sig: "" }, list("N1", "N2"), list("N1", "N2")]), { prevSig: "P", tries: 12 });
+assert(!r.error && r.items.length === 2, "pages 2+: clear-then-render settles on the rendered rows");
 
 // page 1 (no prevSig): stability only — partial first read does not win
 r = await waitListSettled(seq([list("A"), list("A", "B"), list("A", "B")]), { tries: 10 });
 assert(!r.error && r.items.length === 2, "page 1: settles on the stable read");
 
-// page 1: consistently-empty budget => accepted as a real empty list
-r = await waitListSettled(seq([{ items: [], sig: "" }]), { tries: 4 });
+// page 1: consistently-empty (no row ever seen) => accepted as a real empty list
+r = await waitListSettled(seq([{ items: [], sig: "" }]), { tries: 10 });
 assert(!r.error && r.items.length === 0, "page 1: consistently-empty list accepted as empty");
 
 // page 1: empty reads followed by rows => rows win (never settles empty early)
 r = await waitListSettled(seq([{ items: [], sig: "" }, { items: [], sig: "" }, list("A"), list("A")]), { tries: 10 });
 assert(!r.error && r.items.length === 1, "page 1: late-rendering rows beat earlier empty reads");
+
+// page 1: rows seen THEN persistently empty => suspicious, fail-closed (no empty settle)
+r = await waitListSettled(seq([list("A"), { items: [], sig: "" }]), { tries: 12 });
+assert(r.error, "page 1: rows-then-empty never settles empty (fail-closed)");
 
 // extract failures tolerated as still-rendering, then settle; all-fail => error with cause
 r = await waitListSettled(seq([new Error("table not found"), new Error("table not found"), list("A"), list("A")]), { tries: 10 });

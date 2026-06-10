@@ -183,20 +183,25 @@ async function selectPage(pager, p) {
 
 // waitListSettled(getList, { prevSig, tries, wait }): poll the extracted list until it SETTLES.
 // waitListChanged (the predecessor) returned on the FIRST signature change, which can be a half-
-// rendered intermediate — live runs captured 11/13/2/4… rows per page (undercount; the same bug
-// approve-run.mjs settlePage closed, red-team SETTLE-HALFLOAD). Settled means:
-//   pages 2+ (prevSig given): the signature CHANGED from prevSig (the page really switched) AND is
-//     STABLE across two consecutive reads. An empty page 2+ never settles (rows must render).
-//   page 1 (prevSig null): stability only; a CONSISTENTLY-empty budget (no row ever seen) is
-//     accepted as a genuinely empty list — an empty read mixed with row reads never settles empty.
+// rendered intermediate ⇒ undercount (the same bug approve-run.mjs settlePage closed, red-team
+// SETTLE-HALFLOAD). Settled means:
+//   rows present: the signature CHANGED from prevSig (when given — the page really switched) AND is
+//     STABLE across two consecutive reads.
+//   empty list: ONLY after EMPTY_STABLE_READS consecutive empty reads (~3s) — a page transition often
+//     clears the table before rendering the new rows, so a brief empty is "still loading", but a
+//     PERSISTENTLY empty page is real (live: a 대기 page whose docs were all approved is empty; the
+//     old rows-required rule false-positived there and failed the whole sync). Page 1 (prevSig null)
+//     additionally requires that NO row was ever seen (rows-then-empty on the first page = suspicious
+//     ⇒ fail-closed).
 // extract failures count as "still rendering" and break the consecutive-equal chain. Budget
 // exhaustion returns { error } — callers fail-close via assertPageSettled (never store a partial
 // page). getList/wait are injected so the rule is unit-testable browser-free.
+const EMPTY_STABLE_READS = 6;
 export async function waitListSettled(getList, { prevSig = null, tries = 24, wait = async () => {} } = {}) {
 	let lastErr = '';
 	let prevRead = null; // previous successful read's sig — the consecutive-equal detector
 	let sawRows = false;
-	let lastEmpty = null;
+	let emptyRun = 0;    // consecutive empty reads
 	for (let t = 0; t < tries; t++) {
 		let cur = null;
 		try { cur = await getList(); } catch (e) { lastErr = e.message; }
@@ -204,17 +209,19 @@ export async function waitListSettled(getList, { prevSig = null, tries = 24, wai
 			const changed = prevSig == null || cur.sig !== prevSig;
 			if (cur.sig) {
 				sawRows = true;
+				emptyRun = 0;
 				if (changed && prevRead === cur.sig) return cur; // changed AND stable across two consecutive reads
 			} else {
-				lastEmpty = cur;
+				emptyRun++;
+				if (changed && emptyRun >= EMPTY_STABLE_READS && (prevSig != null || !sawRows)) return cur; // persistently empty ⇒ a real empty page
 			}
 			prevRead = cur.sig;
 		} else {
 			prevRead = null; // a failed extract breaks the consecutive-equal chain
+			emptyRun = 0;
 		}
 		await wait();
 	}
-	if (prevSig == null && !sawRows && lastEmpty) return lastEmpty; // consistently empty ⇒ a real empty list
 	return { error: lastErr || 'page did not change+stabilize (half-rendered or stuck page)' };
 }
 
