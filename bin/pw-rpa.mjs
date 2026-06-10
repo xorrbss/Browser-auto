@@ -123,7 +123,7 @@ async function waitText(page, text, seconds = 15) {
 }
 
 // readySeconds(ready, dflt): honor the recipe's documented ready.timeout (seconds), else the default.
-function readySeconds(ready, dflt) {
+export function readySeconds(ready, dflt) {
 	const n = Number(ready && ready.timeout);
 	return Number.isFinite(n) && n > 0 ? n : dflt;
 }
@@ -282,22 +282,29 @@ async function waitUrl(page, want, seconds = 12) {
 	return false;
 }
 
-async function analyze(system, recipePath) {
+export async function analyze(system, recipePath, deps = {}) {
 	const prefix = 'analyze';
-	fs.mkdirSync(DATA_DIR, { recursive: true });
-	const snapPath = path.join(DATA_DIR, `${system.name}.snapshot.json`);
-	const proposedPath = path.join(DATA_DIR, `${system.name}.proposed.json`);
-	const { browser, page } = await newPage(system);
+	const dataDir = deps.dataDir || DATA_DIR;
+	const fsApi = deps.fs || fs;
+	const newPageFn = deps.newPage || newPage;
+	const gotoTargetFn = deps.gotoTarget || gotoTarget;
+	const waitTextFn = deps.waitText || waitText;
+	const snapshotDataFn = deps.snapshotData || snapshotData;
+	const runJsonFn = deps.runJson || runJson;
+	fsApi.mkdirSync(dataDir, { recursive: true });
+	const snapPath = path.join(dataDir, `${system.name}.snapshot.json`);
+	const proposedPath = path.join(dataDir, `${system.name}.proposed.json`);
+	const { browser, page } = await newPageFn(system);
 	try {
 		log(prefix, `'${system.name}' -> launching Playwright (cached auth)...`);
-		await gotoTarget(page, system.target_url, prefix);
-		await waitText(page, system.recipe?.ready?.text || '', readySeconds(system.recipe?.ready, 15));
-		const data = await snapshotData(page);
-		fs.writeFileSync(snapPath, JSON.stringify(data, null, 2) + '\n');
+		await gotoTargetFn(page, system.target_url, prefix);
+		await waitTextFn(page, system.recipe?.ready?.text || '', readySeconds(system.recipe?.ready, 15));
+		const data = await snapshotDataFn(page);
+		fsApi.writeFileSync(snapPath, JSON.stringify(data, null, 2) + '\n');
 		log(prefix, `snapshot saved -> ${snapPath}`);
 		log(prefix, 'proposing recipe (detect tables + on-prem model)...');
-		const proposed = runJson(PROPOSE_RECIPE, [], JSON.stringify(data), 'propose-recipe');
-		fs.writeFileSync(proposedPath, JSON.stringify(proposed, null, 2) + '\n');
+		const proposed = runJsonFn(PROPOSE_RECIPE, [], JSON.stringify(data), 'propose-recipe');
+		fsApi.writeFileSync(proposedPath, JSON.stringify(proposed, null, 2) + '\n');
 		log(prefix, `proposal saved -> ${proposedPath}`);
 		const tables = Array.isArray(proposed.tables) ? proposed.tables.map((t) => `${t.name}(${(t.headers || []).length}h,${t.rowCount}r)`).join(', ') : '';
 		log(prefix, `detected: ${tables}`);
@@ -308,34 +315,45 @@ async function analyze(system, recipePath) {
 	}
 }
 
-async function sync(system, recipePath) {
+export async function sync(system, recipePath, deps = {}) {
 	const prefix = 'sync-system';
-	const { browser, page } = await newPage(system);
+	const newPageFn = deps.newPage || newPage;
+	const gotoTargetFn = deps.gotoTarget || gotoTarget;
+	const waitTextFn = deps.waitText || waitText;
+	const snapshotListFn = deps.snapshotList || snapshotList;
+	const pagerInfoFn = deps.pagerInfo || pagerInfo;
+	const selectPageFn = deps.selectPage || selectPage;
+	const waitListSettledFn = deps.waitListSettled || waitListSettled;
+	const upsertFn = deps.upsert || upsert;
+	const approvalsDualWriteFn = deps.approvalsDualWrite || approvalsDualWrite;
+	const { browser, page } = await newPageFn(system);
+	const settleWait = deps.settleWait || (() => page.waitForTimeout(500));
+	const settleTries = deps.settleTries || 24;
 	try {
 		log(prefix, `'${system.name}' -> launching Playwright (cached auth)...`);
-		await gotoTarget(page, system.target_url, prefix);
-		await waitText(page, system.recipe?.ready?.text || '', readySeconds(system.recipe?.ready, 15));
-		const getList = () => snapshotList(page, recipePath);
-		const settleOpts = { tries: 24, wait: () => page.waitForTimeout(500) };
+		await gotoTargetFn(page, system.target_url, prefix);
+		await waitTextFn(page, system.recipe?.ready?.text || '', readySeconds(system.recipe?.ready, 15));
+		const getList = () => snapshotListFn(page, recipePath);
+		const settleOpts = { tries: settleTries, wait: settleWait };
 		const pages = [];
-		let cur = assertPageSettled(await waitListSettled(getList, settleOpts), 'sync pagination', 1, 0);
+		let cur = assertPageSettled(await waitListSettledFn(getList, settleOpts), 'sync pagination', 1, 0);
 		pages.push(cur.items);
 		log(prefix, `page 1: ${cur.items.length} rows`);
 		let prevSig = cur.sig;
-		const pager = await pagerInfo(page, system.recipe);
+		const pager = await pagerInfoFn(page, system.recipe);
 		const total = pager ? Math.min(pager.total, 100) : 1;
 		if (pager) log(prefix, `paginating: ${total} page(s)...`);
 		for (let p = 2; p <= total; p++) {
-			await selectPage(pager, p);
-			cur = assertPageSettled(await waitListSettled(getList, { ...settleOpts, prevSig }), 'sync pagination', p, total);
+			await selectPageFn(pager, p);
+			cur = assertPageSettled(await waitListSettledFn(getList, { ...settleOpts, prevSig }), 'sync pagination', p, total);
 			pages.push(cur.items);
 			prevSig = cur.sig;
 			log(prefix, `  page ${p}: ${cur.items.length} rows`);
 		}
 		const all = uniqueByKey(pages.flat());
 		log(prefix, `total unique: ${all.length}`);
-		upsert(system.name, all, prefix);
-		approvalsDualWrite(system.name, all, prefix);
+		upsertFn(system.name, all, prefix);
+		approvalsDualWriteFn(system.name, all, prefix);
 		log(prefix, 'done.');
 	} finally {
 		await browser.close();
@@ -354,13 +372,20 @@ function recordsToEnrich(systemName) {
 	}
 }
 
-async function openRecord(page, system, recipePath, key, listReady) {
+export async function openRecord(page, system, recipePath, key, listReady, deps = {}) {
+	const waitTextFn = deps.waitText || waitText;
+	const snapshotListFn = deps.snapshotList || snapshotList;
+	const pagerInfoFn = deps.pagerInfo || pagerInfo;
+	const selectPageFn = deps.selectPage || selectPage;
+	const waitListSettledFn = deps.waitListSettled || waitListSettled;
+	const settleWait = deps.settleWait || (() => page.waitForTimeout(500));
+	const settleTries = deps.settleTries || 24;
 	await page.goto(system.target_url, { waitUntil: 'domcontentloaded' });
-	await waitText(page, listReady, readySeconds(system.recipe?.ready, 12));
-	const getList = () => snapshotList(page, recipePath);
-	const settleOpts = { tries: 24, wait: () => page.waitForTimeout(500) };
-	const cur0 = await waitListSettled(getList, settleOpts);
-	const pager = await pagerInfo(page, system.recipe);
+	await waitTextFn(page, listReady, readySeconds(system.recipe?.ready, 12));
+	const getList = () => snapshotListFn(page, recipePath);
+	const settleOpts = { tries: settleTries, wait: settleWait };
+	const cur0 = await waitListSettledFn(getList, settleOpts);
+	const pager = await pagerInfoFn(page, system.recipe);
 	const total = pager ? Math.min(pager.total, 100) : 1;
 	// Paginated list: an unsettled page 1 makes the whole scan untrustworthy ⇒ fail-closed. A single
 	// un-paginated page tolerates it (the exact-text click below can still find the key).
@@ -370,8 +395,8 @@ async function openRecord(page, system, recipePath, key, listReady) {
 	let prevSig = cur0.error ? '' : cur0.sig || '';
 	for (let p = 1; p <= total; p++) {
 		if (p > 1) {
-			await selectPage(pager, p);
-			const cur = assertPageSettled(await waitListSettled(getList, { ...settleOpts, prevSig }), `enrich pagination while locating ${key}`, p, total);
+			await selectPageFn(pager, p);
+			const cur = assertPageSettled(await waitListSettledFn(getList, { ...settleOpts, prevSig }), `enrich pagination while locating ${key}`, p, total);
 			prevSig = cur.sig;
 		}
 		const target = page.getByText(key, { exact: false }).first();
@@ -390,19 +415,30 @@ function wrapRecords(items) {
 	});
 }
 
-async function enrich(system, recipePath) {
+export async function enrich(system, recipePath, deps = {}) {
 	const prefix = 'enrich-system';
 	loadShellEnv(path.join(DATA_DIR, 'approvals.config'));
+	const recordsToEnrichFn = deps.recordsToEnrich || recordsToEnrich;
+	const newPageFn = deps.newPage || newPage;
+	const openRecordFn = deps.openRecord || ((page, sys, rp, key, listReady) => openRecord(page, sys, rp, key, listReady));
+	const waitUrlFn = deps.waitUrl || waitUrl;
+	const waitTextFn = deps.waitText || waitText;
+	const snapshotDataFn = deps.snapshotData || snapshotData;
+	const extractDetailFn = deps.extractDetail || extractDetail;
+	const runJsonFn = deps.runJson || runJson;
+	const upsertFn = deps.upsert || upsert;
+	const approvalsDualWriteFn = deps.approvalsDualWrite || approvalsDualWrite;
+	const summaryModel = Object.prototype.hasOwnProperty.call(deps, 'summaryModel') ? deps.summaryModel : process.env.SUMMARY_MODEL;
 	const detail = system.recipe?.detail || null;
 	if (!detail) throw new Error(`recipe for '${system.name}' has no "detail" block (fields + bodyFromHeadingLevel)`);
 	if (!detail.idLabel) throw new Error('recipe.detail.idLabel is REQUIRED on the generic path (per-record identity guard)');
-	const docs = recordsToEnrich(system.name);
+	const docs = recordsToEnrichFn(system.name);
 	if (!docs.length) {
 		log(prefix, 'nothing to enrich (all fetched records already summarized, or none synced).');
 		return;
 	}
 	log(prefix, `${docs.length} record(s) to enrich for '${system.name}'.`);
-	const { browser, page } = await newPage(system);
+	const { browser, page } = await newPageFn(system);
 	const out = [];
 	try {
 		const listReady = system.recipe?.ready?.text || '';
@@ -411,19 +447,19 @@ async function enrich(system, recipePath) {
 		for (let i = 0; i < docs.length; i++) {
 			const key = docs[i];
 			log(prefix, `(${i + 1}/${docs.length}) ${key}`);
-			const clicked = await openRecord(page, system, recipePath, key, listReady);
+			const clicked = await openRecordFn(page, system, recipePath, key, listReady);
 			if (!clicked) {
 				log(prefix, `  not found on list page(s) / click failed - skipping`);
 				continue;
 			}
-			if (urlGlob && !(await waitUrl(page, urlGlob, 12))) {
+			if (urlGlob && !(await waitUrlFn(page, urlGlob, 12))) {
 				log(prefix, `  click did not open a detail page (no ${urlGlob}) - skipping ${key}`);
 				continue;
 			}
-			await waitText(page, readyText, readySeconds(detail.ready, 12));
+			await waitTextFn(page, readyText, readySeconds(detail.ready, 12));
 			try {
-				const data = await snapshotData(page);
-				const item = extractDetail(data, recipePath, key);
+				const data = await snapshotDataFn(page);
+				const item = extractDetailFn(data, recipePath, key);
 				out.push({ ...item, key });
 				log(prefix, `  fields=${Object.keys(item).filter((k) => k !== 'raw_text').join(',')}, body=${String(item.raw_text || '').length} chars`);
 			} catch (e) {
@@ -432,14 +468,14 @@ async function enrich(system, recipePath) {
 		}
 		if (!out.length) throw new Error('no records successfully extracted');
 		let items = out;
-		if (process.env.SUMMARY_MODEL) {
-			log(prefix, `summarizing ${items.length} record(s) via local model '${process.env.SUMMARY_MODEL}'...`);
-			items = runJson(SUMMARIZE, [], JSON.stringify(items), 'summarize');
+		if (summaryModel) {
+			log(prefix, `summarizing ${items.length} record(s) via local model '${summaryModel}'...`);
+			items = runJsonFn(SUMMARIZE, [], JSON.stringify(items), 'summarize');
 		} else {
 			log(prefix, 'SUMMARY_MODEL unset - storing detail fields only (set SUMMARY_MODEL + a local endpoint to summarize).');
 		}
-		upsert(system.name, wrapRecords(items), prefix);
-		approvalsDualWrite(system.name, wrapRecords(items), prefix);
+		upsertFn(system.name, wrapRecords(items), prefix);
+		approvalsDualWriteFn(system.name, wrapRecords(items), prefix);
 		log(prefix, 'done.');
 	} finally {
 		await browser.close();

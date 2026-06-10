@@ -75,7 +75,7 @@ function statusKind(value) {
 	const s = String(value || '').toLowerCase();
 	if (['done', 'pass', 'passed', 'ready', 'ok', 'success', 'succeeded', 'approved', 'confirmed', 'synced', 'verified', 'dry-ok', 'implemented', 'enabled'].includes(s)) return 'success';
 	if (['running', 'queued', 'pending', 'planned', 'dry-running', 'dry'].includes(s)) return 'info';
-	if (['needs implementation', 'needs-review', 'needs_review', 'skipped', 'stale-auth', 'awaiting-confirmation', 'disabled', 'not queued', 'review-required', 'document-complete'].includes(s)) return 'warning';
+	if (['needs implementation', 'needs-review', 'needs_review', 'missing-values', 'missing-auth', 'needs-compile', 'skipped', 'stale-auth', 'awaiting-confirmation', 'disabled', 'not queued', 'review-required', 'document-complete'].includes(s)) return 'warning';
 	if (['failed', 'fail', 'refused', 'blocked', 'cancelled', 'guard-failed', 'unavailable', 'no-go'].includes(s)) return 'danger';
 	return 'neutral';
 }
@@ -552,10 +552,59 @@ function flowStepSummary(s) {
 
 function flowReadyReason(flow) {
 	if (!flow) return '녹화된 플로우가 없습니다.';
+	if (flow.scenarioStatus?.unrunnableReason) return flow.scenarioStatus.unrunnableReason;
+	if (flow.scenarioStatus?.lastFailureReason) return `last run failed: ${flow.scenarioStatus.lastFailureReason}`;
+	if (flow.scenarioStatus?.lastRun?.status === 'pass') return 'last run passed';
 	if (flow.needsReviewSteps?.length) return `검토 필요 단계 ${flow.needsReviewSteps.length}개`;
 	if (flow.missingValues?.length) return `입력값 누락: ${flow.missingValues.join(', ')}`;
 	if (!flow.compiled) return '컴파일 전';
 	return '실행 가능';
+}
+
+function scenarioReason(flow) {
+	const status = flow?.scenarioStatus || {};
+	const reasons = [];
+	if (status.unrunnableReason) reasons.push(status.unrunnableReason);
+	if (status.lastFailureReason) reasons.push(`last failure: ${status.lastFailureReason}`);
+	if (reasons.length) return reasons.join(' / ');
+	if (status.lastRun?.status === 'pass') return 'last run passed';
+	if (!status.lastRun) return 'No run recorded yet.';
+	return 'Ready to run';
+}
+
+function statusDetailNode(detail) {
+	if (!detail) return null;
+	return detail.nodeType ? detail : document.createTextNode(String(detail));
+}
+
+function scenarioStatusItem(label, value, kind = 'neutral', detail = null, wide = false) {
+	const valueNode = value && value.nodeType ? value : statusBadge(value, kind);
+	return el('div', { class: `scenario-status-item ${wide ? 'wide' : ''}` },
+		el('span', {}, label),
+		valueNode,
+		detail ? el('small', {}, statusDetailNode(detail)) : null,
+	);
+}
+
+function renderScenarioStatus(flow) {
+	const status = flow?.scenarioStatus || {};
+	const missingValues = status.missingValues || flow?.missingValues || [];
+	const last = status.lastRun || null;
+	const lastLinks = last ? el('span', { class: 'status-link-row' },
+		el('a', { href: last.runUrl, target: '_blank', rel: 'noreferrer' }, last.runId),
+		el('a', { href: last.reportUrl, target: '_blank', rel: 'noreferrer' }, 'report.json'),
+	) : null;
+	const auth = status.auth || {};
+	const reasonKind = status.unrunnableReason ? 'warning' : status.lastFailureReason ? 'danger' : 'neutral';
+	const authKind = auth.required ? (auth.ready ? 'success' : 'warning') : 'neutral';
+	return el('div', { class: 'scenario-status-grid' },
+		scenarioStatusItem('needs_review', String(status.needsReview || 0), status.needsReview ? 'warning' : 'success'),
+		scenarioStatusItem('missing values', String(missingValues.length), missingValues.length ? 'warning' : 'success', missingValues.join(', ')),
+		scenarioStatusItem('compiled', flow.compiled ? 'fresh' : 'stale/missing', flow.compiled ? 'success' : 'warning'),
+		scenarioStatusItem('auth', auth.required ? (auth.ready ? 'ready' : 'missing') : 'not required', authKind, auth.app || ''),
+		scenarioStatusItem('last run', last ? last.status : 'never-run', last ? statusKind(last.status) : 'neutral', lastLinks),
+		scenarioStatusItem(status.unrunnableReason ? 'unrunnable reason' : status.lastFailureReason ? 'last failure reason' : 'reason', el('strong', { class: `scenario-reason ${reasonKind}` }, scenarioReason(flow)), reasonKind, null, true),
+	);
 }
 
 function setAutomationJobBadge(label, kind = 'neutral') {
@@ -777,6 +826,7 @@ function renderAutomationFlow(flow) {
 	const compileOut = state.automation.compileOutput ? el('pre', { class: 'joblog compact-log' }, state.automation.compileOutput) : null;
 	setChildren(box,
 		summary,
+		renderScenarioStatus(flow),
 		reviewNotice,
 		el('div', { class: 'flow-body' }, steps),
 		...reviewBlocks,

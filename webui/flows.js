@@ -11,9 +11,10 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { latestTestResultsByName } from './index.js';
 
 const require = createRequire(import.meta.url);
-const { flowEngine } = require('../lib/engine.js');
+const { authStateExists, flowEngine } = require('../lib/engine.js');
 const aria = require('../lib/aria.js');
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
@@ -65,6 +66,52 @@ function safeFlowEngine(flow) {
 			engineError: String(e && e.message || e),
 		};
 	}
+}
+
+function missingTokens(tokens, values) {
+	return tokens.filter((t) => !(t in values) || values[t] === '');
+}
+
+function authStatus(flow, engine) {
+	if (!flow?.app || engine.engineError) return { required: !!flow?.app, ready: true, app: flow?.app || null };
+	try {
+		return { required: true, ready: authStateExists(PROBE_ROOT, engine.engine, flow.app), app: flow.app };
+	} catch (e) {
+		return { required: true, ready: false, app: flow.app, error: String(e?.message || e) };
+	}
+}
+
+function buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun }) {
+	const needsReview = steps.filter((s) => s.needs_review === true).length;
+	const auth = authStatus(flow, engine);
+	const reasons = [];
+	if (engine.engineError) reasons.push(engine.engineError);
+	if (needsReview) reasons.push(`${needsReview} needs_review step(s)`);
+	if (missingValues.length) reasons.push(`missing values: ${missingValues.join(', ')}`);
+	if (auth.required && !auth.ready) reasons.push(auth.error || `missing Playwright auth for app "${auth.app}"`);
+	if (!compiled) reasons.push('compiled test is missing or older than the flow');
+
+	let state = 'ready';
+	if (engine.engineError) state = 'engine-error';
+	else if (needsReview) state = 'needs-review';
+	else if (missingValues.length) state = 'missing-values';
+	else if (auth.required && !auth.ready) state = 'missing-auth';
+	else if (!compiled) state = 'needs-compile';
+	else if (lastRun?.status === 'fail') state = 'last-run-failed';
+	else if (lastRun?.status === 'pass') state = 'passed';
+
+	return {
+		state,
+		runnable: reasons.length === 0,
+		reasons,
+		unrunnableReason: reasons[0] || '',
+		needsReview,
+		missingValues,
+		compiled,
+		auth,
+		lastRun: lastRun || null,
+		lastFailureReason: lastRun?.status === 'fail' ? lastRun.failureReason : '',
+	};
 }
 
 async function readJsonFile(p) {
@@ -206,25 +253,38 @@ export async function listFlows() {
 	} catch {
 		return [];
 	}
+	const latestResults = await latestTestResultsByName();
 	const names = entries.filter((f) => f.endsWith('.flow.json')).map((f) => f.slice(0, -'.flow.json'.length));
 	const out = [];
-		for (const name of names) {
-			if (!validName(name)) continue;
-			const flow = await readJsonFile(flowPath(name));
-			if (!flow) continue;
-			const steps = Array.isArray(flow.steps) ? flow.steps : [];
-			const engine = safeFlowEngine(flow);
-			out.push({
-				name,
-				engine: engine.engine,
-				engineError: engine.engineError,
-				startUrl: flow.startUrl || '',
-				app: flow.app || null,
+	for (const name of names) {
+		if (!validName(name)) continue;
+		const flow = await readJsonFile(flowPath(name));
+		if (!flow) continue;
+		const steps = Array.isArray(flow.steps) ? flow.steps : [];
+		const tokens = collectTokens(flow);
+		const values = (await readJsonFile(valuesPath(name))) || {};
+		const engine = safeFlowEngine(flow);
+		const compiled = compiledFresh(name);
+		const missingValues = missingTokens(tokens, values);
+		const scenarioStatus = buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun: latestResults[name] || null });
+		out.push({
+			name,
+			engine: engine.engine,
+			engineError: engine.engineError,
+			startUrl: flow.startUrl || '',
+			app: flow.app || null,
 			steps: steps.length,
-			needsReview: steps.filter((s) => s.needs_review === true).length,
-			inputTokens: collectTokens(flow),
+			needsReview: scenarioStatus.needsReview,
+			inputTokens: tokens,
+			missingValues,
 			hasValues: existsSync(valuesPath(name)),
-			compiled: compiledFresh(name),
+			compiled,
+			compilable: !engine.engineError && scenarioStatus.needsReview === 0 && missingValues.length === 0,
+			runnable: scenarioStatus.runnable,
+			runBlockedReason: scenarioStatus.unrunnableReason,
+			lastRun: scenarioStatus.lastRun,
+			lastFailureReason: scenarioStatus.lastFailureReason,
+			scenarioStatus,
 		});
 	}
 	out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -239,6 +299,10 @@ export async function getFlow(name) {
 	const values = (await readJsonFile(valuesPath(name))) || {};
 	const tokens = collectTokens(flow);
 	const engine = safeFlowEngine(flow);
+	const compiled = compiledFresh(name);
+	const missingValues = missingTokens(tokens, values);
+	const latestResults = await latestTestResultsByName();
+	const scenarioStatus = buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun: latestResults[name] || null });
 	return {
 		name,
 		engine: engine.engine,
@@ -253,10 +317,15 @@ export async function getFlow(name) {
 			.map((x) => ({ index: x.index, action: x.step.action || null, candidates: Array.isArray(x.step.candidates) ? x.step.candidates : [] })),
 		inputTokens: tokens,
 		values,
-		missingValues: tokens.filter((t) => !(t in values) || values[t] === ''),
-		compiled: compiledFresh(name),
+		missingValues,
+		compiled,
+		scenarioStatus,
 		// compile is safe only when no needs_review remains AND every token has a value.
 		compilable: !engine.engineError && steps.every((s) => s.needs_review !== true) && tokens.every((t) => t in values && values[t] !== ''),
+		runnable: scenarioStatus.runnable,
+		runBlockedReason: scenarioStatus.unrunnableReason,
+		lastRun: scenarioStatus.lastRun,
+		lastFailureReason: scenarioStatus.lastFailureReason,
 	};
 }
 

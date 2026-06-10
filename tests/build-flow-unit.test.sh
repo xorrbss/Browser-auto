@@ -23,9 +23,10 @@ cat > "$REC" <<'JSON'
  {"seq":2,"action_type":"navigate","url_at_capture":"https://app.example.com/cart","from":"https://app.example.com/cart","primary":null,"candidates":[],"is_navigation_boundary":true},
  {"seq":3,"action_type":"input","url_at_capture":"https://app.example.com/checkout/42","primary":{"by":"label","value":"Email"},"candidates":[{"by":"label","value":"Email","count":1}],"input_value":"a@b.com","is_navigation_boundary":false},
  {"seq":4,"action_type":"input","url_at_capture":"https://app.example.com/checkout/42","primary":{"by":"label","value":"Password"},"candidates":[{"by":"label","value":"Password","count":1}],"input_value":null,"masked":true,"is_navigation_boundary":false},
- {"seq":5,"action_type":"select","url_at_capture":"https://app.example.com/checkout/42","primary":{"by":"label","value":"Country"},"candidates":[{"by":"label","value":"Country","count":1}],"input_value":"US","select_text":"United States","is_navigation_boundary":false},
- {"seq":6,"action_type":"key","url_at_capture":"https://app.example.com/checkout/42","primary":null,"candidates":[],"input_value":"Enter","is_navigation_boundary":false},
- {"seq":7,"action_type":"click","url_at_capture":"https://app.example.com/checkout/42","primary":null,"insufficient":true,"candidates":[{"by":"text","value":"Edit","count":3},{"by":"role","value":"button","count":3}],"is_navigation_boundary":false}
+ {"seq":5,"action_type":"input","url_at_capture":"https://app.example.com/checkout/42","primary":{"by":"label","value":"Country"},"candidates":[{"by":"label","value":"Country","count":1}],"input_value":"US","is_navigation_boundary":false},
+ {"seq":6,"action_type":"select","url_at_capture":"https://app.example.com/checkout/42","primary":{"by":"label","value":"Country"},"candidates":[{"by":"label","value":"Country","count":1}],"input_value":"US","select_text":"United States","is_navigation_boundary":false},
+ {"seq":7,"action_type":"key","url_at_capture":"https://app.example.com/checkout/42","primary":null,"candidates":[],"input_value":"Enter","is_navigation_boundary":false},
+ {"seq":8,"action_type":"click","url_at_capture":"https://app.example.com/checkout/42","primary":null,"insufficient":true,"candidates":[{"by":"text","value":"Edit","count":3},{"by":"role","value":"button","count":3}],"is_navigation_boundary":false}
 ]
 JSON
 
@@ -33,6 +34,7 @@ node "$DIR/bin/build-flow.js" uflow "https://app.example.com/cart" "" "$REC" "$F
 	|| fail "build-flow.js exited non-zero"
 FLOW="$FLOWS/uflow.flow.json"; VALUES="$FLOWS/uflow.values.json"
 [ -s "$FLOW" ] || fail "no flow.json produced"
+eq "$(jq -r '.steps|length' "$FLOW")" '7' "duplicate select input is dropped"
 
 # 1. click -> testid find
 eq "$(jq -rc '.steps[0]|[.kind,.by,.value,.action]' "$FLOW")" '["find","testid","checkout-btn","click"]' "step0 click"
@@ -134,7 +136,43 @@ eq "$(jq -rc '.steps[1]|[.kind,.until,.value]' "$FLOW4")" '["wait","load","netwo
 eq "$(jq -rc '.steps[2]|[.kind,.until,.value]' "$FLOW4")" '["wait","url","**/b"]' "navds url-wait gate AFTER the settle"
 eq "$(jq -rc '.steps[3]|[.kind,.value]' "$FLOW4")" '["find","OnPageB"]' "navds step3 find on page B"
 
-# 16. scroll (#2): a valid page-scroll record -> {kind:scroll,dir,px}; malformed scrolls (bad dir /
+# 16. Unglobbable navigation targets (root path or entirely volatile path) still get an explicit
+#     deterministic gate: wait:load networkidle, not a silent reliance on the next locator.
+REC6="$TMP/records6.json"; FLOWS6="$TMP/flows6"; mkdir -p "$FLOWS6"
+cat > "$REC6" <<'JSON'
+[
+ {"seq":1,"action_type":"click","url_at_capture":"https://app.example.com/a","primary":{"by":"text","value":"Go"},"candidates":[{"by":"text","value":"Go","count":1}],"is_navigation_boundary":false},
+ {"seq":2,"action_type":"navigate","url_at_capture":"https://app.example.com/a","from":"https://app.example.com/a","primary":null,"candidates":[],"is_navigation_boundary":true},
+ {"seq":3,"action_type":"click","url_at_capture":"https://app.example.com/","primary":{"by":"text","value":"Home"},"candidates":[{"by":"text","value":"Home","count":1}],"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" rootnav "https://app.example.com/a" "" "$REC6" "$FLOWS6" "$BF_ENGINE" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on the root navigation stream"
+FLOW6="$FLOWS6/rootnav.flow.json"
+eq "$(jq -rc '.steps[0]|[.kind,.value,.action]' "$FLOW6")" '["find","Go","click"]' "rootnav step0 click"
+eq "$(jq -rc '.steps[1]|[.kind,.until,.value]' "$FLOW6")" '["wait","load","networkidle"]' "rootnav unglobbable navigation -> load wait fallback"
+eq "$(jq -rc '.steps[2]|[.kind,.value,.action]' "$FLOW6")" '["find","Home","click"]' "rootnav step2 click after fallback wait"
+eq "$(jq -r '.asserts|length' "$FLOW6")" '0' "rootnav no useless trailing root-url assert"
+
+# 17. iframe frame locators must be replay-safe before they are committed. Unsafe id/title/src
+#     values fall through to a safe name or index; with no safe identity, the action is needs_review.
+REC7="$TMP/records7.json"; FLOWS7="$TMP/flows7"; mkdir -p "$FLOWS7"
+cat > "$REC7" <<'JSON'
+[
+ {"seq":1,"action_type":"click","url_at_capture":"https://app.example.com/pay","primary":{"by":"role","value":"button","name":"Pay"},"candidates":[{"by":"role","value":"button","name":"Pay","count":1}],"frame_ref":{"id":"bad\"id","name":"safeFrame","index":0},"is_navigation_boundary":false},
+ {"seq":2,"action_type":"click","url_at_capture":"https://app.example.com/pay","primary":{"by":"role","value":"button","name":"Next"},"candidates":[{"by":"role","value":"button","name":"Next","count":1}],"frame_ref":{"id":"bad\"id","index":0},"is_navigation_boundary":false},
+ {"seq":3,"action_type":"click","url_at_capture":"https://app.example.com/pay","primary":{"by":"role","value":"button","name":"Bad"},"candidates":[{"by":"role","value":"button","name":"Bad","count":1}],"frame_ref":{"id":"bad\"id"},"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" frameflow "https://app.example.com/pay" "" "$REC7" "$FLOWS7" "$BF_ENGINE" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on the iframe stream"
+FLOW7="$FLOWS7/frameflow.flow.json"
+eq "$(jq -rc '.steps[0].frame|[.by,.value]' "$FLOW7")" '["name","safeFrame"]' "iframe unsafe id -> safe name"
+eq "$(jq -rc '.steps[1].frame|[.by,.value]' "$FLOW7")" '["index",0]' "iframe unsafe id -> index fallback"
+eq "$(jq -r '.steps[2].needs_review' "$FLOW7")" 'true' "iframe with no replay-safe identity -> needs_review"
+eq "$(jq -r '.steps[2]|has("frame")' "$FLOW7")" 'false' "unreplayable iframe step carries no invalid frame"
+
+# 18. scroll (#2): a valid page-scroll record -> {kind:scroll,dir,px}; malformed scrolls (bad dir /
 #     px<=0) are DROPPED; compile emits only the thin Playwright wrapper, and play-flow validates
 #     the scroll step directly.
 REC5="$TMP/records5.json"; FLOWS5="$TMP/flows5"; mkdir -p "$FLOWS5"

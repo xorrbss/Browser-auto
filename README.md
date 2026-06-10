@@ -80,6 +80,42 @@ node bin/play-flow.mjs --flow flows/checkout.flow.json
 Compiled Playwright tests are small bash wrappers around `node bin/play-flow.mjs --flow ...`, preserving
 the "one bash file = one user journey" contract.
 
+## RPA Validation Without External Dependencies
+
+Use this gate when changing generic RPA extraction, pagination, detail-open, iframe capture, or approval
+dry-run safety without hitting a real app, auth provider, LLM, or network service:
+
+```bash
+bash tests/extract-list-unit.test.sh
+bash tests/extract-detail-unit.test.sh
+bash tests/pw-rpa-pagination-unit.test.sh
+bash tests/pw-rpa-orchestration-unit.test.sh
+bash tests/approve-guards-unit.test.sh
+bash tests/flow-runner-unit.test.sh
+bash tests/play-flow-smoke.test.sh
+bash tests/capture-e2e.test.sh
+bash tests/rpa-fixture-e2e.test.sh
+bash tests/rpa-local-fixture-e2e.test.sh
+bash tests/agent-plan-unit.test.sh
+```
+
+The unit tests are browser-free where possible; `play-flow-smoke`, `capture-e2e`, and the RPA fixture
+E2Es use only file or localhost fixtures and skip if the Playwright Chrome channel is unavailable.
+Representative fixture scenarios are documented in `dev/active/rpa-validation/SCENARIO-LIBRARY.md`.
+
+For a real registered system, the same contracts are driven by:
+
+```bash
+bash bin/analyze-system.sh --system <name>
+bash bin/sync-system.sh --system <name>
+bash bin/enrich-system.sh --system <name> [--limit N]
+bash bin/enrich-system.sh --system <name> --key <id>
+```
+
+Those commands require a registered system, `recipes/<name>.json`, and
+`fixtures/auth/playwright/<name>.state.json`. Do not use live system success as a substitute for the
+external-dependency-free gate.
+
 ## Flow Format
 
 New flows should declare Playwright explicitly:

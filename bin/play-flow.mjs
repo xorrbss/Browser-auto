@@ -14,6 +14,7 @@ const aria = require('../lib/aria.js');
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 const ASSERT_KINDS = new Set(['url', 'text', 'value', 'visible', 'count', 'absent']);
+const EFFECTFUL_ACTIONS = new Set(['click', 'fill', 'type', 'select', 'check', 'uncheck']);
 const SAFE_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 const argv = process.argv.slice(2);
@@ -50,6 +51,28 @@ function valuesPathFor(file) {
 	return file.replace(/\.flow\.json$/i, '.values.json');
 }
 
+function isEffectfulStep(s) {
+	return (s && s.kind === 'find' && EFFECTFUL_ACTIONS.has(s.action)) || (s && s.kind === 'open_record');
+}
+
+function describeStep(s) {
+	if (!s || typeof s !== 'object') return 'invalid step';
+	if (s.kind === 'find') {
+		const name = s.name ? ` name="${s.name}"` : '';
+		const frame = s.frame ? ` frame=${s.frame.by}:${s.frame.value}` : '';
+		return `find ${s.by}:${s.value}${name} ${s.action}${frame}`;
+	}
+	if (s.kind === 'wait') return `wait ${s.until}${s.value != null ? `:${s.value}` : ''}`;
+	if (s.kind === 'press') return `press ${s.value}`;
+	if (s.kind === 'scroll') return `scroll ${s.dir} ${s.px}`;
+	if (s.kind === 'open_record') return `open_record ${s.recipe || ''}`;
+	return String(s.kind || 'unknown');
+}
+
+function errorMessage(e) {
+	return String(e && e.message || e);
+}
+
 function assertUrlMatch(got, want) {
 	const esc = String(want).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '*').replace(/\*/g, '.*');
 	const re = new RegExp(`^${esc}([?#].*)?$`);
@@ -70,6 +93,7 @@ function validateAsserts(asserts) {
 }
 
 function makeResolveValue(values, valuesFile) {
+	if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error(`values sidecar must be an object: ${valuesFile}`);
 	return (input) => {
 		const s = input == null ? '' : String(input);
 		return s.replace(/\{\{([A-Za-z0-9_]+)\}\}/g, (m, key) => {
@@ -84,6 +108,8 @@ function preflightValues(flow, resolveValue) {
 		if (s && s.kind === 'find') {
 			if (s.text != null) resolveValue(s.text);
 			if (s.val != null) resolveValue(s.val);
+		} else if (s && s.kind === 'wait' && s.until === 'text' && s.value != null) {
+			resolveValue(s.value);
 		}
 	}
 	for (const a of flow.asserts || []) {
@@ -101,6 +127,26 @@ function assertPlayableEngine(flow) {
 		throw new Error('flow.engine is "agent-browser"; Playwright-only runtime refuses legacy flows. Set flow.engine="playwright" (or omit engine) and run `node bin/play-flow.mjs --flow <flow> --validate-only` before replay.');
 	}
 	throw new Error(`flow.engine: invalid engine "${engine}" (expected playwright)`);
+}
+
+function replayStep(step, resolveValue) {
+	const out = { ...step };
+	if (out.kind === 'wait' && out.until === 'text' && out.value != null) out.value = resolveValue(out.value);
+	return out;
+}
+
+function validateLiveIrreversibleGate(steps, gate, onBeforeIrreversible) {
+	if (!gate || gate.reversible !== false) return;
+	const i = gate.irreversibleAt;
+	if (!Number.isInteger(i) || i < 0 || i >= steps.length) {
+		throw new Error(`REFUSED: irreversibleAt ${i} out of range [0,${steps.length}) — an effectful action must pin its point-of-no-return (or pass reversible:true) — fail-closed`);
+	}
+	if (!isEffectfulStep(steps[i])) {
+		throw new Error(`REFUSED: irreversibleAt ${i} is "${steps[i].kind}/${steps[i].action || ''}", not an effectful step — the real commit would run un-gated (fail-closed)`);
+	}
+	if (typeof onBeforeIrreversible !== 'function') {
+		throw new Error('REFUSED: a live irreversible run requires an onBeforeIrreversible callback (audit + cap) — fail-closed');
+	}
 }
 
 function preflightOpenRecords(flow) {
@@ -299,7 +345,8 @@ async function runAsserts(page, asserts, resolveValue) {
 			if (!assertUrlMatch(got, a.value)) throw new Error(`assert ${i} url: "${got}" does not match "${a.value}"`);
 		} else if (a.kind === 'text') {
 			const got = await page.locator('body').innerText();
-			if (!got.includes(resolveValue(a.value))) throw new Error(`assert ${i} text: body does not contain "${a.value}"`);
+			const want = resolveValue(a.value);
+			if (!got.includes(want)) throw new Error(`assert ${i} text: body does not contain "${want}"`);
 		} else if (a.kind === 'value') {
 			const got = await page.locator(a.selector).inputValue();
 			const want = resolveValue(a.text != null ? a.text : a.value);
@@ -389,10 +436,10 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 					repaired++;
 				}
 				await buildLocator(page, r.step).first().hover();
-				await runSteps(page, [r.step], { reversible: true, dryRun: false, resolveValue, openRecord });
+				await runSteps(page, [replayStep(r.step, resolveValue)], { reversible: true, dryRun: false, resolveValue, openRecord });
 				verified++;
 			} else {
-				await runSteps(page, [s], { reversible: true, dryRun: false, resolveValue, openRecord });
+				await runSteps(page, [replayStep(s, resolveValue)], { reversible: true, dryRun: false, resolveValue, openRecord });
 			}
 		} catch (e) {
 			if (s.kind === 'find') {
@@ -422,6 +469,28 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 	}
 	if (failedStep) throw new Error(`verify: step ${failedStep.i} (${failedStep.kind}) failed at replay: ${failedStep.error}`);
 	return { verified, repaired, promoted, ...(stoppedBeforeIrreversible ? { stoppedBeforeIrreversible: true } : {}) };
+}
+
+async function runFlowStepsWithDiagnostics(page, steps, opts) {
+	const gate = opts.gate || { reversible: true };
+	const onBeforeIrreversible = opts.onBeforeIrreversible;
+	validateLiveIrreversibleGate(steps, gate, onBeforeIrreversible);
+	const oneStepOpts = {
+		dryRun: false,
+		reversible: true,
+		resolveValue: opts.resolveValue,
+		openRecord: opts.openRecord,
+	};
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		try {
+			if (gate.reversible === false && i === gate.irreversibleAt) await onBeforeIrreversible(i, step);
+			await runSteps(page, [replayStep(step, opts.resolveValue)], oneStepOpts);
+		} catch (e) {
+			throw new Error(`step ${i} (${describeStep(step)}) failed: ${errorMessage(e)}`);
+		}
+	}
+	return { stoppedBeforeIrreversible: false };
 }
 
 let summary = null;
@@ -458,9 +527,9 @@ try {
 			// irreversible point-of-no-return replays through the audited fail-closed gate; every other flow
 			// stays reversible exactly as before. See approve/flow-runner.mjs irreversibleOptsFor.
 			const gate = irreversibleOptsFor(flow);
-			const runOpts = { dryRun: false, resolveValue, openRecord, ...gate };
+			const runOpts = { resolveValue, openRecord, gate };
 			if (gate.reversible === false) runOpts.onBeforeIrreversible = (i, step) => appendPlayAudit(absFlow, flow, i, step);
-			await runSteps(page, flow.steps, runOpts);
+			await runFlowStepsWithDiagnostics(page, flow.steps, runOpts);
 			await runAsserts(page, flow.asserts || [], resolveValue);
 			summary = { status: 'ok', mode: 'play', flow: flow.name || path.basename(absFlow) };
 		}

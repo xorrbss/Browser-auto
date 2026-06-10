@@ -74,15 +74,22 @@ function ladderOf(rec) {
 // frameLoc(frame_ref): the parent-visible iframe LOCATOR for a step recorded inside an iframe (id > name >
 // title > src-path > index — semantic, never @ref). A CROSS-ORIGIN frame (parent can't scope into it) or an
 // iframe with NO stable identity is UNREPLAYABLE ⇒ {_unreplayable} ⇒ the step is forced needs_review (fail-closed).
+function safeFrameString(v) {
+  return typeof v === 'string' && v !== '' && !/["\\]/.test(v) ? v : null;
+}
 function frameLoc(fr) {
   if (!fr) return null;
   if (fr.crossOrigin) return { _unreplayable: 'cross-origin iframe (parent cannot scope into it)' };
-  if (fr.id) return { by: 'id', value: fr.id };
-  if (fr.name) return { by: 'name', value: fr.name };
-  if (fr.title) return { by: 'title', value: fr.title };
-  if (fr.srcPath) return { by: 'urlGlob', value: fr.srcPath };
+  const id = safeFrameString(fr.id);
+  const name = safeFrameString(fr.name);
+  const title = safeFrameString(fr.title);
+  const srcPath = safeFrameString(fr.srcPath);
+  if (id) return { by: 'id', value: id };
+  if (name) return { by: 'name', value: name };
+  if (title) return { by: 'title', value: title };
+  if (srcPath) return { by: 'urlGlob', value: srcPath };
   if (typeof fr.index === 'number' && fr.index >= 0) return { by: 'index', value: fr.index };
-  return { _unreplayable: 'iframe with no stable identity (no id/name/title/src/index)' };
+  return { _unreplayable: 'iframe with no replay-safe identity (no safe id/name/title/src/index)' };
 }
 function actionFind(rec, action, extra) {
   const p = rec.primary;
@@ -115,12 +122,29 @@ function token(realValue) {
   return { key, tok: '{{' + key + '}}' };
 }
 
+function locatorKey(rec) {
+  const p = rec && (rec.primary || (rec.candidates || [])[0]);
+  if (!p) return '';
+  return [p.by || '', p.value || '', p.name || ''].join('\u0001');
+}
+
+function isSelectInputDuplicate(rec, next) {
+  if (!rec || !next) return false;
+  if (rec.action_type !== 'input' || next.action_type !== 'select') return false;
+  if (rec.input_value !== next.input_value) return false;
+  const a = locatorKey(rec);
+  return !!a && a === locatorKey(next);
+}
+
 function maybeWait(toUrl) {
   // emit a wait only when the URL actually changed (design rule: no no-op/self waits)
   if (!toUrl || toUrl === lastUrl) return;
   const g = urlGlob(toUrl);
   if (g) { steps.push({ kind: 'wait', until: 'url', value: g }); }
-  else { warns.push(`navigation boundary to a volatile/root URL (${toUrl}) — no wait emitted; relying on next find's implicit wait`); }
+  else {
+    steps.push({ kind: 'wait', until: 'load', value: 'networkidle' });
+    warns.push(`navigation boundary to a volatile/root URL (${toUrl}) — emitted load wait fallback`);
+  }
   lastUrl = toUrl;
 }
 
@@ -150,6 +174,10 @@ for (let i = 0; i < records.length; i++) {
     }
     if (nextTxt) steps.push({ kind: 'wait', until: 'text', value: nextTxt });
     else steps.push({ kind: 'wait', until: 'load', value: 'networkidle' });
+    continue;
+  }
+  if (isSelectInputDuplicate(rec, records[i + 1])) {
+    warns.push(`dropped duplicate input event before select at record #${i + 1}`);
     continue;
   }
   if (t === 'click') { actionFind(rec, 'click'); }

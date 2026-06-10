@@ -322,6 +322,61 @@ pre, code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; }
 	border-color: var(--teal);
 	background: #eefafa;
 }
+.scenario-status-grid {
+	margin-top: 12px;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	gap: 10px;
+}
+.scenario-status-item {
+	min-height: 74px;
+	padding: 10px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--surface-2);
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 7px;
+	min-width: 0;
+}
+.scenario-status-item.wide {
+	grid-column: 1 / -1;
+	min-height: 0;
+}
+.scenario-status-item > span:first-child {
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+.scenario-status-item small {
+	color: var(--muted);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+.scenario-reason {
+	display: block;
+	font-size: 13px;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+.scenario-reason.warning { color: var(--amber); }
+.scenario-reason.danger { color: var(--red); }
+.scenario-reason.neutral { color: var(--muted); }
+.status-link-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	overflow-wrap: anywhere;
+}
+.status-link-row a {
+	color: var(--blue);
+	font-weight: 800;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
 .values-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

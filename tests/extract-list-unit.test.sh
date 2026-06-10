@@ -133,4 +133,23 @@ TREE
 expect_fail "$RECIPE_IDX" "$TMP/c6" "c6 too-few-cells for index map"
 echo "  ✓ c6 headerless cell-count guard"
 
-echo "  ✓ extract-list-unit: all cases passed"
+# ---------- case 7: if real columnheaders appear, they stay authoritative. A drifted header must
+# fail closed instead of silently falling back to columnIndexes. ----------
+cat > "$TMP/c7" <<'TREE'
+- table "Tickets"
+  - rowgroup
+    - row
+      - columnheader "select"
+      - columnheader "ticket_id"
+      - columnheader "subject"
+      - columnheader "owner"
+    - row [ref=e1]
+      - cell "x"
+      - cell "T-1"
+      - cell "Login bug"
+      - cell "Alice"
+TREE
+expect_fail "$RECIPE_IDX" "$TMP/c7" "c7 drifted header with columnIndexes"
+echo "  ✓ c7 header drift still fail-closed with columnIndexes"
+
+echo "  ✓ extract-list-unit: all 7 cases passed"

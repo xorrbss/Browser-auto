@@ -61,11 +61,15 @@ async function parseRun(runId) {
 	}
 	if (!Array.isArray(rows)) return null;
 
-	const tests = rows.map((r) => ({
-		name: typeof r?.name === 'string' ? r.name : '',
-		status: r?.status === 'pass' ? 'pass' : 'fail',
-		durationMs: Number(r?.durationMs) || 0,
-	}));
+	const tests = rows.map((r) => {
+		const status = r?.status === 'pass' ? 'pass' : 'fail';
+		return {
+			name: typeof r?.name === 'string' ? r.name : '',
+			status,
+			durationMs: Number(r?.durationMs) || 0,
+			failureReason: failureReasonFor(r, status),
+		};
+	});
 	const passed = tests.filter((t) => t.status === 'pass').length;
 	return {
 		runId,
@@ -118,6 +122,54 @@ export async function listRuns() {
 export async function getRun(runId) {
 	if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return null;
 	return getRunCached(runId);
+}
+
+function cleanReason(value) {
+	const s = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+	return s.length > 320 ? `${s.slice(0, 317)}...` : s;
+}
+
+function failureReasonFor(row, status) {
+	const explicit = cleanReason(row?.failureReason || row?.reason || row?.error || row?.message);
+	if (explicit) return explicit;
+	return status === 'fail' ? 'Test failed; report.json does not include a failure message.' : '';
+}
+
+function publicTestResult(run, test) {
+	return {
+		name: test.name,
+		status: test.status,
+		durationMs: test.durationMs,
+		runId: run.runId,
+		startedAt: run.startedAt,
+		runUrl: `/api/runs/${run.runId}`,
+		reportUrl: `/artifacts/${run.runId}/report.json`,
+		failureReason: test.status === 'fail' ? test.failureReason : '',
+	};
+}
+
+// latestTestResultsByName(): newest report row per test name, derived only from report.json.
+export async function latestTestResultsByName() {
+	let entries;
+	try {
+		entries = await readdir(ARTIFACTS_DIR, { withFileTypes: true });
+	} catch {
+		return {};
+	}
+	const ids = entries
+		.filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name))
+		.map((e) => e.name)
+		.sort((a, b) => cmpRunId(b, a)); // newest first
+	const latest = {};
+	for (const id of ids) {
+		const run = await getRunCached(id);
+		if (!run) continue;
+		for (const test of run.tests) {
+			if (!test.name || latest[test.name]) continue;
+			latest[test.name] = publicTestResult(run, test);
+		}
+	}
+	return latest;
 }
 
 // pruneArtifacts(keep): delete all but the newest `keep` RUN_ID dirs under artifacts/ (disk
