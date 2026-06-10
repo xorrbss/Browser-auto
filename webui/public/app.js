@@ -637,6 +637,12 @@ function renderAutomation() {
 			? '로그인을 마쳤다면 누르세요. 현재 로그인 상태를 저장하고 창을 닫습니다.'
 			: '로그인 등록을 시작하면 활성화됩니다.';
 	}
+	const authClearBtn = $('#auto-auth-clear');
+	if (authClearBtn) {
+		authClearBtn.hidden = !loggedIn; // appears only once a login is registered, so it can be reset
+		authClearBtn.disabled = busy || !form.app;
+		authClearBtn.title = busy ? busyText : '저장된 로그인을 지워 다시 로그인할 수 있게 합니다.';
+	}
 	const authHint = $('#auto-auth-hint');
 	if (authHint) {
 		authHint.textContent = loggedIn
@@ -858,6 +864,30 @@ async function stopAutomationRecord() {
 	const ok = await stopJob(id);
 	log.hidden = false;
 	log.append(document.createTextNode(ok ? '\n[webui] 녹화 종료를 요청했습니다.\n' : '\n[webui] 아직 종료할 수 없습니다. 잠시 후 다시 누르세요.\n'));
+}
+
+// 로그인 초기화: clear the saved login for this app so the operator can re-login. The badge shows
+// "로그인 등록됨" purely from a saved state file and cannot tell the session EXPIRED (server-side
+// timeout), so this is the supported reset path. The delete is engine-agnostic server-side (auth.js).
+async function runAutomationAuthClear() {
+	const form = automationForm();
+	if (!form.app) return alert('녹화 URL 또는 로그인 URL을 입력하면 앱 ID는 자동으로 생성됩니다.');
+	if (!automationLoggedIn(form)) return alert('초기화할 저장된 로그인이 없습니다.');
+	if (!window.confirm(`'${form.app}' 저장된 로그인을 초기화할까요?\n저장된 세션을 지웁니다. 이후 [로그인 등록]으로 다시 로그인하세요.`)) return;
+	const log = $('#auto-record-log');
+	try {
+		await postJson(`/api/auth/${encodeURIComponent(form.app)}/delete`, {});
+		await Promise.allSettled([loadAuthStates(), loadDiagnostics(), loadQueue()]);
+		if (log) {
+			log.hidden = false;
+			log.textContent = `'${form.app}' 로그인을 초기화했습니다. [로그인 등록]으로 다시 로그인하세요.\n`;
+		}
+		setAutomationJobBadge('로그인 초기화됨', 'info');
+		renderAutomation();
+	} catch (e) {
+		if (log) { log.hidden = false; log.append(document.createTextNode(`로그인 초기화 실패: ${e.message}\n`)); }
+		alert(`로그인 초기화 실패: ${e.message}`);
+	}
 }
 
 async function runAutomationAuth() {
@@ -1870,6 +1900,7 @@ function bindEvents() {
 	$('#global-refresh').addEventListener('click', () => loadCoreData());
 	$('#auto-auth').addEventListener('click', runAutomationAuth);
 	$('#auto-auth-stop')?.addEventListener('click', stopAutomationAuth);
+	$('#auto-auth-clear')?.addEventListener('click', runAutomationAuthClear);
 	$('#auto-start-record').addEventListener('click', () => startAutomationRecord(false));
 	$('#auto-stop-record').addEventListener('click', stopAutomationRecord);
 	$('#auto-refresh-flow').addEventListener('click', () => loadAutomationFlow());
