@@ -11,8 +11,13 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fail=0
 
-# The NL/classify modules must not reference the approve execution path in any form.
-FORBIDDEN='routes-approve|approve-run|approvePost|nodeLeaf|/api/approve|--live'
+# The NL/classify modules must not reference the approve EXECUTION path in any form: the approve route
+# (routes-approve / approvePost / /api/approve), the approve leaf (approve-run), or the live flag (--live).
+# NOTE: `nodeLeaf` is NOT banned wholesale. Since the Playwright-default migration (147f238) the model layer
+# legitimately spawns the RPA READ drivers bin/pw-rpa.mjs (analyze/sync/enrich) — data collection, not
+# approval — through nodeLeaf. Banning it outright was a false positive; the approve leaf is instead caught
+# by `approve-run` below, and every nodeLeaf( CALL is pinned to pw-rpa.mjs by the positive guard that follows.
+FORBIDDEN='routes-approve|approve-run|approvePost|/api/approve|--live'
 for f in webui/agent.js webui/routes-rpa.js; do
 	if grep -nE "$FORBIDDEN" "$DIR/$f" >/dev/null 2>&1; then
 		echo "  ✗ agent-isolation: $f references the approve EXECUTION path (DESIGN I3 — the model must never reach approve):"
@@ -20,6 +25,17 @@ for f in webui/agent.js webui/routes-rpa.js; do
 		fail=1
 	fi
 done
+
+# nodeLeaf is allowed ONLY to spawn the Playwright RPA READ drivers (bin/pw-rpa.mjs). A nodeLeaf wiring the
+# approve LEAF (approve/approve-run.mjs) — or any other effectful leaf — would be the exact escape this test
+# guards, so pin every nodeLeaf( CALL's target. (The destructured `nodeLeaf }` param has no '(' and is ignored.)
+while IFS= read -r line; do
+	[ -n "$line" ] || continue
+	case "$line" in
+		*"bin/pw-rpa.mjs"*) ;; # an RPA read driver (analyze/sync/enrich) — data collection, not approval
+		*) echo "  ✗ agent-isolation: a nodeLeaf( call does not target bin/pw-rpa.mjs (only RPA-read spawns allowed; the model must never spawn the approve leaf):"; echo "      $line"; fail=1 ;;
+	esac
+done < <(grep -nE 'nodeLeaf\(' "$DIR/webui/agent.js" "$DIR/webui/routes-rpa.js" 2>/dev/null)
 
 # The 'approve' NL intent must remain CANDIDATES-ONLY (a read query), never execution.
 if ! grep -nE "action === 'approve'.*runQuery" "$DIR/webui/routes-rpa.js" >/dev/null 2>&1; then
