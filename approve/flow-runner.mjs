@@ -12,7 +12,12 @@
 // Gate-B capture of a real non-approval action (operator-accompanied) — see dev/active/general-action-rpa/DESIGN.md.
 'use strict';
 
-const FIND_BY = new Set(['testid', 'role', 'label', 'text', 'placeholder', 'alt', 'title']);
+// Semantic kinds stay the preferred ladder. css/xpath are LAST-RESORT structural fallbacks (see the
+// buildLocator note) for elements with no semantic locator — e.g. custom grids (jWork jGrid) whose
+// rows/cells expose no role/name/label. The recorder emits them only when no semantic candidate is
+// unique and marks the step needs_review, so a fragile locator is never auto-promoted. See
+// dev/active/pw-fallback-locator/DESIGN.md.
+const FIND_BY = new Set(['testid', 'role', 'label', 'text', 'placeholder', 'alt', 'title', 'css', 'xpath']);
 const FIND_ACTION = new Set(['click', 'fill', 'type', 'select', 'check', 'uncheck', 'hover']);
 const WAIT_UNTIL = new Set(['url', 'text', 'load']);
 const SCROLL_DIR = new Set(['up', 'down', 'left', 'right']);
@@ -103,6 +108,14 @@ export function buildLocator(page, s) {
 		case 'placeholder': return scope.getByPlaceholder(s.value, { exact });
 		case 'alt': return scope.getByAltText(s.value, { exact });
 		case 'title': return scope.getByTitle(s.value, { exact });
+		// css/xpath: LAST-RESORT structural fallback for elements with no semantic locator (custom grids
+		// like jWork jGrid whose rows/cells expose no role/name/label). Intentionally relaxes the
+		// semantic-only rule (dev/active/pw-fallback-locator/DESIGN.md) — emitted only when no semantic
+		// candidate is unique and the step stays needs_review so a human accepts it knowingly. Still
+		// fail-closed at replay via the count===1 guard in runStep. Playwright's locator() is a selector
+		// engine (no eval), so the value passes through safely; a value with `xpath=`/`//` is treated as XPath.
+		case 'css': return scope.locator(s.value);
+		case 'xpath': return scope.locator(s.value.startsWith('xpath=') ? s.value : `xpath=${s.value}`);
 		default: throw new Error(`unknown find.by ${s.by}`);
 	}
 }

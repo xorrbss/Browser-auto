@@ -29,7 +29,10 @@ assert(validateSteps(STEPS).ok === true, "a valid step sequence validates");
 assert(validateSteps([]).ok === false, "empty steps ⇒ refused");
 assert(validateSteps([{ kind: "frob" }]).ok === false, "unknown kind ⇒ refused");
 assert(validateSteps([{ kind: "find", needs_review: true }]).ok === false, "needs_review ⇒ refused");
-assert(validateSteps([{ kind: "find", by: "css", value: "x", action: "click" }]).ok === false, "bad find.by ⇒ refused");
+assert(validateSteps([{ kind: "find", by: "frob", value: "x", action: "click" }]).ok === false, "bad find.by ⇒ refused");
+// css/xpath are LAST-RESORT structural fallbacks (no semantic locator, e.g. jWork jGrid cells) — now valid by-kinds.
+assert(validateSteps([{ kind: "find", by: "css", value: ".grid-type-cell-label", action: "click" }]).ok === true, "css fallback by ⇒ valid");
+assert(validateSteps([{ kind: "find", by: "xpath", value: "xpath=//a[normalize-space(.)=\"검색\"]", action: "click" }]).ok === true, "xpath fallback by ⇒ valid");
 assert(validateSteps([{ kind: "find", by: "role", value: "b", action: "frob" }]).ok === false, "bad find.action ⇒ refused");
 assert(validateSteps([{ kind: "wait", until: "nope", value: "x" }]).ok === false, "bad wait.until ⇒ refused");
 // fill/type/select MUST carry the recorded value — a value-less effectful field action would clear/mis-set the field.
@@ -63,7 +66,8 @@ function mockPage(calls, countVal = 1) {
     getByText: (v) => { calls.push("text:" + v); return loc(); },
     getByLabel: (v) => loc(), getByPlaceholder: (v) => { calls.push("ph:" + v); return loc(); },
     getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(),
-    frameLocator: (sel) => { calls.push("frameLocator:" + sel); const scope = { getByRole: (r, o) => { calls.push("role:" + r + ":" + (o ? o.name : "")); return loc(); }, getByText: (v) => loc(), getByLabel: (v) => loc(), getByPlaceholder: (v) => loc(), getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(), nth: (i) => scope }; return scope; },
+    locator: (sel) => { calls.push("locator:" + sel); return loc(); },
+    frameLocator: (sel) => { calls.push("frameLocator:" + sel); const scope = { getByRole: (r, o) => { calls.push("role:" + r + ":" + (o ? o.name : "")); return loc(); }, getByText: (v) => loc(), getByLabel: (v) => loc(), getByPlaceholder: (v) => loc(), getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(), locator: (sel2) => { calls.push("locator:" + sel2); return loc(); }, nth: (i) => scope }; return scope; },
     waitForURL: async (g) => calls.push("waitURL:" + g), waitForLoadState: async (s) => calls.push("waitLoad:" + s),
     keyboard: { press: async (k) => calls.push("press:" + k) }, mouse: { wheel: async (x, y) => calls.push("wheel:" + x + "," + y) },
   };
@@ -138,5 +142,29 @@ assert(validateSteps([{ kind: "find", by: "role", value: "b", action: "click", f
 assert(validateSteps([{ kind: "find", by: "role", value: "b", action: "click", frame: { by: "index", value: -1 } }]).ok === false, "negative frame index ⇒ refused");
 assert(validateSteps([{ kind: "find", by: "role", value: "b", action: "click", frame: { by: "css", value: "x" } }]).ok === false, "unknown frame.by ⇒ refused");
 
-console.log("  ✓ flow-runner: validate + dispatch + irreversible gate + fail-closed uniqueness + iframe scope all pass");
+// --- css/xpath LAST-RESORT fallback dispatch (custom-grid cells with no semantic locator; see dev/active/pw-fallback-locator/DESIGN.md) ---
+{
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "find", by: "css", value: ".grid-type-cell-label", action: "click" }], { dryRun: false, irreversibleAt: 0, onBeforeIrreversible: () => {} });
+  assert(calls.includes("locator:.grid-type-cell-label"), "css fallback dispatched via page.locator (got " + calls.filter((c) => c.startsWith("locator")).join() + ")");
+}
+{
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "find", by: "xpath", value: "//a[normalize-space(.)=\"검색\"]", action: "click" }], { dryRun: false, irreversibleAt: 0, onBeforeIrreversible: () => {} });
+  assert(calls.includes("locator:xpath=//a[normalize-space(.)=\"검색\"]"), "xpath fallback dispatched as locator(xpath=…), auto-prefixed (got " + calls.filter((c) => c.startsWith("locator")).join() + ")");
+}
+{ // a value already prefixed with xpath= is passed through unchanged
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "find", by: "xpath", value: "xpath=//div[1]", action: "click" }], { dryRun: false, irreversibleAt: 0, onBeforeIrreversible: () => {} });
+  assert(calls.includes("locator:xpath=//div[1]") && !calls.includes("locator:xpath=xpath=//div[1]"), "xpath= prefix not doubled");
+}
+{ // css/xpath fallback scoped INTO an iframe (jGrid lives in the #default iframe)
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "find", by: "css", value: ".grid-cell", action: "click", frame: { by: "id", value: "default" } }], { dryRun: false, irreversibleAt: 0, onBeforeIrreversible: () => {} });
+  assert(calls.includes("frameLocator:iframe[id=\"default\"]") && calls.includes("locator:.grid-cell"), "css fallback scoped into the iframe via frameLocator");
+}
+// effectful css fallback still fail-closed when not unique (count 2)
+{ let threw = false; try { await runSteps(mockPage([], 2), [{ kind: "find", by: "css", value: ".grid-cell", action: "click" }], { dryRun: false, irreversibleAt: 0, onBeforeIrreversible: () => {} }); } catch { threw = true; } assert(threw, "non-unique css fallback (count 2) ⇒ throws (fail-closed)"); }
+
+console.log("  ✓ flow-runner: validate + dispatch + irreversible gate + fail-closed uniqueness + iframe scope + css/xpath fallback all pass");
 ' )

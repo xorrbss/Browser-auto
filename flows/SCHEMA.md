@@ -60,7 +60,8 @@ Keep an explicit legacy engine only as a migration marker for flows that cannot 
 ## Step Kinds
 
 - `find`: element interaction.
-  - `by`: one of `testid`, `role`, `label`, `text`, `placeholder`, `alt`, `title`.
+  - `by`: one of `testid`, `role`, `label`, `text`, `placeholder`, `alt`, `title` (semantic), or
+    `css` / `xpath` (LAST-RESORT structural fallback — see **Fallback locators** below).
   - `value`: locator value.
   - `name`: optional accessible name for `role`.
   - `action`: one of `click`, `fill`, `type`, `select`, `check`, `uncheck`, `hover`.
@@ -76,6 +77,30 @@ Keep an explicit legacy engine only as a migration marker for flows that cannot 
 Locator priority when authoring: **testid > role+name > label > exact-text > placeholder > title**.
 Uniqueness is checked during capture/verification; a non-unique or fragile target must become
 `needs_review` instead of a guessed selector.
+
+## Fallback locators (`css` / `xpath`)
+
+Some live widgets expose **no** semantic locator at all — notably custom data grids (e.g. jWork jGrid),
+whose rows/cells are generic `<div>`s with no `role`, accessible name, `label`, or `testid`. A click on
+such an element yields zero semantic candidates, so the step would otherwise be permanently stuck at
+`needs_review` (the `@eN` positional ref this schema forbids is *not* an option). For these, and only these,
+two **last-resort structural** kinds exist:
+
+```jsonc
+{ "kind": "find", "by": "css",   "value": ".grid-row-rendered:first-child .underline-cell", "action": "click", "needs_review": true }
+{ "kind": "find", "by": "xpath", "value": "//div[contains(@class,'underline-cell') and normalize-space(.)='신청서 B']", "action": "click", "needs_review": true }
+```
+
+Rules:
+- **Semantic-first.** css/xpath are tried only after every semantic candidate fails to be unique. The
+  recorder never auto-promotes them to a step `primary`; it offers them as `needs_review` candidates so a
+  human (or verify-repair) accepts the structural locator knowingly — they go stale on layout change.
+- **Prefer text-anchored xpath** (`normalize-space(.)='…'`) over a positional css path; it survives more
+  page changes. A bare value starting with `//` or `xpath=` is treated as XPath by the runner.
+- **Still fail-closed.** An effectful css/xpath step that resolves to ≠1 element throws at replay, exactly
+  like any semantic locator. css/xpath relaxes *identification*, never the uniqueness/irreversible gates.
+- This is NOT the forbidden `@eN` ref: `@eN` is an opaque capture-time index that breaks on any reorder;
+  css/xpath are inspectable, repairable selectors. See `dev/active/pw-fallback-locator/DESIGN.md`.
 
 ## Iframes
 
