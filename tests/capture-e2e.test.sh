@@ -89,6 +89,7 @@ await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 await new Promise((r) => srvOther.listen(0, '127.0.0.1', r));
 const ORIGIN = `http://127.0.0.1:${srv.address().port}`;
 const OTHER_ORIGIN = `http://127.0.0.1:${srvOther.address().port}`;
+PAGES['/jgrid'] = '<!doctype html><meta charset="utf-8"><div class="grid-theme-argos"><div class="grid-main"><div class="grid-table"><div class="grid-row grid-row-rendered"><div class="grid-cell"><div class="grid-cell-inner-cell"><div class="grid-type-cell-label underline-cell">신청서 A</div></div></div></div><div class="grid-row grid-row-rendered"><div class="grid-cell"><div class="grid-cell-inner-cell"><div class="grid-type-cell-label underline-cell">신청서 B</div></div></div></div></div></div></div>';
 PAGES['/iframe-xo'] = `<!doctype html><meta charset="utf-8">
 	<iframe id="xoPay" name="xoPayName" title="Cross Origin Pay" src="${OTHER_ORIGIN}/xo-frame"></iframe>`;
 
@@ -329,6 +330,31 @@ await page.waitForTimeout(100);
 	ok(step && step.by === undefined && step.value === undefined, 'iframe-xo: no runnable locator is emitted for cross-origin frame action');
 	const invalid = spawnSync(process.execPath, ['bin/play-flow.mjs', '--flow', built.flowPath, '--validate-only'], { cwd: ROOT, encoding: 'utf8' });
 	ok(invalid.status !== 0 && /needs_review/.test(`${invalid.stdout || ''}${invalid.stderr || ''}`), 'iframe-xo: validate/replay refuses needs_review flow');
+}
+
+// 13) jWork jGrid-shaped cell (generic <div>, NO role/name/label/testid): candidatesFor() is empty so
+//     there is no semantic primary — but the recorder offers a LAST-RESORT structural fallback (text-
+//     anchored xpath / css) so the step is reviewable + replayable, not an empty needs_review ladder.
+//     (Stage 2; dev/active/pw-fallback-locator/DESIGN.md)
+await openCase('/jgrid');
+await page.locator('.grid-row-rendered', { hasText: '신청서 B' }).locator('.underline-cell').click();
+await page.waitForTimeout(50);
+{
+	const buf = await drain('jgrid');
+	const ev = byType(buf, 'click')[0];
+	ok(!!ev && ev.primary == null && ev.insufficient === true, 'jgrid: no semantic primary, flagged insufficient (needs_review)');
+	const fb = ((ev && ev.candidates) || []).find((c) => c.by === 'xpath' || c.by === 'css');
+	ok(!!fb && fb.count === 1, 'jgrid: a unique structural fallback (xpath/css) candidate generated');
+	ok(!!fb && (fb.by !== 'xpath' || fb.value.includes('신청서 B')), 'jgrid: text-anchored xpath fallback carries the cell text');
+	const built = buildFlowFromRecords('jgrid_flow', ORIGIN + '/jgrid', buf);
+	const step = built.flow.steps[0];
+	ok(step && step.needs_review === true, 'jgrid: built step is needs_review (fallback never auto-primary)');
+	ok(step && Array.isArray(step.candidates) && step.candidates.some((c) => fb && c.by === fb.by && c.value === fb.value), 'jgrid: needs_review step carries the structural fallback candidate for review');
+	const resolved = { name: 'jgrid_resolved', engine: 'playwright', startUrl: ORIGIN + '/jgrid', steps: [{ kind: 'find', by: fb.by, value: fb.value, action: 'click' }], asserts: [] };
+	const rp = path.join(TMP, 'jgrid_resolved.flow.json');
+	fs.writeFileSync(rp, JSON.stringify(resolved));
+	const v = spawnSync(process.execPath, ['bin/play-flow.mjs', '--flow', rp, '--validate-only'], { cwd: ROOT, encoding: 'utf8' });
+	ok(v.status === 0, 'jgrid: fallback-resolved flow validates for replay');
 }
 
 await browser.close();

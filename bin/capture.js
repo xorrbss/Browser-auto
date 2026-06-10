@@ -171,6 +171,18 @@
   // --- in-page uniqueness count, mirroring how replay `find` matches ---
   function countCandidate(c, target) {
     var n = 0, hit = false;
+    // css/xpath LAST-RESORT fallback: count via the SAME engines replay uses (page.locator(css) /
+    // locator('xpath=…')), visibility-filtered to mirror the semantic tally below. (jGrid etc. live in
+    // the light DOM, not shadow roots, so document-level querying matches replay.)
+    if (c.by === 'css' || c.by === 'xpath') {
+      var nodes = [];
+      try {
+        if (c.by === 'css') nodes = Array.prototype.slice.call(document.querySelectorAll(c.value));
+        else { var rs = document.evaluate(c.value.replace(/^xpath=/, ''), document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null); for (var qi = 0; qi < rs.snapshotLength; qi++) nodes.push(rs.snapshotItem(qi)); }
+      } catch (e) { return { count: 0, matchesTarget: false }; }
+      for (var ni = 0; ni < nodes.length; ni++) { if (!isVisible(nodes[ni])) continue; n++; if (nodes[ni] === target) hit = true; }
+      return { count: n, matchesTarget: hit };
+    }
     function tally(el) {
       if (!isVisible(el)) return;
       var ok = false;
@@ -195,7 +207,10 @@
     return { count: n, matchesTarget: hit };
   }
 
-  // --- candidate ladder (schema by-values only; never css/xpath/@eN) ---
+  // --- candidate ladder (SEMANTIC by-values only here; never @eN) ---
+  // This ladder stays semantic-first. css/xpath are NOT generated here — emit() appends a single
+  // LAST-RESORT structural fallback (see fallbackCandidates) only when no semantic primary exists, so a
+  // no-semantic widget still gets a reviewable candidate. The forbidden `@eN` positional ref is never used.
   // Weights are ordered by stable semantic replay preference. Role candidates are useful,
   // but testid/label/text-style locators usually make clearer authored flows.
   var WKIND = { testid: 50, text: 40, label: 38, placeholder: 32, role: 24, alt: 18, title: 12 };
@@ -278,6 +293,68 @@
     return normalize(attr(el, 'aria-label')) === c.name;
   }
 
+  // --- LAST-RESORT structural fallback locator (Stage 2; dev/active/pw-fallback-locator/DESIGN.md) ---
+  // When an element exposes NO usable semantic locator (e.g. jWork jGrid cells: generic <div>s with no
+  // role / accessible name / label / testid), candidatesFor() comes back empty and the step is stuck at
+  // needs_review with nothing to choose. Generate a structural fallback so the recorder offers a
+  // reviewable, replayable candidate: a TEXT-ANCHORED xpath (survives layout change best) when the
+  // element has its own short text, else a unique css path. emit() adds it ONLY when no semantic primary
+  // exists and NEVER promotes it to primary — the step stays needs_review so a human/verify accepts the
+  // (admittedly fragile) structural locator knowingly.
+  function classListOf(el) {
+    try {
+      var cn = el.className;
+      if (cn && typeof cn === 'object' && 'baseVal' in cn) cn = cn.baseVal; // SVGAnimatedString
+      return normalize(typeof cn === 'string' ? cn : '').split(' ').filter(Boolean);
+    } catch (e) { return []; }
+  }
+  function stableClass(el) {
+    var parts = classListOf(el);
+    for (var i = 0; i < parts.length; i++) if (!looksAuto(parts[i]) && parts[i].length <= 40 && /^[A-Za-z][\w-]*$/.test(parts[i])) return parts[i];
+    return '';
+  }
+  function xpathStringLiteral(s) {
+    // XPath 1.0 string literals can't escape quotes; pick a quote the text lacks (concat() is overkill here).
+    if (s.indexOf("'") === -1) return "'" + s + "'";
+    if (s.indexOf('"') === -1) return '"' + s + '"';
+    return null; // contains both quote kinds -> skip text-xpath, fall through to css
+  }
+  function uniqueCssPath(el) {
+    var parts = [], node = el, depth = 0;
+    while (node && node.nodeType === 1 && depth < 6) {
+      var seg = (node.tagName || '').toLowerCase();
+      if (!seg) break;
+      var sc = stableClass(node);
+      if (sc) { try { seg += '.' + CSS.escape(sc); } catch (e) {} }
+      var idx = 1, sib = node;
+      while ((sib = sib.previousElementSibling)) { if (sib.tagName === node.tagName) idx++; }
+      seg += ':nth-of-type(' + idx + ')';
+      parts.unshift(seg);
+      var sel = parts.join(' > ');
+      try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (e) { return null; }
+      node = node.parentElement; depth++;
+    }
+    return null;
+  }
+  // ordered: text-anchored xpath first (more change-resistant), then a unique css path.
+  function fallbackCandidates(el) {
+    var out = [];
+    var tag = (el.tagName || '').toLowerCase();
+    if (!tag) return out;
+    var txt = normalize(el.textContent);
+    if (txt && txt.length <= 80 && !looksAuto(txt)) {
+      var lit = xpathStringLiteral(txt);
+      if (lit) {
+        var sc = stableClass(el);
+        var clsPred = sc ? "contains(concat(' ',normalize-space(@class),' '),' " + sc + " ') and " : '';
+        out.push({ by: 'xpath', value: '//' + tag + '[' + clsPred + 'normalize-space(.)=' + lit + ']' });
+      }
+    }
+    var css = uniqueCssPath(el);
+    if (css) out.push({ by: 'css', value: css });
+    return out;
+  }
+
   // --- build + push a locator-bearing record ---
   function emit(action_type, el, extra) {
     try {
@@ -296,6 +373,21 @@
           if (c.by === 'role' && !roleAriaLabelButton(el, c)) continue;
           primary = { by: c.by, value: c.value }; if (c.name) primary.name = c.name; break;
         }
+      }
+      // Stage 2 (dev/active/pw-fallback-locator/DESIGN.md): no semantic primary ⇒ offer a LAST-RESORT
+      // structural fallback (text-xpath, then css), added ONLY if unique-on-target. It enters the ladder
+      // for human/verify review but is NEVER promoted to primary, so the step stays needs_review
+      // (build-flow emits no auto-runnable locator). This unblocks no-semantic widgets (jWork jGrid cells,
+      // icon/menu clicks) that would otherwise have an empty ladder and only the broken row-open button.
+      if (!primary) {
+        try {
+          var fbs = fallbackCandidates(el);
+          for (var fi = 0; fi < fbs.length; fi++) {
+            var fb = fbs[fi], fr = countCandidate(fb, el);
+            if (fr.count === 1 && fr.matchesTarget) { fb.count = 1; fb._count = 1; fb._hit = true; cands.push(fb); break; }
+          }
+          cands.sort(function (a, b) { return score(b) - score(a); });
+        } catch (e) {}
       }
       var top = cands.slice(0, Math.max(2, 0)).map(function (c) { var o = { by: c.by, value: c.value, count: c.count }; if (c.name) o.name = c.name; return o; });
       var rec = { action_type: action_type, primary: primary, candidates: top, is_navigation_boundary: false };
