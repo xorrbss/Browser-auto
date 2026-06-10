@@ -16,11 +16,12 @@ export function redactText(value, fallback = '', max = DEFAULT_MAX) {
 	let s = compactText(value);
 	if (!s) s = fallback;
 	s = s
-		.replace(/\b(authorization|cookie|set-cookie)\s*:\s*[^,;\s]+/ig, '$1: [redacted]')
+		.replace(/\bauthorization\s*:\s*(?:bearer|basic)?\s*[A-Za-z0-9._~+/=-]+/ig, 'authorization: [redacted]')
+		.replace(/\b(cookie|set-cookie)\s*:\s*[^,;\s]+(?:[;,]\s*[^,;\s]+)*/ig, '$1: [redacted]')
+		.replace(/(https?:\/\/[^\s?#]+)\?[^)\]\s]+/ig, '$1?[redacted]')
 		.replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/ig, '$1 [redacted]')
 		.replace(/\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|otp|mfa|totp|code)\s*[:=]\s*[^&,\s;]+/ig, '$1=[redacted]')
-		.replace(/\b(session|cookie|auth|csrf)[_-]?(id|token)?\s*[:=]\s*[^&,\s;]+/ig, '$1$2=[redacted]')
-		.replace(/(https?:\/\/[^\s?#]+)\?[^)\]\s]+/ig, '$1?[redacted]')
+		.replace(/\b(session|cookie|auth|csrf)[_-]?(id|token)?\s*[:=]\s*(?!\[redacted\])[^&,\s;]+/ig, '$1$2=[redacted]')
 		.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig, '[REDACTED_EMAIL]')
 		.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[REDACTED_ID]')
 		.replace(/\b\d{6}-?[1-4]\d{6}\b/g, '[REDACTED_ID]')

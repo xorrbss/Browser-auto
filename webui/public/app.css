@@ -539,6 +539,12 @@ input:focus, textarea:focus, select:focus {
 .notice.warning { border-color: #eed49c; background: #fff8e8; color: #75500a; }
 .notice.danger { border-color: #fac5bd; background: #fff0ee; color: var(--red); }
 .notice.success { border-color: #bde4cf; background: #e8f5ee; color: var(--green); }
+.ops-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-bottom: 10px;
+}
 .metric-grid {
 	display: grid;
 	grid-template-columns: repeat(4, minmax(120px, 1fr));
@@ -668,6 +674,22 @@ tbody tr:hover td { background: #fbfdfe; }
 .cell-wrap {
 	white-space: normal;
 	overflow-wrap: anywhere;
+}
+.diag-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+.diag-reason {
+	color: var(--red);
+	font-weight: 800;
+}
+.diag-signals {
+	color: var(--muted);
+	font-size: 12px;
 }
 .row-selected td { background: #f0fbfc; }
 .check {

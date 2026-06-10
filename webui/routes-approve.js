@@ -32,6 +32,51 @@ const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
 // (시스템 인증 or 결재 로그인) satisfies the approve pipeline.
 const stateFor = (app) => resolveAuthStatePath(PROBE_ROOT, 'playwright', app);
 
+function bumpCount(map, key) {
+	const k = String(key || 'unknown').trim() || 'unknown';
+	map[k] = (map[k] || 0) + 1;
+}
+
+function auditMode(entry) {
+	if (entry.live === true || entry.dryRun === false) return 'live';
+	if (entry.live === false || entry.dryRun === true) return 'dry-run';
+	return String(entry.mode || 'unknown').trim() || 'unknown';
+}
+
+function auditStatus(entry) {
+	if (entry.status) return entry.status;
+	if (entry.outcome) return entry.outcome;
+	if (entry.result && typeof entry.result === 'object' && entry.result.status) return entry.result.status;
+	if (entry.ok === true) return 'ok';
+	if (entry.ok === false) return 'failed';
+	return 'recorded';
+}
+
+export function summarizeAuditEntries(entries, malformed = 0) {
+	const byStage = {};
+	const byMode = {};
+	const byStatus = {};
+	let latestAt = null;
+	for (const entry of entries) {
+		if (!entry || typeof entry !== 'object') continue;
+		bumpCount(byStage, entry.stage);
+		bumpCount(byMode, auditMode(entry));
+		bumpCount(byStatus, auditStatus(entry));
+		const at = String(entry.at || '').trim();
+		if (at && (!latestAt || at > latestAt)) latestAt = at;
+	}
+	return {
+		total: entries.length,
+		malformed,
+		latestAt,
+		live: byMode.live || 0,
+		dryRun: byMode['dry-run'] || 0,
+		byStage,
+		byMode,
+		byStatus,
+	};
+}
+
 // gwConfig(): parse data/approvals.config for the legacy 결재 inbox (GW_APP + GW_INBOX_URL) and the
 // Playwright login coordinates (GW_LOGIN_URL + GW_SUCCESS_URL) used by the webui 결재-로그인 button.
 function gwConfig() {
@@ -312,10 +357,17 @@ export function approveGet(p, url, res, { sendJson }) {
 	if (p === '/api/approve/audit') {
 		const file = path.join(PROBE_ROOT, 'data', 'approve-audit.jsonl');
 		const entries = [];
-		try { for (const line of fs.readFileSync(file, 'utf8').split('\n')) { if (!line.trim()) continue; try { entries.push(JSON.parse(line)); } catch { /* skip a torn/partial line */ } } }
+		let malformed = 0;
+		try { for (const line of fs.readFileSync(file, 'utf8').split('\n')) { if (!line.trim()) continue; try { entries.push(JSON.parse(line)); } catch { malformed++; /* skip a torn/partial line */ } } }
 		catch { /* no audit yet */ }
 		const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 300, 1000);
-		sendJson(res, 200, { audit: entries.slice(-limit).reverse().map((entry) => redactObject(entry)), total: entries.length, redaction: 'applied' });
+		sendJson(res, 200, {
+			audit: entries.slice(-limit).reverse().map((entry) => redactObject(entry)),
+			total: entries.length,
+			summary: summarizeAuditEntries(entries, malformed),
+			redaction: 'applied',
+			redactionPolicy: { applied: true, helper: 'webui/redact.js', rawExport: 'blocked' },
+		});
 		return true;
 	}
 	// CAPTURE flows list (Gate-B UI): the recorded approve flows for an app (read-only; Phase 1b consumes them).

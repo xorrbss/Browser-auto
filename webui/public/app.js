@@ -34,6 +34,8 @@ const state = {
 	records: [],
 	queue: null,
 	audit: [],
+	auditSummary: null,
+	auditRedaction: null,
 	runs: [],
 	flows: [],
 	auth: [],
@@ -529,9 +531,11 @@ async function loadQueue() {
 
 async function loadAudit() {
 	try {
-		const { audit, total } = await getJson('/api/approve/audit?limit=300');
+		const { audit, total, summary, redactionPolicy, redaction } = await getJson('/api/approve/audit?limit=300');
 		state.audit = Array.isArray(audit) ? audit : [];
 		state.auditTotal = total || state.audit.length;
+		state.auditSummary = summary || null;
+		state.auditRedaction = redactionPolicy || redaction || null;
 		state.auditError = null;
 	} catch (e) {
 		state.auditError = e.message;
@@ -541,6 +545,8 @@ async function loadAudit() {
 async function loadDiagnostics() {
 	await Promise.allSettled([
 		loadRbac(),
+		loadQueue(),
+		loadAudit(),
 		getJson('/api/runs').then((d) => { state.runs = d.runs || []; }),
 		getJson('/api/flows').then((d) => { state.flows = d.flows || []; }),
 		getJson('/api/readiness').then((d) => { state.readiness = d || null; }),
@@ -1637,6 +1643,39 @@ function metric(label, value, sub) {
 	return el('div', { class: 'metric' }, el('span', {}, label), el('strong', {}, safeText(value, '-')), el('em', {}, sub || ''));
 }
 
+function compactCountMap(map, limit = 4) {
+	const entries = Object.entries(map || {})
+		.sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0) || String(a[0]).localeCompare(String(b[0])))
+		.slice(0, limit);
+	return entries.length ? entries.map(([k, v]) => `${k}:${v}`).join(' / ') : 'none';
+}
+
+function redactionLabel(policy) {
+	if (!policy) return 'unknown';
+	if (typeof policy === 'string') return policy;
+	return policy.applied ? `${policy.rawExport || 'blocked'} / applied` : 'not applied';
+}
+
+function jobDiagnosticText(job) {
+	const d = job?.diagnostics || {};
+	const parts = [];
+	if (d.failureReason) parts.push(d.failureReason);
+	if (Array.isArray(d.signals) && d.signals.length) parts.push(`signals: ${d.signals.join(',')}`);
+	if (d.heartbeatState && !['idle', 'terminal'].includes(d.heartbeatState)) parts.push(`heartbeat: ${d.heartbeatState}`);
+	return parts.join(' / ') || '정상';
+}
+
+function jobDiagnosticNode(job) {
+	const text = jobDiagnosticText(job);
+	if (text === '정상') return statusBadge('정상', 'success');
+	const d = job?.diagnostics || {};
+	const nodes = [];
+	if (d.failureReason) nodes.push(el('span', { class: 'diag-reason' }, d.failureReason));
+	if (Array.isArray(d.signals) && d.signals.length) nodes.push(el('span', { class: 'diag-signals' }, d.signals.join(', ')));
+	if (d.heartbeatState && !['idle', 'terminal'].includes(d.heartbeatState)) nodes.push(el('span', { class: 'diag-signals' }, `heartbeat: ${d.heartbeatState}`));
+	return el('div', { class: 'diag-stack', title: text }, ...nodes);
+}
+
 function kv(label, value) {
 	const content = String(value || '').length > 34 ? el('code', {}, safeText(value, '-')) : el('strong', { title: safeText(value, '-') }, safeText(value, '-'));
 	return el('div', { class: 'kv' }, el('span', {}, label), content);
@@ -2182,14 +2221,21 @@ function renderQueueMetrics() {
 	if (state.queueError) return setChildren(box, errorBox(state.queueError));
 	if (!q || !q.metrics) return setChildren(box, empty('큐 metrics를 불러오지 못했습니다.'));
 	const m = q.metrics;
-	setChildren(box, el('div', { class: 'metric-grid' },
-		metric('Queued', m.queued, '대기 중'),
-		metric('Running', m.running, '현재 실행'),
-		metric('Recent', m.recent, '메모리 보관'),
-		metric('Avg Duration', m.avgDurationMs == null ? '-' : `${Math.round(m.avgDurationMs / 1000)}s`, '완료된 작업 평균'),
-		metric('Last Failure', m.lastFailureReason || 'none', '민감 로그 제외'),
-		metric('Timeout / Cancel', `${m.timeoutCount || 0} / ${m.cancelledCount || 0}`, '누적 카운트'),
-	));
+	const failure = m.lastFailureReason
+		? warnBox(`최근 실패 원인: ${m.lastFailureReason}`)
+		: el('div', { class: 'notice success' }, '최근 실패 원인이 없습니다. 작업 로그와 결과 payload는 표시 전에 마스킹됩니다.');
+	setChildren(box,
+		el('div', { class: 'metric-grid' },
+			metric('Queued', m.queued, '대기 중'),
+			metric('Running', m.running, '현재 실행'),
+			metric('Recent', m.recent, '메모리 보관'),
+			metric('Avg Duration', m.avgDurationMs == null ? '-' : `${Math.round(m.avgDurationMs / 1000)}s`, '완료된 작업 평균'),
+			metric('Timeout / Cancel', `${m.timeoutCount || 0} / ${m.cancelledCount || 0}`, '누적 카운트'),
+			metric('Stale / Slow', `${m.heartbeatStaleCount || 0} / ${m.slowCount || 0}`, 'heartbeat / duration'),
+			metric('Unstable', m.unstableCount || 0, '진단 signal 포함'),
+		),
+		failure,
+	);
 }
 
 function jobResultLabel(job) {
@@ -2225,6 +2271,7 @@ function renderQueueView() {
 			el('th', { class: 'col-short' }, '종류'),
 			el('th', { class: 'col-status' }, '상태'),
 			el('th', { class: 'col-status' }, '결과'),
+			el('th', {}, '진단'),
 			el('th', { class: 'col-actions' }, '액션'),
 		)),
 	);
@@ -2243,6 +2290,7 @@ function renderQueueView() {
 			el('td', { class: 'col-short' }, safeText(j.kind, '-')),
 			el('td', { class: 'col-status' }, statusBadge(j.status)),
 			el('td', { class: 'col-status' }, statusBadge(jobResultLabel(j))),
+			el('td', { class: 'cell-wrap', title: jobDiagnosticText(j) }, jobDiagnosticNode(j)),
 			el('td', { class: 'col-actions' }, el('div', { class: 'button-row' }, open, cancel)),
 		));
 	}
@@ -2259,22 +2307,47 @@ function openJobLog(id, label) {
 	if (state.view !== 'queue') setView('queue');
 }
 
+function renderAuditSummary(filteredCount) {
+	const s = state.auditSummary || {};
+	const total = state.auditTotal || s.total || state.audit.length;
+	const liveDry = `${s.live || 0} / ${s.dryRun || 0}`;
+	const summary = el('div', { class: 'ops-stack' },
+		el('div', { class: 'metric-grid' },
+			metric('Audit Total', total, 'append-only JSONL'),
+			metric('Filtered', filteredCount, '현재 화면'),
+			metric('Latest', s.latestAt ? fmtTime(s.latestAt) : '-', '마지막 감사 시각'),
+			metric('Live / Dry', liveDry, '실제 / 모의'),
+			metric('Top Stage', compactCountMap(s.byStage, 3), 'stage counts'),
+			metric('Redaction', redactionLabel(state.auditRedaction), 'API 표시 정책'),
+		),
+	);
+	if (s.malformed) summary.append(warnBox(`${s.malformed}개 감사 로그 라인이 JSON 파싱에서 제외되었습니다. append 중 끊긴 라인일 수 있습니다.`));
+	return summary;
+}
+
+function auditModeLabel(entry) {
+	if (entry?.live === true || entry?.dryRun === false || entry?.mode === 'live') return '실제';
+	if (entry?.live === false || entry?.dryRun === true || entry?.mode === 'dry-run') return '모의';
+	return safeText(entry?.mode, '-');
+}
+
 function renderAudit() {
 	const box = $('#audit-table');
 	if (!box) return;
 	if (state.auditError) return setChildren(box, errorBox(state.auditError));
 	const q = ($('#audit-filter')?.value || '').toLowerCase().trim();
 	const rows = state.audit.filter((a) => !q || JSON.stringify(a).toLowerCase().includes(q));
-	if (!rows.length) return setChildren(box, empty('현재 필터에 해당하는 감사 레코드가 없습니다.'));
+	const summary = renderAuditSummary(rows.length);
+	if (!rows.length) return setChildren(box, summary, empty('현재 필터에 해당하는 감사 레코드가 없습니다.'));
 	const mapped = rows.map((a) => ({
 		at: a.at,
 		doc_id: a.doc_id || '-',
 		stage: a.stage || '-',
-		mode: a.live === true ? '실제' : '모의',
+		mode: auditModeLabel(a),
 		actor: a.actor || a.by || '-',
 		detail: a.detail || '',
 	}));
-	setChildren(box, renderGenericTable(mapped, ['at', 'doc_id', 'stage', 'mode', 'actor', 'detail'], `감사 레코드 (${rows.length}/${state.auditTotal || rows.length})`));
+	setChildren(box, summary, renderGenericTable(mapped, ['at', 'doc_id', 'stage', 'mode', 'actor', 'detail'], `감사 레코드 (${rows.length}/${state.auditTotal || rows.length})`));
 }
 
 async function renderApprovalState() {
@@ -2398,8 +2471,16 @@ function renderDiagnostics() {
 		runBtn.disabled = !runAccess.allowed;
 		runBtn.title = accessTitle(runAccess);
 	}
+	const qm = state.queue?.metrics || {};
+	const auditSummary = state.auditSummary || {};
+	const queueSignalState = qm.lastFailureReason
+		|| ((qm.heartbeatStaleCount || qm.slowCount || qm.unstableCount)
+			? `stale ${qm.heartbeatStaleCount || 0}, slow ${qm.slowCount || 0}, unstable ${qm.unstableCount || 0}`
+			: '정상');
 	const rows = [
 		{ area: '실행', count: state.runs.length, state: state.runs.length ? `${state.runs[0].runId || 'loaded'}` : '레코드 없음', endpoint: '/api/runs' },
+		{ area: '작업 실패 신호', count: qm.unstableCount || 0, state: queueSignalState, endpoint: '/api/queue' },
+		{ area: '감사 리포트', count: state.auditTotal ?? '-', state: auditSummary.latestAt ? `latest ${fmtTime(auditSummary.latestAt)}` : '레코드 없음', endpoint: '/api/approve/audit?limit=300' },
 		{ area: '플로우', count: state.flows.length, state: state.flows.some((f) => f.needsReview) ? '검토 필요' : '로드됨', endpoint: '/api/flows' },
 		{ area: '인증 상태', count: state.auth.length, state: state.auth.length ? state.auth.join(', ') : '없음', endpoint: '/api/auth' },
 		{ area: '권한', count: state.rbac?.available ? permissionSummary().split(',').filter(Boolean).length : '-', state: state.rbac?.available ? `${state.rbac.actorId} / ${state.rbac.role || 'unknown'}` : 'API 대기', endpoint: state.rbac?.endpoint || '/api/rbac' },

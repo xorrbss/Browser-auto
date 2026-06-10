@@ -166,7 +166,7 @@ function publicJob(job) {
 		tenantId: job.tenantId,
 		actorId: job.actorId,
 		kind: job.kind,
-		label: job.label,
+		label: redactText(job.label, '', 240),
 		meta: redactObject(job.meta || {}),
 		status: job.status, // queued | running | done | failed | cancelled
 		exitCode: job.exitCode,

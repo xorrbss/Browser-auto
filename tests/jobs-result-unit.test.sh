@@ -52,10 +52,11 @@ function replayStream(id) {
 
 let job = enqueue({
 	kind: 'unit',
-	label: 'structured',
+	label: 'structured password=hunter2 token=tok_123',
 	meta: { commandId: 'cmd_test' },
 	spawnFn: () => spawn(process.execPath, ['-e', 'console.log(JSON.stringify({results:[{status:"dry-ok"}]}))']),
 });
+assert(job.label === 'structured password=[redacted] token=[redacted]', 'queued public job label is sanitized');
 await waitDone(job.id);
 let jr = jobResult(job.id);
 assert(jr.status === 'done', 'structured job finished');
