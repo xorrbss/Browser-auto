@@ -92,4 +92,45 @@ TREE
 expect_fail "$RECIPE" "$TMP/c4" "c4 missing header (id)"
 echo "  ✓ c4 missing-header guard"
 
+# ---------- case 5: HEADERLESS table + columnIndexes (Playwright ariaSnapshot renders some live
+# tables with no columnheader roles — e.g. the Hiworks 대기 list). Same rule as play-flow open_record:
+# index mapping, header-like row skipped, too-few-cells fails loud, no columnIndexes fails loud. ----------
+RECIPE_IDX='{"collection":{"name":"Tickets"},"key":"id","columns":{"id":"id","subject":"subject","owner":"owner"},"columnIndexes":{"id":1,"subject":2,"owner":3}}'
+cat > "$TMP/c5" <<'TREE'
+- table "Tickets"
+  - rowgroup
+    - row [ref=e0]
+      - cell "select"
+      - cell "id"
+      - cell "subject"
+      - cell "owner"
+    - row [ref=e1]
+      - cell "x"
+      - cell "T-1"
+      - cell "Login bug"
+      - cell "Alice"
+    - row [ref=e2]
+      - cell "x"
+      - cell "T-2"
+      - cell "Slow page"
+      - cell "Bob"
+TREE
+OUT5="$(snap "$TMP/c5" | node "$EX" "$RECIPE_IDX")"
+eq "$(printf '%s' "$OUT5" | jq 'length')" "2" "c5 count (header-like cells row skipped)"
+eq "$(printf '%s' "$OUT5" | jq -rc '.[0].data')" '{"id":"T-1","subject":"Login bug","owner":"Alice"}' "c5 indexed mapping"
+expect_fail "$RECIPE" "$TMP/c5" "c5 headerless WITHOUT columnIndexes refused"
+echo "  ✓ c5 headerless columnIndexes mapping + no-columnIndexes guard"
+
+# ---------- case 6: headerless row with too few cells for the index map -> fail loud ----------
+cat > "$TMP/c6" <<'TREE'
+- table "Tickets"
+  - rowgroup
+    - row [ref=e1]
+      - cell "x"
+      - cell "T-1"
+      - cell "only three"
+TREE
+expect_fail "$RECIPE_IDX" "$TMP/c6" "c6 too-few-cells for index map"
+echo "  ✓ c6 headerless cell-count guard"
+
 echo "  ✓ extract-list-unit: all cases passed"
