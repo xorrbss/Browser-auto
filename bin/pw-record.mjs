@@ -68,6 +68,47 @@ function runBuilder(recordsPath) {
 	if (r.status !== 0) process.exit(r.status || 1);
 }
 
+async function drainCaptureBuffers(page) {
+	const drained = [];
+	const failures = [];
+	for (const frame of page.frames()) {
+		try {
+			const data = await frame.evaluate(() => ({
+				url: location.href,
+				isTop: window.top === window.self,
+				crossOriginFrame: (() => {
+					try { return window.top !== window.self && !window.frameElement; }
+					catch { return true; }
+				})(),
+				buf: JSON.parse(sessionStorage.getItem('__aqa_buf') || '[]'),
+				seq: parseInt(sessionStorage.getItem('__aqa_seq') || '0', 10) || 0,
+			}));
+			if (!Array.isArray(data.buf)) throw new Error('capture buffer is not an array');
+			drained.push(data);
+		} catch (e) {
+			failures.push(`${frame.url() || '<blank>'}: ${String(e && e.message || e)}`);
+		}
+	}
+	if (failures.length) {
+		throw new Error(`could not drain ${failures.length} frame capture buffer(s): ${failures.join('; ')}`);
+	}
+	const healthFailures = drained
+		.filter((d) => d.seq > d.buf.length)
+		.map((d) => `${d.url}: seq=${d.seq}, recovered=${d.buf.length}`);
+	if (healthFailures.length) {
+		throw new Error(`capture health-check failed: ${healthFailures.join('; ')}`);
+	}
+	const buf = drained
+		.flatMap((d) => d.buf)
+		.sort((a, b) => (a.timestamp_ms || 0) - (b.timestamp_ms || 0) || (a.seq || 0) - (b.seq || 0));
+	return {
+		buf,
+		frameCount: drained.length,
+		xoFrames: drained.filter((d) => d.crossOriginFrame).length,
+		xoEvents: buf.filter((ev) => ev && ev.frame_ref && ev.frame_ref.crossOrigin).length,
+	};
+}
+
 async function loadChromium() {
 	const pwRequire = createRequire(new URL('../approve/package.json', import.meta.url));
 	return pwRequire('playwright').chromium;
@@ -110,16 +151,14 @@ try {
 
 	const nowOrigin = new URL(page.url()).origin;
 	if (nowOrigin !== startOrigin) throw new Error(`top-level cross-origin navigation is out of scope (${startOrigin} -> ${nowOrigin}); recording not written`);
-	const drained = await page.evaluate(() => ({
-		buf: JSON.parse(sessionStorage.getItem('__aqa_buf') || '[]'),
-		seq: parseInt(sessionStorage.getItem('__aqa_seq') || '0', 10) || 0,
-	}));
-	if (!Array.isArray(drained.buf)) throw new Error('capture buffer is not an array');
+	const drained = await drainCaptureBuffers(page);
 	if (drained.buf.length === 0) throw new Error('captured 0 events; recording not written');
-	if (drained.seq > drained.buf.length) throw new Error(`capture health-check failed: seq=${drained.seq}, recovered=${drained.buf.length}`);
+	if (drained.xoFrames > 0) {
+		console.error(`[pw-record] NOTE: ${drained.xoFrames} cross-origin iframe(s) present; ${drained.xoEvents} recorded event(s) there will require review.`);
+	}
 	recPath = tmpFile();
 	fs.writeFileSync(recPath, JSON.stringify(drained.buf, null, 2) + '\n');
-	console.error(`[pw-record] captured ${drained.buf.length} raw event(s) -> build-flow`);
+	console.error(`[pw-record] captured ${drained.buf.length} raw event(s) from ${drained.frameCount} frame(s) -> build-flow`);
 	await ctx.close();
 	await browser.close();
 	runBuilder(recPath);

@@ -15,6 +15,7 @@ eq(){ [ "$1" = "$2" ] || fail "$3: expected '$2', got '$1'"; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 REC="$TMP/records.json"; FLOWS="$TMP/flows"; mkdir -p "$FLOWS"
+BF_ENGINE="agent-browser"
 
 cat > "$REC" <<'JSON'
 [
@@ -28,7 +29,7 @@ cat > "$REC" <<'JSON'
 ]
 JSON
 
-node "$DIR/bin/build-flow.js" uflow "https://app.example.com/cart" "" "$REC" "$FLOWS" 2>/dev/null \
+node "$DIR/bin/build-flow.js" uflow "https://app.example.com/cart" "" "$REC" "$FLOWS" "$BF_ENGINE" 2>/dev/null \
 	|| fail "build-flow.js exited non-zero"
 FLOW="$FLOWS/uflow.flow.json"; VALUES="$FLOWS/uflow.values.json"
 [ -s "$FLOW" ] || fail "no flow.json produced"
@@ -88,7 +89,7 @@ cat > "$REC2" <<'JSON'
  {"seq":4,"action_type":"dom_settle","url_at_capture":"https://app.example.com/dash","primary":null,"candidates":[],"is_navigation_boundary":false}
 ]
 JSON
-node "$DIR/bin/build-flow.js" dsflow "https://app.example.com/dash" "" "$REC2" "$FLOWS2" 2>/dev/null \
+node "$DIR/bin/build-flow.js" dsflow "https://app.example.com/dash" "" "$REC2" "$FLOWS2" "$BF_ENGINE" 2>/dev/null \
 	|| fail "build-flow.js exited non-zero on the dom_settle stream"
 FLOW2="$FLOWS2/dsflow.flow.json"
 eq "$(jq -rc '.steps[0]|[.kind,.by,.value,.action]' "$FLOW2")" '["find","text","Open","click"]' "ds step0 click"
@@ -107,7 +108,7 @@ cat > "$REC3" <<'JSON'
  {"seq":1,"action_type":"click","url_at_capture":"https://app.example.com/x","primary":null,"insufficient":true,"candidates":[{"by":"role","value":"button","name":"a very long aria label that exceeds eighty characters so it must stay needs review one","count":1}],"is_navigation_boundary":false}
 ]
 JSON
-node "$DIR/bin/build-flow.js" oneflow "https://app.example.com/x" "" "$REC3" "$FLOWS3" 2>/dev/null \
+node "$DIR/bin/build-flow.js" oneflow "https://app.example.com/x" "" "$REC3" "$FLOWS3" "$BF_ENGINE" 2>/dev/null \
 	|| fail "build-flow.js exited non-zero on the 1-candidate stream"
 FLOW3="$FLOWS3/oneflow.flow.json"
 eq "$(jq -r '.steps[0].needs_review' "$FLOW3")" 'true' "1cand needs_review"
@@ -125,7 +126,7 @@ cat > "$REC4" <<'JSON'
  {"seq":4,"action_type":"click","url_at_capture":"https://app.example.com/b","primary":{"by":"text","value":"OnPageB"},"candidates":[{"by":"text","value":"OnPageB","count":1}],"is_navigation_boundary":false}
 ]
 JSON
-node "$DIR/bin/build-flow.js" navds "https://app.example.com/a" "" "$REC4" "$FLOWS4" 2>/dev/null \
+node "$DIR/bin/build-flow.js" navds "https://app.example.com/a" "" "$REC4" "$FLOWS4" "$BF_ENGINE" 2>/dev/null \
 	|| fail "build-flow.js exited non-zero on the dom_settle+navigate stream"
 FLOW4="$FLOWS4/navds.flow.json"
 eq "$(jq -rc '.steps[0]|[.kind,.value,.action]' "$FLOW4")" '["find","Go","click"]' "navds step0 click"
@@ -146,7 +147,7 @@ cat > "$REC5" <<'JSON'
  {"seq":5,"action_type":"click","url_at_capture":"https://app.example.com/feed","primary":{"by":"text","value":"Loaded"},"candidates":[{"by":"text","value":"Loaded","count":1}],"is_navigation_boundary":false}
 ]
 JSON
-node "$DIR/bin/build-flow.js" scflow "https://app.example.com/feed" "" "$REC5" "$FLOWS5" 2>/dev/null \
+node "$DIR/bin/build-flow.js" scflow "https://app.example.com/feed" "" "$REC5" "$FLOWS5" "$BF_ENGINE" 2>/dev/null \
 	|| fail "build-flow.js exited non-zero on the scroll stream"
 FLOW5="$FLOWS5/scflow.flow.json"
 eq "$(jq -r '.steps|length' "$FLOW5")" '3' "scroll: the two malformed records (bad dir / px<=0) dropped"

@@ -21,6 +21,7 @@ fail(){ echo "  ✗ compile-fallback: $1" >&2; exit 1; }
 eq(){ [ "$1" = "$2" ] || fail "$3: expected '$2', got '$1'"; }
 
 PR="bin/probe-record.sh"; BF="bin/build-flow.js"
+BF_ENGINE="agent-browser"
 B="_cfb_basic_$$"; N="_cfb_none_$$"; R="_cfb_role_$$"   # PID-namespaced so concurrent runs never collide
 NAMES="$B $N $R"
 cleanup(){ for n in $NAMES; do rm -f "$DIR/flows/$n.flow.json" "$DIR/flows/$n.candidates.json" "$DIR/flows/$n.values.json" "$DIR/tests/$n.test.sh"; done; }
@@ -42,7 +43,7 @@ cat > "$REC" <<'JSON'
  {"seq":2,"action_type":"input","url_at_capture":"https://app.example.com/x","primary":{"by":"label","value":"Email"},"candidates":[{"by":"label","value":"Email","count":1},{"by":"placeholder","value":"you@x.com","count":1}],"input_value":"a@b.com","is_navigation_boundary":false}
 ]
 JSON
-node "$DIR/$BF" "$B" "https://app.example.com/x" "" "$REC" "$DIR/flows" 2>/dev/null \
+node "$DIR/$BF" "$B" "https://app.example.com/x" "" "$REC" "$DIR/flows" "$BF_ENGINE" 2>/dev/null \
 	|| fail "build-flow.js exited non-zero"
 rm -f "$REC"
 FLOW="$DIR/flows/$B.flow.json"; T="$DIR/tests/$B.test.sh"
@@ -100,7 +101,7 @@ cat > "$REC2" <<'JSON'
  {"seq":1,"action_type":"click","url_at_capture":"https://app.example.com/y","primary":{"by":"testid","value":"only-btn"},"candidates":[{"by":"testid","value":"only-btn","count":1}],"is_navigation_boundary":false}
 ]
 JSON
-node "$DIR/$BF" "$N" "https://app.example.com/y" "" "$REC2" "$DIR/flows" 2>/dev/null \
+node "$DIR/$BF" "$N" "https://app.example.com/y" "" "$REC2" "$DIR/flows" "$BF_ENGINE" 2>/dev/null \
 	|| fail "build-flow.js exited non-zero (none case)"
 rm -f "$REC2"
 FLOW2="$DIR/flows/$N.flow.json"; T2="$DIR/tests/$N.test.sh"
