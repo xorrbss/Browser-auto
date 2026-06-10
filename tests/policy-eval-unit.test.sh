@@ -24,6 +24,10 @@ assert(evaluatePolicy({ ...doc, submitted_at: "2026-01-01" }, pol, now).stage ==
 assert(evaluatePolicy({ ...doc, submitted_at: "garbage" }, pol, now).stage === "would-skip", "unparseable date ⇒ would-skip (fail-closed)");
 assert(evaluatePolicy({ ...doc, doc_id: "IB-지출-1" }, pol, now).stage === "would-skip", "docId glob mismatch ⇒ would-skip");
 assert(evaluatePolicy({ ...doc, title: "일반 급여 지급" }, pol, now).stage === "would-skip", "missing marker 정기 ⇒ would-skip");
+// requireContentMarkers is matched against DETERMINISTIC scraped text only — a marker present ONLY in the
+// LLM summary must NOT flip a doc to would-approve (no LLM on the eligibility path; fail-closed).
+assert(evaluatePolicy({ ...doc, title: "일반 지급 품의", summary: "정기 급여 자동 분류됨" }, pol, now).stage === "would-skip", "marker only in LLM summary ⇒ would-skip (summary excluded from haystack)");
+assert(evaluatePolicy({ ...doc, title: "일반 지급", raw_text: "정기 급여 명세" }, pol, now).stage === "would-approve", "marker in raw_text (deterministic scraped) ⇒ would-approve");
 assert(evaluatePolicy({ ...doc, status: "approved" }, pol, now).stage === "would-skip", "already-decided ⇒ would-skip");
 assert(evaluatePolicy(doc, { ...pol, eligibility: { ...pol.eligibility, formTypeAllow: ["품의"] } }, now).stage === "requires-live", "formType (live-only) ⇒ requires-live");
 assert(evaluatePolicy(doc, { ...pol, amount: { maxAmount: 1000000, gateBCaptured: false } }, now).stage === "would-skip", "heuristic amount (no Gate-B) ⇒ would-skip (fail-closed)");
