@@ -8,6 +8,12 @@
     "drafter": "기안자",
     "submitted_at": "기안일"
   },
+  "columnIndexes": {
+    "doc_id": 1,
+    "title": 3,
+    "drafter": 4,
+    "submitted_at": 5
+  },
   "strip": { "title": "첨부 파일 표시" },
   "pagination": { "mode": "combobox" },
   "detail": {

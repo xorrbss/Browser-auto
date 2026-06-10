@@ -18,6 +18,7 @@ A recipe is selected by the `--app` / system name (`recipes/<name>.json`), mirro
 | `collection.row` | — | node | record role inside the container; default `"row"`. |
 | `key` | ✅ | node | which `columns` field identifies a row (must be a key of `columns`). The row's identity / PK. A **non-unique** key column fails loud (it would silently collapse rows). An empty key value skips the row (never fabricated). For 결재, `key` is `doc_id`. |
 | `columns` | ✅ | node | `{ db_field: "column header text" }`. Header-anchored (matched normalized-exact to the table's `columnheader`s) — a missing/duplicate header fails loud, never mis-maps. Field names are **arbitrary** on the generic path; the legacy 결재 path restricts them to the DB vocabulary (`doc_id` + `lib/db.js` SCRAPED_COLS). |
+| `columnIndexes` | — | `play-flow` | Explicit fallback for live tables that expose rows/cells but no `columnheader` roles. Must map every `columns` field to a zero-based cell index; duplicate/missing indexes fail closed. Omit for normal header-anchored tables. |
 | `strip` | — | node | `{ db_field: "literal trailing suffix" }` — remove UI noise (e.g. Hiworks appends `첨부 파일 표시` to the title cell). Literal trailing match only (no regex). |
 | `ready.text` | — | driver | substring that must appear before snapshotting an async-rendered list. |
 | `ready.timeout` | — | driver | seconds for the ready gate (default 15). |
@@ -81,6 +82,7 @@ a different vendor needs only a different recipe — exercised by `tests/extract
   "collection": { "name": "대기 문서 리스트" },
   "key": "doc_id",
   "columns": { "doc_id": "문서번호", "title": "제목", "drafter": "기안자", "submitted_at": "기안일" },
+  "columnIndexes": { "doc_id": 1, "title": 3, "drafter": 4, "submitted_at": 5 },
   "strip": { "title": "첨부 파일 표시" },
   "pagination": { "mode": "combobox" }
 }

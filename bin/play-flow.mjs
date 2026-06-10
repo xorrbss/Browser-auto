@@ -122,7 +122,22 @@ function readOpenRecordRecipe(name) {
 	if (!recipe?.collection?.name) throw new Error(`open_record recipe ${name}: collection.name required`);
 	if (!recipe.columns || typeof recipe.columns !== 'object' || !Object.keys(recipe.columns).length) throw new Error(`open_record recipe ${name}: columns required`);
 	if (!recipe.key || !Object.prototype.hasOwnProperty.call(recipe.columns, recipe.key)) throw new Error(`open_record recipe ${name}: key must name one of columns`);
+	if (recipe.columnIndexes != null) validateColumnIndexes(recipe, name);
 	return recipe;
+}
+
+function validateColumnIndexes(recipe, name) {
+	if (!recipe.columnIndexes || typeof recipe.columnIndexes !== 'object' || Array.isArray(recipe.columnIndexes)) {
+		throw new Error(`open_record recipe ${name}: columnIndexes must be an object`);
+	}
+	const seen = new Set();
+	for (const field of Object.keys(recipe.columns)) {
+		const n = recipe.columnIndexes[field];
+		if (!Number.isInteger(n) || n < 0) throw new Error(`open_record recipe ${name}: columnIndexes.${field} must be a non-negative integer`);
+		if (seen.has(n)) throw new Error(`open_record recipe ${name}: duplicate column index ${n}`);
+		seen.add(n);
+	}
+	return recipe.columnIndexes;
 }
 
 async function locatorText(locator) {
@@ -156,23 +171,44 @@ async function extractLiveRecipeRows(page, recipe) {
 		const cellCount = await cells.count();
 		if (cellCount > 0) dataRows.push({ row, cells, cellCount });
 	}
-	if (!headerLabels) throw new Error('open_record: no header row found in live table');
-
 	const idx = {};
-	for (const [field, label] of Object.entries(recipe.columns)) {
-		const want = aria.norm(label);
-		const found = [];
-		headerLabels.forEach((h, i) => { if (h === want) found.push(i); });
-		if (found.length === 0) throw new Error(`open_record: column "${label}" (${field}) not found in live table`);
-		if (found.length > 1) throw new Error(`open_record: column "${label}" (${field}) is ambiguous in live table`);
-		idx[field] = found[0];
+	let headerlessIndexMode = false;
+	if (headerLabels) {
+		for (const [field, label] of Object.entries(recipe.columns)) {
+			const want = aria.norm(label);
+			const found = [];
+			headerLabels.forEach((h, i) => { if (h === want) found.push(i); });
+			if (found.length === 0) throw new Error(`open_record: column "${label}" (${field}) not found in live table`);
+			if (found.length > 1) throw new Error(`open_record: column "${label}" (${field}) is ambiguous in live table`);
+			idx[field] = found[0];
+		}
+	} else if (recipe.columnIndexes) {
+		Object.assign(idx, validateColumnIndexes(recipe, recipe.collection.name));
+		headerlessIndexMode = true;
+	} else {
+		throw new Error('open_record: no header row found in live table');
 	}
 
 	const strip = recipe.strip || {};
 	const fields = Object.keys(recipe.columns);
+	const maxIdx = Math.max(...fields.map((field) => idx[field]));
 	const items = [];
 	for (const row of dataRows) {
-		if (row.cellCount !== headerLabels.length) throw new Error(`open_record: row has ${row.cellCount} cells but header has ${headerLabels.length}`);
+		if (headerlessIndexMode) {
+			if (row.cellCount <= maxIdx) throw new Error(`open_record: row has ${row.cellCount} cells but recipe needs index ${maxIdx}`);
+			let headerLike = true;
+			for (const field of fields) {
+				const got = aria.norm(await locatorText(row.cells.nth(idx[field])));
+				const want = aria.norm(recipe.columns[field]);
+				if (got !== want) {
+					headerLike = false;
+					break;
+				}
+			}
+			if (headerLike) continue;
+		} else if (row.cellCount !== headerLabels.length) {
+			throw new Error(`open_record: row has ${row.cellCount} cells but header has ${headerLabels.length}`);
+		}
 		const data = {};
 		const cellByField = {};
 		for (const field of fields) {
@@ -204,15 +240,26 @@ async function clickOpenRecordCell(cell, value) {
 	return cell.click();
 }
 
+async function waitForOpenRecordRows(page, recipe, rowIndex) {
+	const deadline = Date.now() + 20000;
+	let last = null;
+	while (Date.now() <= deadline) {
+		const live = await extractLiveRecipeRows(page, recipe);
+		if (live.rows[rowIndex]) return live;
+		last = new Error(`open_record: rowIndex ${rowIndex} is out of range (rows=${live.rows.length})`);
+		await page.waitForTimeout(500);
+	}
+	throw last;
+}
+
 async function openRecord(page, step) {
 	const recipe = readOpenRecordRecipe(step.recipe);
 	const source = step.source || 'first';
 	const rowIndex = source === 'row_index' ? step.rowIndex : (step.rowIndex ?? 0);
 	const field = step.field || recipe.key;
 	if (field !== 'key' && !Object.prototype.hasOwnProperty.call(recipe.columns, field)) throw new Error(`open_record: field "${field}" is not in recipe columns`);
-	const { rows } = await extractLiveRecipeRows(page, recipe);
+	const { rows } = await waitForOpenRecordRows(page, recipe, rowIndex);
 	const row = rows[rowIndex];
-	if (!row) throw new Error(`open_record: rowIndex ${rowIndex} is out of range (rows=${rows.length})`);
 	const clickValue = field === 'key' ? row.key : row.data[field];
 	const cell = field === 'key' ? row.cellByField[recipe.key] : row.cellByField[field];
 	if (!clickValue || !cell) throw new Error(`open_record: rowIndex ${rowIndex} field "${field}" is empty`);
