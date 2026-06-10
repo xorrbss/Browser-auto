@@ -110,8 +110,9 @@ echo "[enrich-system] launching browser with cached '$SYSTEM' session…"
 AB_AUTH "$SYSTEM" open </dev/null >/dev/null
 
 # Pagination context (so enrich reaches docs on ANY list page, not just page 1). Mirror sync-system.sh:
-# the total page count = the number of page-number <option>s, and page 1's key signature lets a combobox
-# page change be detected as "settled". extract-list.js yields the per-page keys from a list snapshot.
+# the trustworthy page count comes from the SHARED pager decision (bin/pager-decide.js), and each page
+# change is detected as "settled" by comparing against the key signature of the page being LEFT (computed
+# per page in the scan loop below — NOT a fixed page-1 signature). extract-list.js yields per-page keys.
 LIST_READY="$(jq -r '.ready.text // empty' "$RECIPE")"
 PAGINATE="$(jq -r '.pagination.mode // empty' "$RECIPE")"
 EX_LIST="$PROBE_ROOT/bin/extract-list.js"
@@ -119,7 +120,6 @@ _list_keysig() { printf '%s' "$1" | node "$EX_LIST" "$RECIPE" 2>/dev/null | jq -
 ABX navigate "$TARGET" </dev/null >/dev/null || { rm -rf "$TMPD"; exit 1; }
 [ -z "$LIST_READY" ] || wait_text "$LIST_READY" 15 >/dev/null 2>&1 || true
 P1SNAP="$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)"
-SIG1="$(_list_keysig "$P1SNAP")"
 TOTAL=1
 if [ "$PAGINATE" = "combobox" ]; then
 	# Shared fail-closed page decision (bin/pager-decide.js → guards.pagerDecision, same rule as the
@@ -154,12 +154,13 @@ for key in "${DOCS[@]}"; do
 	for ((p=1; p<=TOTAL; p++)); do
 		if [ "$p" -gt 1 ]; then
 			cur="$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)"
-			read -r _k _t ref < <(printf '%s' "$cur" | node "$PROBE_ROOT/bin/pager-decide.js" "$PAGINATE" 2>/dev/null) || true
+			prevsig="$(_list_keysig "$cur")"   # key sig of the page being LEFT (p-1); settle below compares to THIS, not page-1
+			read -r _pk _pt ref < <(printf '%s' "$cur" | node "$PROBE_ROOT/bin/pager-decide.js" "$PAGINATE" 2>/dev/null) || true
 			[ -n "${ref:-}" ] || break
 			ABX select "@$ref" "$p" </dev/null >/dev/null 2>&1 || true
 			for _t in $(seq 1 12); do
 				ids="$(_list_keysig "$(ABX snapshot </dev/null 2>/dev/null | jq '.data' 2>/dev/null || true)")"
-				[ -n "$ids" ] && [ "$ids" != "$SIG1" ] && break
+				[ -n "$ids" ] && [ "$ids" != "$prevsig" ] && break
 				sleep 0.5
 			done
 		fi
