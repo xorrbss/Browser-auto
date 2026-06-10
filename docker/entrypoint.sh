@@ -15,6 +15,15 @@ VNC_PORT="${VNC_PORT:-5900}"
 NOVNC_PORT="${NOVNC_PORT:-6080}"
 export DISPLAY
 
+external_mode="${WEBUI_EXTERNAL_MODE:-${AQA_EXTERNAL_MODE:-}}"
+external_mode="$(printf '%s' "$external_mode" | tr '[:upper:]' '[:lower:]')"
+if { [ "$external_mode" = "1" ] || [ "$external_mode" = "true" ] || [ "$external_mode" = "yes" ] || [ "$external_mode" = "on" ]; } \
+    && [ "${NOVNC_DISABLE:-}" != "1" ] \
+    && [ "${NOVNC_AUTH_BOUNDARY:-}" != "authenticated-proxy" ]; then
+    echo "[entrypoint] FATAL: external mode refuses passwordless noVNC; set NOVNC_DISABLE=1 or NOVNC_AUTH_BOUNDARY=authenticated-proxy" >&2
+    exit 1
+fi
+
 echo "[entrypoint] starting Xvfb on $DISPLAY ($SCREEN)"
 # A container restart reuses the writable layer, so a leftover lock/socket from a previously
 # crashed boot makes Xvfb fail with "Server is already active for display NN". Clear them first.
@@ -31,13 +40,16 @@ xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 || { echo "[entrypoint] FATAL: Xvfb
 echo "[entrypoint] starting fluxbox (window manager)"
 fluxbox >/dev/null 2>&1 &
 
-# x11vnc shares the virtual display; websockify bridges it to noVNC's web client.
-# -nopw: no VNC password on purpose. Access must be gated upstream.
-echo "[entrypoint] starting x11vnc on :$VNC_PORT and noVNC on :$NOVNC_PORT"
-x11vnc -display "$DISPLAY" -forever -shared -nopw -quiet -rfbport "$VNC_PORT" &
-websockify --web=/usr/share/novnc "$NOVNC_PORT" "localhost:$VNC_PORT" &
-
-echo "[entrypoint] noVNC: open http://<host>:$NOVNC_PORT/vnc.html  (drive the recorder's Chrome)"
+if [ "${NOVNC_DISABLE:-}" = "1" ]; then
+    echo "[entrypoint] noVNC disabled (NOVNC_DISABLE=1)"
+else
+    # x11vnc shares the virtual display; websockify bridges it to noVNC's web client.
+    # -nopw: no VNC password on purpose. Access must be gated upstream.
+    echo "[entrypoint] starting x11vnc on :$VNC_PORT and noVNC on :$NOVNC_PORT"
+    x11vnc -display "$DISPLAY" -forever -shared -nopw -quiet -rfbport "$VNC_PORT" &
+    websockify --web=/usr/share/novnc "$NOVNC_PORT" "localhost:$VNC_PORT" &
+    echo "[entrypoint] noVNC: open http://<host>:$NOVNC_PORT/vnc.html  (drive the recorder's Chrome)"
+fi
 echo "[entrypoint] webui: http://<host>:${WEBUI_PORT:-4310}  (start/stop record, compile, run, results)"
 
 exec node webui/server.js

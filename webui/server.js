@@ -52,6 +52,7 @@ import { commandPlanPost, commandPlanGet, recordCommandGateRefusal } from './rou
 import { issueSessionIfNeeded, approveGate } from './session.js';
 import { getP0Readiness } from './readiness.js';
 import { actorAccessView, authorizeWebuiPost } from './access.js';
+import { applySecurityHeaders, authorizeHttpRequest, securityModeSummary } from './security.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 // Bind address. Default 127.0.0.1 (localhost-only — the safe default for native Windows/macOS use).
@@ -87,6 +88,7 @@ const MIME = {
 
 function sendJson(res, code, obj) {
 	const body = JSON.stringify(obj);
+	applySecurityHeaders(res);
 	res.writeHead(code, {
 		'Content-Type': 'application/json; charset=utf-8',
 		'Content-Length': Buffer.byteLength(body),
@@ -205,6 +207,7 @@ function serveFile(req, res, filePath) {
 
 	const type = MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
 	const range = req.headers.range;
+	applySecurityHeaders(res);
 
 	if (range) {
 		const m = /^bytes=(\d*)-(\d*)$/.exec(range);
@@ -245,6 +248,7 @@ function serveFile(req, res, filePath) {
 
 const server = http.createServer(async (req, res) => {
 	try {
+		applySecurityHeaders(res);
 		// Host-header allowlist — DNS-rebinding defense. Applies to GET and POST (GET routes serve
 		// artifacts/PII and have no Origin check), so reject before any routing or side effect.
 		if (!ALLOWED_HOSTS.has((req.headers.host || '').toLowerCase())) {
@@ -252,6 +256,11 @@ const server = http.createServer(async (req, res) => {
 		}
 		const url = new URL(req.url, `http://${HOST}:${PORT}`);
 		const p = url.pathname;
+		const security = authorizeHttpRequest(req, p, { allowedHosts: ALLOWED_HOSTS });
+		if (!security.ok) {
+			return sendJson(res, security.code, { error: security.error, reason: security.reason });
+		}
+		req.security = security;
 
 		if (req.method === 'POST') {
 			// CSRF guard: browsers send Origin on cross-origin POST. Refuse anything not from us
@@ -620,7 +629,11 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 server.listen(PORT, HOST, () => {
+	const security = securityModeSummary();
 	console.log(`[webui] listening on http://${HOST}:${PORT}`);
+	console.log(`[webui] security mode: ${security.mode}; auth=${security.auth}; tenant=${security.tenantId || 'unconfigured'}`);
+	if (security.external && !security.configured) console.error('[webui] external mode is fail-closed until WEBUI_AUTH_TOKEN and WEBUI_TENANT_ID are set');
+	if (security.external) console.error('[webui] noVNC must remain disabled or be fronted by authenticated, tenant-scoped TLS before exposure');
 	console.log(`[webui] artifacts: ${ARTIFACTS_DIR}`);
 	pruneArtifacts(KEEP_RUNS).then((r) => {
 		if (r.pruned.length) console.log(`[webui] pruned ${r.pruned.length} old run dir(s), kept newest ${r.kept} (WEBUI_KEEP_RUNS=${KEEP_RUNS})`);

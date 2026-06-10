@@ -12,6 +12,7 @@ import { classifyIntent, runQuery, runRecordsQuery } from './agent.js';
 import { PROBE_ROOT } from './spawn.js';
 import { listUrlFor, titlesFor } from './routes-approve.js';
 import { resolveAction } from '../approve/guards.mjs';
+import { redactObject } from './redact.js';
 
 const require = createRequire(import.meta.url);
 const dbm = require('../lib/db.js');
@@ -92,8 +93,8 @@ function publicPlan(row) {
 		targetSet: row.targets,
 		targets: row.targets && Array.isArray(row.targets.targets) ? row.targets.targets : [],
 		targetCount: row.targets && Array.isArray(row.targets.targets) ? row.targets.targets.length : 0,
-		dryRun: row.dryRun,
-		confirmation: row.confirmation,
+		dryRun: redactObject(row.dryRun),
+		confirmation: redactObject(row.confirmation),
 		jobId: row.jobId,
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt,
@@ -116,7 +117,7 @@ function event(plan, type, status, data = {}, reason = null, jobId = null) {
 		job_id: jobId,
 		plan_hash: plan.planHash || plan.hash,
 		target_set_hash: plan.targetSetHash,
-		data,
+		data: redactObject(data),
 	}));
 }
 
@@ -370,12 +371,13 @@ function storeJobCompletion(planId, stage, job, binding = {}) {
 	if (stage === 'dry-run') {
 		const stale = !!(binding.targetSetHash && row.targetSetHash && binding.targetSetHash !== row.targetSetHash);
 		const pass = !stale && job.status === 'done' && job.result && Array.isArray(job.result.results) && job.result.results.length > 0 && job.result.results.every((r) => r.status === 'dry-ok');
+		const safeResult = redactObject(job.result);
 		const dry = {
 			status: stale ? 'stale' : pass ? 'passed' : 'failed',
 			jobId: job.id,
-			result: job.result,
+			result: safeResult,
 			exitCode: job.exitCode,
-			hash: hashObject(job.result || {}),
+			hash: hashObject(safeResult || {}),
 			planHash: binding.planHash || row.planHash,
 			targetSetHash: binding.targetSetHash || row.targetSetHash,
 		};
@@ -390,7 +392,7 @@ function storeJobCompletion(planId, stage, job, binding = {}) {
 				job_id: job.id,
 				plan_hash: row.planHash,
 				target_set_hash: binding.targetSetHash || row.targetSetHash,
-				data: { result: job.result, exitCode: job.exitCode },
+				data: { result: safeResult, exitCode: job.exitCode },
 			});
 		});
 		return;
@@ -401,6 +403,7 @@ function storeJobCompletion(planId, stage, job, binding = {}) {
 	const results = job.status === 'done' && job.result && Array.isArray(job.result.results) ? job.result.results : null;
 	const approvedN = results ? results.filter((r) => r.status === 'approved').length : 0;
 	const ok = !!(results && results.length > 0 && approvedN > 0 && results.every((r) => r.status === 'approved' || r.status === 'skipped'));
+	const safeResult = redactObject(job.result);
 	dbCall((db) => {
 		dbm.updateCommandPlan(db, planId, { status: ok ? 'succeeded' : 'failed', job_id: job.id });
 		dbm.appendCommandEvent(db, {
@@ -412,7 +415,7 @@ function storeJobCompletion(planId, stage, job, binding = {}) {
 			job_id: job.id,
 			plan_hash: row.planHash,
 			target_set_hash: row.targetSetHash,
-			data: { result: job.result, exitCode: job.exitCode },
+			data: { result: safeResult, exitCode: job.exitCode },
 		});
 	});
 }
@@ -434,7 +437,7 @@ function enqueueApprovePlan(plan, deps, { live }) {
 function runReadPlan(plan, deps) {
 	if (plan.action === 'query') {
 		const filter = plan.plan.filter || {};
-		const result = { approvals: runQuery(filter), systems: runRecordsQuery(filter) };
+		const result = redactObject({ approvals: runQuery(filter), systems: runRecordsQuery(filter) });
 		const summary = { status: 'succeeded', result, hash: hashObject(result) };
 		const row = dbCall((db) => {
 			dbm.updateCommandPlan(db, plan.id, { status: 'succeeded', dry_run_json: summary });
@@ -452,9 +455,10 @@ function runReadPlan(plan, deps) {
 		spawnFn: () => deps.gitBash(script, args),
 		onFinish: (j) => {
 			const done = j.status === 'done';
+			const safeResult = redactObject(j.result);
 			dbCall((db) => {
-				dbm.updateCommandPlan(db, plan.id, { status: done ? 'succeeded' : 'failed', job_id: j.id, dry_run_json: { status: done ? 'succeeded' : 'failed', jobId: j.id, exitCode: j.exitCode, result: j.result } });
-				dbm.appendCommandEvent(db, { plan_id: plan.id, actor: ACTOR, type: 'read_job_completed', status: done ? 'succeeded' : 'failed', reason: done ? null : 'job_failed', job_id: j.id, plan_hash: plan.planHash, data: { exitCode: j.exitCode, result: j.result } });
+				dbm.updateCommandPlan(db, plan.id, { status: done ? 'succeeded' : 'failed', job_id: j.id, dry_run_json: { status: done ? 'succeeded' : 'failed', jobId: j.id, exitCode: j.exitCode, result: safeResult } });
+				dbm.appendCommandEvent(db, { plan_id: plan.id, actor: ACTOR, type: 'read_job_completed', status: done ? 'succeeded' : 'failed', reason: done ? null : 'job_failed', job_id: j.id, plan_hash: plan.planHash, data: { exitCode: j.exitCode, result: safeResult } });
 			});
 		},
 	});
@@ -589,11 +593,11 @@ export function commandPlanGet(p, url, res, { sendJson }) {
 	const plan = loadPlan(parsed.id);
 	if (!plan) { sendJson(res, 404, { error: 'no such plan' }); return true; }
 	if (parsed.op === 'events') {
-		sendJson(res, 200, { events: dbCall((db) => dbm.listCommandEvents(db, parsed.id)) });
+		sendJson(res, 200, { events: dbCall((db) => dbm.listCommandEvents(db, parsed.id)).map((entry) => redactObject(entry)) });
 		return true;
 	}
 	if (parsed.op === 'result') {
-		sendJson(res, 200, { plan: publicPlan(plan), dryRun: plan.dryRun, confirmation: plan.confirmation });
+		sendJson(res, 200, { plan: publicPlan(plan), dryRun: redactObject(plan.dryRun), confirmation: redactObject(plan.confirmation) });
 		return true;
 	}
 	if (parsed.op === 'get') {

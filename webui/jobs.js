@@ -6,7 +6,9 @@
 // child is spawned. Read-only HTTP endpoints do not go through here and run concurrently.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { killTree } from './spawn.js';
+import { redactObject, redactText } from './redact.js';
 
 const MAX_LOG = 2000; // per-job log ring-buffer cap
 const MAX_JOBS = 50; // most-recent job records kept in memory
@@ -17,6 +19,8 @@ const JOB_TIMEOUT_MS = Number(process.env.WEBUI_JOB_TIMEOUT_MS) || 20 * 60 * 100
 const JOB_KILL_GRACE_MS = Number(process.env.WEBUI_JOB_KILL_GRACE_MS) || 15000;
 const JOB_HEARTBEAT_STALE_MS = Number(process.env.WEBUI_JOB_HEARTBEAT_STALE_MS) || 60 * 1000;
 const JOB_SLOW_MS = Number(process.env.WEBUI_JOB_SLOW_MS) || 5 * 60 * 1000;
+const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
+const JOB_JOURNAL = process.env.WEBUI_JOB_JOURNAL || path.join(PROBE_ROOT, 'data', 'webui-jobs.jsonl');
 
 let seq = 0;
 let tail = Promise.resolve(); // the serial chain
@@ -33,22 +37,8 @@ function formatDurationMs(ms) {
 	return ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
 }
 
-function compactDiagnosticText(value) {
-	return String(value == null ? '' : value)
-		.replace(/\x1b\[[0-9;]*m/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
-
 function sanitizeDiagnosticText(value, fallback = '') {
-	let s = compactDiagnosticText(value);
-	if (!s) s = fallback;
-	s = s
-		.replace(/\b(authorization|cookie|set-cookie)\s*:\s*[^,;\s]+/ig, '$1: [redacted]')
-		.replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/ig, '$1 [redacted]')
-		.replace(/\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|otp|code)\s*=\s*[^&\s]+/ig, '$1=[redacted]')
-		.replace(/(https?:\/\/[^\s?#]+)\?[^)\]\s]+/ig, '$1?[redacted]');
-	return s.length > 320 ? `${s.slice(0, 317)}...` : s;
+	return redactText(value, fallback, 320);
 }
 
 function jobArtifactLinks(job) {
@@ -134,15 +124,50 @@ function jobDiagnostics(job, now = Date.now()) {
 	};
 }
 
+function currentTenantId() {
+	return String(process.env.WEBUI_TENANT_ID || process.env.AQA_TENANT_ID || 'local').trim() || 'local';
+}
+
+function currentActorId() {
+	return String(process.env.WEBUI_ACTOR_ID || process.env.AQA_WEBUI_ACTOR || process.env.AQA_ACTOR_ID || 'local').trim() || 'local';
+}
+
+function appendJobJournal(job, event, extra = {}) {
+	try {
+		fs.mkdirSync(path.dirname(JOB_JOURNAL), { recursive: true });
+		const rec = {
+			at: new Date().toISOString(),
+			event,
+			id: job.id,
+			tenantId: job.tenantId,
+			actorId: job.actorId,
+			kind: job.kind,
+			status: job.status,
+			label: redactText(job.label, '', 240),
+			exitCode: job.exitCode,
+			cancelled: job.cancelled,
+			timedOut: job.timedOut,
+			runId: job.runId,
+			failureReason: job.failureReason || safeFailureReason(job),
+			...redactObject(extra, 240),
+		};
+		fs.appendFileSync(JOB_JOURNAL, JSON.stringify(rec) + '\n', { mode: 0o600 });
+	} catch {
+		/* best-effort local journal */
+	}
+}
+
 function publicJob(job) {
 	const dur = durationMs(job);
 	const failureReason = job.failureReason || safeFailureReason(job);
 	const artifacts = jobArtifactLinks(job);
 	return {
 		id: job.id,
+		tenantId: job.tenantId,
+		actorId: job.actorId,
 		kind: job.kind,
 		label: job.label,
-		meta: job.meta || {},
+		meta: redactObject(job.meta || {}),
 		status: job.status, // queued | running | done | failed | cancelled
 		exitCode: job.exitCode,
 		cancelled: job.cancelled,
@@ -154,8 +179,8 @@ function publicJob(job) {
 		pid: job.pid,
 		runId: job.runId, // for kind:'run', filled from the [run] RUN_ID= line
 		artifacts,
-		result: job.result,
-		error: job.error,
+		result: redactObject(job.result),
+		error: job.error ? redactText(job.error) : job.error,
 		failureReason,
 		diagnostics: jobDiagnostics(job),
 	};
@@ -169,17 +194,19 @@ function writeSse(res, event, data) {
 
 function pushLine(job, line, opts = {}) {
 	const now = Date.now();
-	job.log.push(line);
+	const rawLine = String(line == null ? '' : line);
+	captureStructuredResult(job, rawLine);
+	const safeLine = redactText(rawLine, '', 2000);
+	job.log.push(safeLine);
 	if (job.log.length > MAX_LOG) job.log.splice(0, job.log.length - MAX_LOG);
 	job.lastLogAt = now;
 	if (opts.childOutput) job.lastOutputAt = now;
 	// Opportunistically capture the RUN_ID run.sh prints, so the UI can deep-link the new run.
 	if (job.kind === 'run' && !job.runId) {
-		const m = /RUN_ID=(\d{8}-\d{6}-\d+)/.exec(line);
+		const m = /RUN_ID=(\d{8}-\d{6}-\d+)/.exec(rawLine);
 		if (m) job.runId = m[1];
 	}
-	captureStructuredResult(job, line);
-	for (const res of job.subscribers) writeSse(res, 'line', { line });
+	for (const res of job.subscribers) writeSse(res, 'line', { line: safeLine });
 }
 
 // Capture a driver's structured result. The AQA_JOB_RESULT= sentinel is AUTHORITATIVE: once a sentinel
@@ -263,6 +290,7 @@ async function runJob(job) {
 		job.endedAt = Date.now();
 		job.failureReason = safeFailureReason(job);
 		pushTerminalDiagnostics(job);
+		appendJobJournal(job, 'terminal');
 		finishJob(job);
 		return;
 	}
@@ -270,6 +298,7 @@ async function runJob(job) {
 	job.startedAt = Date.now();
 	runningId = job.id;
 	pushLine(job, `[webui] starting ${job.id}: ${job.label}`);
+	appendJobJournal(job, 'running');
 	let timer = null;
 	let killGraceTimer = null;
 	try {
@@ -321,6 +350,7 @@ async function runJob(job) {
 		job.endedAt = Date.now();
 		job.failureReason = safeFailureReason(job);
 		pushTerminalDiagnostics(job);
+		appendJobJournal(job, 'terminal');
 		if (typeof job.onFinish === 'function') {
 			try { job.onFinish(publicJob(job)); }
 			catch (e) { pushLine(job, `[webui] onFinish error: ${(e && e.message) || e}`); }
@@ -335,6 +365,8 @@ export function enqueue({ kind, label, spawnFn, stopFile, meta, onFinish }) {
 	const id = `j${++seq}`;
 	const job = {
 		id,
+		tenantId: currentTenantId(),
+		actorId: currentActorId(),
 		kind,
 		label: label || kind,
 		meta: meta && typeof meta === 'object' ? meta : {},
@@ -363,6 +395,7 @@ export function enqueue({ kind, label, spawnFn, stopFile, meta, onFinish }) {
 	jobs.set(id, job);
 	pending.push(id);
 	pushLine(job, `[webui] queued ${id}: ${job.label}`);
+	appendJobJournal(job, 'queued');
 	// .catch keeps the chain alive on a thrown job; per-job status already records the failure.
 	tail = tail.then(() => runJob(job)).catch(() => {});
 	return publicJob(job);
@@ -378,17 +411,19 @@ export function jobResult(id) {
 	if (!job) return null;
 	return {
 		id: job.id,
+		tenantId: job.tenantId,
+		actorId: job.actorId,
 		status: job.status,
 		exitCode: job.exitCode,
 		cancelled: job.cancelled,
 		timedOut: job.timedOut,
 		runId: job.runId,
 		artifacts: jobArtifactLinks(job),
-		result: job.result,
-		error: job.error,
+		result: redactObject(job.result),
+		error: job.error ? redactText(job.error) : job.error,
 		failureReason: job.failureReason || safeFailureReason(job),
 		diagnostics: jobDiagnostics(job),
-		meta: job.meta || {},
+		meta: redactObject(job.meta || {}),
 		startedAt: job.startedAt,
 		endedAt: job.endedAt,
 		durationMs: durationMs(job),
@@ -402,6 +437,7 @@ export function cancel(id) {
 	if (!job) return false;
 	if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') return true;
 	job.cancelled = true;
+	appendJobJournal(job, 'cancel_requested');
 	if (id === runningId && job.pid) {
 		pushLine(job, '[webui] cancel requested — killing process tree');
 		killTree(job.pid);

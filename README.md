@@ -204,6 +204,12 @@ The webui is a thin local control plane over the same CLI tools. It can run test
 record flows, verify, compile, and browse artifacts. It has no built-in public auth; keep it on
 loopback or behind an authenticated tunnel/reverse proxy.
 
+Pre-external hardening is fail-closed, not a service-open approval. Setting `WEBUI_EXTERNAL_MODE=1`
+requires `WEBUI_AUTH_TOKEN` and `WEBUI_TENANT_ID` before any page, API, artifact, or job stream route
+continues; mutating routes also require same-origin `Origin`/`Referer` and, when configured,
+`WEBUI_CSRF_TOKEN` via `X-AQA-CSRF`. noVNC must still be disabled or protected by an authenticated
+fronting boundary before exposure. See `dev/active/productization/PRODUCT-CANDIDATE-STATUS.md`.
+
 The automation view surfaces scenario readiness from `/api/flows` and `artifacts/*/report.json`:
 auth/OTP renewal, policy block, live risk, timeout or last failure, disabled reason, and deep links to
 run/report/JUnit artifacts. These fields are operator UX only; compiled bash replay remains the

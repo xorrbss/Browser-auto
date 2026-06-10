@@ -1238,7 +1238,17 @@ function renderAutomationFlow(flow) {
 	if (flow.inputTokens.length) {
 		const inputs = el('div', { class: 'values-grid' });
 		for (const t of flow.inputTokens) {
-			inputs.append(el('label', { class: 'input-wrap' }, el('span', {}, t), el('input', { class: 'auto-value-input', dataset: { token: t }, value: flow.values[t] || '', autocomplete: 'off' })));
+			const saved = flow.valueStatus?.[t]?.present === true;
+			inputs.append(el('label', { class: 'input-wrap' },
+				el('span', {}, saved ? `${t} (저장됨)` : t),
+				el('input', {
+					class: 'auto-value-input',
+					dataset: { token: t, saved: saved ? 'true' : 'false' },
+					value: '',
+					placeholder: saved ? '새 값 입력 시 교체' : '',
+					autocomplete: 'off',
+				}),
+			));
 		}
 		valuesBlock = el('div', { class: 'review-block' },
 			el('strong', {}, '입력값'),
@@ -1478,6 +1488,7 @@ async function saveAutomationValues(name) {
 	if (!requireAccess('record', '값 저장')) return;
 	const values = {};
 	document.querySelectorAll('.auto-value-input').forEach((input) => {
+		if (input.dataset.saved === 'true' && input.value === '') return;
 		values[input.dataset.token] = input.value;
 	});
 	try {

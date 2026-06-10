@@ -5,6 +5,7 @@
 // the localhost control-plane routes.
 
 import { createRequire } from 'node:module';
+import { configuredTenant, securityModeSummary } from './security.js';
 
 const require = createRequire(import.meta.url);
 const rbac = require('../lib/rbac.js');
@@ -23,6 +24,8 @@ export function currentActor(env = process.env) {
 
 export function actorAccessView(env = process.env) {
 	const actor = currentActor(env);
+	const tenantId = configuredTenant(env) || 'local';
+	const security = securityModeSummary(env);
 	const capabilities = Object.fromEntries(rbac.PERMISSIONS.map((permission) => {
 		const auth = rbac.authorize(actor, permission);
 		return [permission, { allowed: auth.allowed, reason: auth.reason }];
@@ -31,8 +34,11 @@ export function actorAccessView(env = process.env) {
 		actor: {
 			id: actor.id,
 			role: actor.role,
+			tenantId,
 			permissions: rbac.permissionsForRole(actor.role),
 		},
+		tenantId,
+		security,
 		role: actor.role,
 		roles: rbac.ROLES,
 		permissions: rbac.permissionsForRole(actor.role),

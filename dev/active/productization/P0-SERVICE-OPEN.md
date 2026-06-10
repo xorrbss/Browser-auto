@@ -11,6 +11,10 @@ service to external users or tenants. Internal pilots may continue under the nar
 The companion data policy for threat model, data flow, audit retention, artifact retention, and export
 gates is `SECURITY-DATA-POLICY.md`.
 
+Current implementation snapshot and remaining pilot/external blockers are summarized in
+`PRODUCT-CANDIDATE-STATUS.md`. This does not replace the acceptance checklist below and does not mark
+external service open as approved.
+
 ## Priority Order
 
 1. P0-A: Establish auth/RBAC and tenant identity before any public endpoint exists.

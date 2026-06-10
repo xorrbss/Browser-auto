@@ -6,6 +6,7 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { securityModeSummary } from './security.js';
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 const P0_DOC_REL = 'dev/active/productization/P0-SERVICE-OPEN.md';
@@ -82,6 +83,7 @@ export async function getP0Readiness() {
 			sections: [],
 			blockers: [],
 			artifactPolicy: artifactPolicySummary(),
+			securityMode: securityModeSummary(),
 		};
 	}
 	const sections = parseSections(raw);
@@ -100,6 +102,7 @@ export async function getP0Readiness() {
 		sections,
 		blockers: openBlockers(sections),
 		artifactPolicy: artifactPolicySummary(),
+		securityMode: securityModeSummary(),
 	};
 }
 

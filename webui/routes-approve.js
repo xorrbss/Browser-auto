@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { PROBE_ROOT } from './spawn.js';
+import { redactObject } from './redact.js';
 
 // lib/db.js (CJS): the leaf binds approval to a per-doc TITLE re-verified on the live detail (content guard;
 // red-team CRITICAL F1). The title source is REGISTRY-AWARE (P2): the legacy 결재 path reads the `approvals`
@@ -314,7 +315,7 @@ export function approveGet(p, url, res, { sendJson }) {
 		try { for (const line of fs.readFileSync(file, 'utf8').split('\n')) { if (!line.trim()) continue; try { entries.push(JSON.parse(line)); } catch { /* skip a torn/partial line */ } } }
 		catch { /* no audit yet */ }
 		const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 300, 1000);
-		sendJson(res, 200, { audit: entries.slice(-limit).reverse(), total: entries.length });
+		sendJson(res, 200, { audit: entries.slice(-limit).reverse().map((entry) => redactObject(entry)), total: entries.length, redaction: 'applied' });
 		return true;
 	}
 	// CAPTURE flows list (Gate-B UI): the recorded approve flows for an app (read-only; Phase 1b consumes them).

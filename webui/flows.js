@@ -74,6 +74,13 @@ function missingTokens(tokens, values) {
 	return tokens.filter((t) => !(t in values) || values[t] === '');
 }
 
+function valueStatus(tokens, values) {
+	return Object.fromEntries(tokens.map((token) => {
+		const present = token in values && values[token] !== '';
+		return [token, { present, state: present ? 'saved' : 'missing' }];
+	}));
+}
+
 async function authStatus(flow, engine) {
 	if (!flow?.app || engine.engineError) return { required: !!flow?.app, ready: true, app: flow?.app || null };
 	try {
@@ -316,6 +323,7 @@ export async function listFlows() {
 			needsReview: scenarioStatus.needsReview,
 			inputTokens: tokens,
 			missingValues,
+			valueStatus: valueStatus(tokens, values),
 			hasValues: existsSync(valuesPath(name)),
 			compiled,
 			compilable: !engine.engineError && scenarioStatus.policy.ok && scenarioStatus.needsReview === 0 && missingValues.length === 0,
@@ -358,7 +366,8 @@ export async function getFlow(name) {
 			.filter((x) => x.step.needs_review === true)
 			.map((x) => ({ index: x.index, action: x.step.action || null, candidates: Array.isArray(x.step.candidates) ? x.step.candidates : [] })),
 		inputTokens: tokens,
-		values,
+		values: Object.fromEntries(tokens.map((t) => [t, ''])),
+		valueStatus: valueStatus(tokens, values),
 		missingValues,
 		compiled,
 		scenarioStatus,

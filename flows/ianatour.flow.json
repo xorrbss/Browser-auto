@@ -1,5 +1,6 @@
 {
   "name": "ianatour",
+  "engine": "playwright",
   "environment": "live-readonly",
   "riskClass": "read",
   "startUrl": "https://www.iana.org/domains",

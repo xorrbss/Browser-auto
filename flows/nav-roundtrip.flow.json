@@ -1,5 +1,6 @@
 {
   "name": "nav-roundtrip",
+  "engine": "playwright",
   "environment": "live-readonly",
   "riskClass": "read",
   "startUrl": "https://example.com",

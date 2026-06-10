@@ -7,16 +7,19 @@ fail(){ echo "  x webui-flows-unit: $1" >&2; exit 1; }
 
 FLOW_NAME="_webui_row_index_unit_$$"
 MISSING_NAME="_webui_missing_snapshot_unit_$$"
+SECRET_NAME="_webui_secret_values_unit_$$"
 RECIPE_NAME="_webui_row_recipe_$$"
 RUN_OLD="20990101-000000-$((100000 + $$))"
 RUN_NEW="20990101-000000-$((100001 + $$))"
 FLOW="$DIR/flows/${FLOW_NAME}.flow.json"
 MISSING_FLOW="$DIR/flows/${MISSING_NAME}.flow.json"
+SECRET_FLOW="$DIR/flows/${SECRET_NAME}.flow.json"
+SECRET_VALUES="$DIR/flows/${SECRET_NAME}.values.json"
 SNAP="$DIR/flows/${FLOW_NAME}.snapshot.txt"
 RECIPE="$DIR/recipes/${RECIPE_NAME}.json"
 ART_OLD="$DIR/artifacts/$RUN_OLD"
 ART_NEW="$DIR/artifacts/$RUN_NEW"
-trap 'rm -f "$FLOW" "$MISSING_FLOW" "$SNAP" "$RECIPE"; rm -rf "$ART_OLD" "$ART_NEW"' EXIT
+trap 'rm -f "$FLOW" "$MISSING_FLOW" "$SECRET_FLOW" "$SECRET_VALUES" "$SNAP" "$RECIPE"; rm -rf "$ART_OLD" "$ART_NEW"' EXIT
 
 cat > "$RECIPE" <<'JSON'
 {
@@ -78,6 +81,25 @@ cat > "$MISSING_FLOW" <<JSON
 }
 JSON
 
+cat > "$SECRET_FLOW" <<JSON
+{
+  "name": "$SECRET_NAME",
+  "engine": "playwright",
+  "environment": "local",
+  "riskClass": "read",
+  "startUrl": "data:text/html,ok",
+  "steps": [
+    { "kind": "find", "by": "label", "value": "Password", "action": "fill", "text": "{{input_1}}" }
+  ],
+  "asserts": []
+}
+JSON
+cat > "$SECRET_VALUES" <<'JSON'
+{
+  "input_1": "SECRET_PASSWORD_VALUE"
+}
+JSON
+
 mkdir -p "$ART_OLD" "$ART_NEW"
 cat > "$ART_OLD/report.json" <<JSON
 [
@@ -90,7 +112,7 @@ cat > "$ART_NEW/report.json" <<JSON
 ]
 JSON
 
-FLOW_NAME="$FLOW_NAME" MISSING_NAME="$MISSING_NAME" RECIPE_NAME="$RECIPE_NAME" RUN_NEW="$RUN_NEW" node --input-type=module <<'NODE'
+FLOW_NAME="$FLOW_NAME" MISSING_NAME="$MISSING_NAME" SECRET_NAME="$SECRET_NAME" RECIPE_NAME="$RECIPE_NAME" RUN_NEW="$RUN_NEW" node --input-type=module <<'NODE'
 import { readFile } from 'node:fs/promises';
 import { getFlow, listFlows, resolveClickedRecordStep } from './webui/flows.js';
 
@@ -125,6 +147,11 @@ if (statusFlow.scenarioStatus.lastFailureReason !== 'locator timeout on Ticket p
 const listed = (await listFlows()).find((f) => f.name === process.env.MISSING_NAME);
 if (!listed) die('expected status flow in listFlows()');
 if (listed.scenarioStatus.lastRun?.runId !== process.env.RUN_NEW) die('expected listFlows() to include latest run status');
+
+const secretFlow = await getFlow(process.env.SECRET_NAME);
+if (JSON.stringify(secretFlow).includes('SECRET_PASSWORD_VALUE')) die('flow API leaked raw .values.json content');
+if (secretFlow.valueStatus.input_1?.present !== true) die('flow API should expose value presence metadata');
+if (secretFlow.values.input_1 !== '') die('flow API should not return stored secret value');
 NODE
 
 echo "  ok webui-flows-unit: clicked-row resolver and scenario status summaries work"

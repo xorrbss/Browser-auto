@@ -9,6 +9,7 @@
 import { readdir, readFile, stat, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { redactText } from './redact.js';
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 export const ARTIFACTS_DIR = path.join(PROBE_ROOT, 'artifacts');
@@ -130,16 +131,7 @@ export async function getRun(runId) {
 }
 
 function cleanReason(value) {
-	let s = String(value == null ? '' : value)
-		.replace(/\x1b\[[0-9;]*m/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
-	s = s
-		.replace(/\b(authorization|cookie|set-cookie)\s*:\s*[^,;\s]+/ig, '$1: [redacted]')
-		.replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/ig, '$1 [redacted]')
-		.replace(/\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|otp|code)\s*=\s*[^&\s]+/ig, '$1=[redacted]')
-		.replace(/(https?:\/\/[^\s?#]+)\?[^)\]\s]+/ig, '$1?[redacted]');
-	return s.length > 320 ? `${s.slice(0, 317)}...` : s;
+	return redactText(value, '', 320);
 }
 
 function failureReasonFor(row, status) {

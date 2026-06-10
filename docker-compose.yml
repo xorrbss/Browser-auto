@@ -7,7 +7,8 @@
 # SECURITY: both ports are bound to 127.0.0.1 (host-localhost) ONLY. The webui has NO auth and
 # spawns processes; noVNC has no password. NEVER publish these to 0.0.0.0 / the internet directly.
 # To reach them externally, front with an authenticated tunnel/proxy + set WEBUI_ALLOWED_HOSTS
-# (Host-header allowlist) — see README "Docker recording server".
+# (Host-header allowlist) — see README "Docker recording server". In WEBUI_EXTERNAL_MODE=1 the
+# entrypoint refuses passwordless noVNC unless NOVNC_DISABLE=1 or NOVNC_AUTH_BOUNDARY=authenticated-proxy.
 services:
   agent-qa:
     build: .
