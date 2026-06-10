@@ -5,9 +5,6 @@
 // where RUN_ID = YYYYMMDD-HHMMSS-PID. This module only READS and parses it — no writes,
 // no spawn, no DB. A process-lifetime Map cache keyed by the run dir's mtime means repeat
 // calls re-parse only new/changed runs; the fs stays authoritative.
-//
-// URLs are DERIVED from runId + test name (artifacts/<runId>/<name>/video.webm), never
-// from the report's absolute `artifacts` path string (which is host-specific).
 
 import { readdir, readFile, stat, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -64,16 +61,11 @@ async function parseRun(runId) {
 	}
 	if (!Array.isArray(rows)) return null;
 
-	const tests = rows.map((r) => {
-		const name = typeof r?.name === 'string' ? r.name : '';
-		const hasVideo = name ? existsSync(path.join(dir, name, 'video.webm')) : false;
-		return {
-			name,
-			status: r?.status === 'pass' ? 'pass' : 'fail',
-			durationMs: Number(r?.durationMs) || 0,
-			hasVideo,
-		};
-	});
+	const tests = rows.map((r) => ({
+		name: typeof r?.name === 'string' ? r.name : '',
+		status: r?.status === 'pass' ? 'pass' : 'fail',
+		durationMs: Number(r?.durationMs) || 0,
+	}));
 	const passed = tests.filter((t) => t.status === 'pass').length;
 	return {
 		runId,

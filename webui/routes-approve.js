@@ -20,12 +20,16 @@ import { PROBE_ROOT } from './spawn.js';
 // list-URL + title SOURCE, never in the leaf's guards.
 const require = createRequire(import.meta.url);
 const { openDb, closeDb, getApproval, getSystem, getRecord } = require('../lib/db.js');
+const { resolveAuthStatePath, playwrightAuthRel } = require('../lib/engine.js');
 import { resolveAction } from '../approve/guards.mjs'; // pure action selector (general-action-rpa Step B) — shared with the leaf
 import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews, assembleActionBlock, enableActionInRecipe } from './capture.js'; // UI approve-capture (Gate-B) Phase 1a/1b/2
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
-const stateFor = (app) => path.join(PROBE_ROOT, 'approve', `${app}.pw-state.json`);
+// Auth state is resolved through lib/engine.js: canonical fixtures/auth/playwright/<app>.state.json first,
+// then the legacy approve/<app>.pw-state.json compat fallback — so a login from EITHER webui button
+// (시스템 인증 or 결재 로그인) satisfies the approve pipeline.
+const stateFor = (app) => resolveAuthStatePath(PROBE_ROOT, 'playwright', app);
 
 // gwConfig(): parse data/approvals.config for the legacy 결재 inbox (GW_APP + GW_INBOX_URL) and the
 // Playwright login coordinates (GW_LOGIN_URL + GW_SUCCESS_URL) used by the webui 결재-로그인 button.
@@ -135,7 +139,7 @@ function _stageCapture(bodyJson, { live }) {
 		fs.writeFileSync(previewFile, JSON.stringify(preview), { mode: 0o600 });
 		fs.writeFileSync(targetsFile, JSON.stringify([{ doc_id: docId, title }]), { mode: 0o600 });
 	} catch (e) { return { ok: false, code: 500, error: 'could not stage capture: ' + (e && e.message) }; }
-	const args = ['--recipe', path.relative(PROBE_ROOT, previewFile), '--state', `approve/${app}.pw-state.json`, '--list-url', listUrl, '--targets-file', targetsFile];
+	const args = ['--recipe', path.relative(PROBE_ROOT, previewFile), '--state', stateFor(app), '--list-url', listUrl, '--targets-file', targetsFile];
 	if (live) args.push('--live', '--max', '1'); // single doc, capped — the operator's live test on a disposable doc
 	if (action !== 'approve') args.push('--action', action);
 	return { ok: true, args, startedAt: new Date().toISOString(), label: `CAPTURE ${live ? 'LIVE-VERIFY' : 'dry-run'} ${action} ${app} (${docId})` };
@@ -153,8 +157,9 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	// 결재 로그인 (Playwright): spawn the headed one-time login (approve/auth-pw.mjs) from the webui instead of
 	// the terminal — closes the last CLI step in the operator flow. A real Chrome window opens on the operator's
 	// desktop for ID/비번/OTP entry (that human gesture is irreducible — credentials are NOT typed into the webui);
-	// on reaching the success URL the leaf saves approve/<app>.pw-state.json (the trusted-click session the
-	// approve leaf reuses). login_url/success_url come from the registry (generic) or approvals.config (결재).
+	// on reaching the success URL the leaf saves the CANONICAL fixtures/auth/playwright/<app>.state.json (the
+	// same storageState every Playwright driver resolves via lib/engine.js).
+	// login_url/success_url come from the registry (generic) or approvals.config (결재).
 	if (p === '/api/approve/login') {
 		const app = String(bodyJson.app || '').trim();
 		if (!NAME_RE.test(app)) { sendJson(res, 400, { error: 'invalid app name' }); return true; }
@@ -162,7 +167,7 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 		if (!coords) { sendJson(res, 400, { error: `no login URL for '${app}' — register login_url + success_url (generic system) or set GW_LOGIN_URL + GW_SUCCESS_URL in data/approvals.config (결재).` }); return true; }
 		const needle = successNeedle(coords.successUrl);
 		if (!needle) { sendJson(res, 400, { error: `success URL for '${app}' has no literal segment to match on` }); return true; }
-		const outFile = `approve/${app}.pw-state.json`;
+		const outFile = playwrightAuthRel(app);
 		const job = enqueue({ kind: 'auth', label: `결재 로그인 ${app} (Playwright)`, spawnFn: () => nodeLeaf('approve/auth-pw.mjs', [coords.loginUrl, needle, outFile]) });
 		sendJson(res, 202, { job });
 		return true;
@@ -249,7 +254,7 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	const av = resolveAction(recipeObj, action); // canonical actions.<action> | legacy approve; fail-closed on missing/disabled
 	if (!av.ok) { sendJson(res, 400, { error: `recipe ${app}: ${av.reason}` }); return true; }
 	const titleField = av.action.titleField || 'title'; // generic systems: the records field used for the content-binding title
-	if (!fs.existsSync(stateFor(app))) { sendJson(res, 400, { error: `no Playwright login for '${app}' — run: node approve/auth-pw.mjs … approve/${app}.pw-state.json` }); return true; }
+	if (!fs.existsSync(stateFor(app))) { sendJson(res, 400, { error: `no Playwright login for '${app}' — use the 결재 로그인/인증 button or run setup/auth.sh (saves fixtures/auth/playwright/${app}.state.json)` }); return true; }
 	const listUrl = listUrlFor(app);
 	if (!listUrl) { sendJson(res, 400, { error: 'no 대기 list URL (set GW_INBOX_URL in data/approvals.config)' }); return true; }
 
@@ -284,7 +289,7 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 	try { fs.mkdirSync(path.dirname(targetsFile), { recursive: true }); fs.writeFileSync(targetsFile, JSON.stringify(targets), { mode: 0o600 }); }
 	catch (e) { sendJson(res, 500, { error: 'could not stage targets: ' + (e && e.message) }); return true; }
 
-	const args = ['--recipe', `recipes/${app}.json`, '--state', `approve/${app}.pw-state.json`, '--list-url', listUrl, '--targets-file', targetsFile];
+	const args = ['--recipe', `recipes/${app}.json`, '--state', stateFor(app), '--list-url', listUrl, '--targets-file', targetsFile];
 	if (!dryRun) args.push('--live', '--max', String(max));
 	if (maxAmount) args.push('--max-amount', String(maxAmount));
 	if (reviewed) args.push('--reviewed'); // human-reviewed batch: leaf relaxes form-homogeneity (mixed forms are the human's choice)

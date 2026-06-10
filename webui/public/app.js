@@ -1680,7 +1680,7 @@ async function renderApprovalState() {
 		setChildren(box,
 			el('div', { class: 'metric-grid' },
 				metric('앱', data.app || app, '선택됨'),
-				metric('로그인 여부', data.loggedIn ? 'yes' : 'no', 'approve/*.pw-state.json'),
+				metric('로그인 여부', data.loggedIn ? 'yes' : 'no', 'fixtures/auth/playwright/*.state.json'),
 				metric('레시피', data.hasApproveRecipe ? 'ready' : 'missing', `recipes/${app}.json`),
 				metric('목록 URL', data.listUrl ? 'configured' : 'missing', '결재 대기함'),
 			),
@@ -1697,7 +1697,8 @@ async function renderApprovalState() {
 
 // 결재 로그인: trigger the headed Playwright login (approve/auth-pw.mjs) from the UI. A real Chrome window
 // opens on the operator's desktop for ID/비번/OTP — credentials are NOT typed into the webui (irreducible
-// human gesture). On success the leaf saves approve/<app>.pw-state.json and the job ends; we re-render state.
+// human gesture). On success the leaf saves the canonical fixtures/auth/playwright/<app>.state.json and
+// the job ends; we re-render state.
 async function runApproveLogin(app, btn, log) {
 	if (btn) { btn.disabled = true; btn.textContent = '로그인 창 대기 중…'; }
 	if (log) { log.hidden = false; log.textContent = '데스크톱에 뜬 Chrome 창에서 로그인(OTP 포함)을 완료하세요…\n'; }
@@ -1810,6 +1811,8 @@ function columnClass(name) {
 }
 
 function bindEvents() {
+	const hostPill = $('#top-host-pill');
+	if (hostPill) hostPill.textContent = `호스트: ${location.host}`;
 	document.querySelectorAll('.nav-item').forEach((btn) => btn.addEventListener('click', () => setView(btn.dataset.viewTarget)));
 	$('#global-refresh').addEventListener('click', () => loadCoreData());
 	$('#auto-auth').addEventListener('click', runAutomationAuth);

@@ -1,5 +1,12 @@
 # DESIGN — agent-browser robustness layer (close the Playwright-only gaps)
 
+> **⚠ SUPERSEDED (2026-06-10).** The consolidation went the OPPOSITE way: commit `441294d`
+> "Complete Playwright-only migration cleanup" removed the agent-browser engine entirely
+> (daemon, `lib/env.sh`/`assert.sh`/`act.sh`/`daemon.sh`, AB drivers; `lib/engine.js` now refuses
+> `engine:"agent-browser"` fail-closed). Every artifact this design proposes extending was deleted.
+> Do NOT build from this document — it is kept as design history only. The dual-auth pain it cites
+> was instead fixed by unifying on `fixtures/auth/playwright/<app>.state.json` (lib/engine.js).
+
 **Context:** This is a GENERAL enterprise RPA platform (register ANY web system → automate ANY business
 task: read/fetch/summarize/query + effectful submit/create/update/delete/upload/send/approve…). 결재 is just
 one example action. (memory `product-scope-general-rpa`.)

@@ -13,10 +13,11 @@
 # Replay (run.sh) stays headless through Playwright defaults and ignores the display.
 FROM mcr.microsoft.com/playwright:v1.49.1-jammy
 
-# Remote-interactive display + media stack. x11-utils gives xdpyinfo for the readiness probe.
+# Remote-interactive display stack. x11-utils gives xdpyinfo for the readiness probe.
 # DEBIAN_FRONTEND=noninteractive stops tzdata from opening an interactive prompt during build.
+# (no ffmpeg: the Playwright-only pipeline records no video — nothing in the repo invokes it.)
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        xvfb x11vnc novnc websockify fluxbox x11-utils ffmpeg jq curl ca-certificates xz-utils \
+        xvfb x11vnc novnc websockify fluxbox x11-utils jq curl ca-certificates xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade Node to 24. The Playwright base ships Node 22, where node:sqlite is still flag-gated;
@@ -32,13 +33,15 @@ WORKDIR /app
 COPY . /app
 
 # The framework's only browser engine is Playwright. Dependencies stay scoped under approve/.
-# The base image already includes the matching browser binaries and system libraries.
+# The base image bundles Chromium (NOT branded Google Chrome), so every driver must launch the
+# bundled channel — AQA_PW_CHANNEL=chromium below overrides the hosts' channel:'chrome' default.
 RUN cd approve && npm ci
 
 # spawn.js already falls back to `bash` on non-Windows, but pin it so a custom base can't surprise
 # the recorder. DISPLAY/SCREEN/ports are read by docker/entrypoint.sh.
 ENV WEBUI_BASH=/bin/bash \
     WEBUI_PORT=4310 \
+    AQA_PW_CHANNEL=chromium \
     DISPLAY=:99 \
     SCREEN=1280x800x24 \
     VNC_PORT=5900 \

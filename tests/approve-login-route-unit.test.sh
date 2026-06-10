@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Browser-free unit tests for the webui 결재-로그인 route (spawns approve/auth-pw.mjs from the UI).
 # Asserts: registry-aware login coordinate resolution, glob→substring needle, and that the route
-# enqueues the Playwright login leaf with the right args (loginUrl, needle, approve/<app>.pw-state.json).
+# enqueues the Playwright login leaf with the right args (loginUrl, needle, and the CANONICAL
+# fixtures/auth/playwright/<app>.state.json out file — lib/engine.js playwrightAuthRel).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
@@ -11,6 +12,7 @@ trap 'rm -rf "$TMP"' EXIT
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const db = require('./lib/db.js');
+const { playwrightAuthRel } = require('./lib/engine.js');
 const { loginUrlFor, successNeedle, approvePost } = await import('./webui/routes-approve.js');
 
 const assert = (cond, msg) => { if (!cond) { console.error('  approve-login-route-unit: ' + msg); process.exit(1); } };
@@ -42,7 +44,7 @@ assert(code === 202, 'route returns 202, got ' + code);
 assert(spawned && spawned.script === 'approve/auth-pw.mjs', 'spawned the auth-pw leaf, got ' + (spawned && spawned.script));
 assert(spawned.args[0] === 'https://login.example.com/app', 'arg0 = loginUrl');
 assert(spawned.args[1] === '/home', 'arg1 = needle (glob stripped), got ' + spawned.args[1]);
-assert(spawned.args[2] === 'approve/logintest.pw-state.json', 'arg2 = out state file, got ' + spawned.args[2]);
+assert(spawned.args[2] === playwrightAuthRel('logintest'), 'arg2 = canonical playwright state file, got ' + spawned.args[2]);
 
 // invalid app name and missing coordinates are refused (400), never spawned
 spawned = null; code = null;

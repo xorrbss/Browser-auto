@@ -6,7 +6,7 @@ site-specific — **no per-site code**. The Playwright RPA driver (`bin/pw-rpa.m
 `bin/extract-detail.js`. Recipes hold product **structure only**: no PII, no CSS, no `@eN` refs.
 
 A recipe is selected by the `--app` / system name (`recipes/<name>.json`), mirroring
-`fixtures/auth/<name>.state.json`.
+`fixtures/auth/playwright/<name>.state.json` (the canonical Playwright auth state).
 
 ## Fields
 
@@ -17,7 +17,7 @@ A recipe is selected by the `--app` / system name (`recipes/<name>.json`), mirro
 | `collection.role` | — | node | container role; default `"table"`. |
 | `collection.row` | — | node | record role inside the container; default `"row"`. |
 | `key` | ✅ | node | which `columns` field identifies a row (must be a key of `columns`). The row's identity / PK. A **non-unique** key column fails loud (it would silently collapse rows). An empty key value skips the row (never fabricated). For 결재, `key` is `doc_id`. |
-| `columns` | ✅ | node | `{ db_field: "column header text" }`. Header-anchored (matched normalized-exact to the table's `columnheader`s) — a missing/duplicate header fails loud, never mis-maps. Field names are **arbitrary** on the generic path; the legacy 결재 path restricts them to the DB vocabulary (`doc_id` + `lib/db.js` SCRAPED_COLS). |
+| `columns` | ✅ | node | `{ db_field: "column header text" }`. Header-anchored (matched normalized-exact to the table's `columnheader`s) — a missing/duplicate header fails loud, never mis-maps. Field names are **arbitrary** on the generic path; for the 결재 system (config `GW_APP`) the sync/enrich dual-write picks the approvals vocabulary (`doc_id` key + `lib/db.js` SCRAPED_COLS) out of the synced fields, so name them accordingly. |
 | `columnIndexes` | — | `play-flow` | Explicit fallback for live tables that expose rows/cells but no `columnheader` roles. Must map every `columns` field to a zero-based cell index; duplicate/missing indexes fail closed. Omit for normal header-anchored tables. |
 | `strip` | — | node | `{ db_field: "literal trailing suffix" }` — remove UI noise (e.g. Hiworks appends `첨부 파일 표시` to the title cell). Literal trailing match only (no regex). |
 | `ready.text` | — | driver | substring that must appear before snapshotting an async-rendered list. |
@@ -65,7 +65,8 @@ non-1..N pager is treated as UNCERTAIN ⇒ the scan fails closed (never under-sc
 pending-list URL from the system's `target_url` and the content-binding title from its `records`
 (`approve.titleField`). To make a registered system approvable, the operator must additionally provide a
 committed `recipes/<system>.json` with this `approve` block (a Gate-B capture of that site's approve UI), a
-Playwright login (`approve/<system>.pw-state.json`), and synced records. The 시스템 view's **✅ 검토 후 결재**
+Playwright login (`fixtures/auth/playwright/<system>.state.json`; the legacy `approve/<system>.pw-state.json`
+is still read as a fallback), and synced records. The 시스템 view's **✅ 검토 후 결재**
 surface is **disabled (fail-closed)** until all three exist; the per-system capture is operator-accompanied.
 
 ## Portability

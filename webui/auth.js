@@ -1,6 +1,7 @@
-// webui/auth.js — list cached auth apps (read-only). The actual login is the existing
-// setup/auth.sh (spawned through the serial queue, headed Chrome, human OTP). We only ever
-// expose the APP NAME (the state file holds secrets and is gitignored — never its content).
+// webui/auth.js — list cached auth apps (read-only). The actual login is approve/auth-pw.mjs
+// (spawned through the serial queue, headed Chrome, human OTP), saving the canonical
+// fixtures/auth/playwright/<app>.state.json. We only ever expose the APP NAME (the state file
+// holds secrets and is gitignored — never its content).
 
 import { readdir, readFile, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
@@ -69,8 +70,8 @@ export async function listAuthStateSummaries() {
 	return out.sort((a, b) => b.updatedAt - a.updatedAt || a.app.localeCompare(b.app) || a.engine.localeCompare(b.engine));
 }
 
-// deleteAuthState(app): remove cached generic auth states for both engines (validApp-guarded so
-// the name can't traverse). Used by the Auth view's delete button.
+// deleteAuthState(app): remove the cached Playwright auth state (validApp-guarded so the name
+// can't traverse). Used by the Auth view's delete button.
 export async function deleteAuthState(app) {
 	if (!validApp(app)) return { ok: false, error: 'invalid app name' };
 	let deleted = false;

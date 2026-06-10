@@ -9,7 +9,7 @@
 //   GET /app.js, /app.css, ... -> webui/public/* (static)
 //   GET /api/runs              -> { runs: [summary...] }   (index.js, fs-authoritative)
 //   GET /api/runs/:id          -> run detail (per-test rows) | 404
-//   GET /artifacts/<path>      -> static file under artifacts/ with HTTP Range (video scrub)
+//   GET /artifacts/<path>      -> static file under artifacts/ (HTTP Range supported)
 // Routes (P1 — run trigger via the single-slot serial queue, jobs.js + spawn.js):
 //   POST /api/run              -> enqueue `run.sh [glob]`; { job } (202)
 //   GET  /api/queue            -> { busy, running, pending[], recent[] }  (serialization proof)
@@ -27,8 +27,8 @@
 // Routes (P3 — trends + auth):
 //   GET  /api/trends           -> { runs:[{passRate...}], tests:{name:[{status}]} } (read-only)
 //   GET  /api/auth             -> { apps:[<cached state names>] }
-//   POST /api/auth             -> enqueue setup/auth.sh (headed OTP, serial); { job, app }
-//   POST /api/auth/:app/delete -> remove fixtures/auth/<app>.state.json; { ok, apps }
+//   POST /api/auth             -> enqueue approve/auth-pw.mjs (headed OTP, serial); { job, app }
+//   POST /api/auth/:app/delete -> remove fixtures/auth/playwright/<app>.state.json; { ok, apps }
 //   GET  /api/trends           -> { runs, tests } (also: artifacts retention prunes on startup)
 //
 // Run: `node webui/server.js`  (WEBUI_PORT overrides the default port).
@@ -160,10 +160,10 @@ function safeResolve(base, reqPath) {
 
 // Stream a file to the response with a proper lifecycle. pipeline() destroys both ends on
 // any error: a read error AFTER headers (file deleted/renamed mid-serve, EACCES, or a
-// Windows sharing-violation/EBUSY when video.webm is still held open) destroys the socket
+// Windows sharing-violation/EBUSY while an artifact is still held open) destroys the socket
 // instead of emitting an unhandled 'error' that would crash the whole single-process
-// server; a client abort (browsers abort+re-issue Range reqs while scrubbing) destroys the
-// read stream so its fd is not leaked. Headers are always written before this is called.
+// server; a client abort destroys the read stream so its fd is not leaked. Headers are
+// always written before this is called.
 function streamFile(res, filePath, opts) {
 	const s = opts ? createReadStream(filePath, opts) : createReadStream(filePath);
 	pipeline(s, res, (err) => {
@@ -174,7 +174,7 @@ function streamFile(res, filePath, opts) {
 	});
 }
 
-// Static file serve with HTTP Range support (so video.webm scrubbing works).
+// Static artifact serve with HTTP Range support.
 function serveFile(req, res, filePath) {
 	let st;
 	try {
@@ -399,7 +399,7 @@ const server = http.createServer(async (req, res) => {
 				let engine;
 				try { engine = requirePlaywrightEngine(bodyJson.engine, 'auth.engine'); }
 				catch (e) { return sendJson(res, 400, { error: e.message }); }
-				// setup/auth.sh opens headed Chrome for human OTP, then saves fixtures/auth/<app>.state.json.
+				// approve/auth-pw.mjs opens headed Chrome for human OTP, then saves fixtures/auth/playwright/<app>.state.json.
 				// Browser job -> through the single-slot serial queue. (successUrl is an inert arg via Git-Bash.)
 				// Human-confirm-save: a tmpdir stop-file the UI touches via POST /api/jobs/:id/stop (jobs.stop)
 				// to mean "I finished logging in — save now". This rescues portals that return to the EXACT login

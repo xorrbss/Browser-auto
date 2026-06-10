@@ -19,7 +19,7 @@ services:
     shm_size: "1gb"
     volumes:
       # Persist the framework's data dirs across rebuilds. fixtures/auth holds login state (secrets);
-      # flows are authored artifacts; artifacts are run videos/reports.
+      # flows are authored artifacts; artifacts are run reports (report.json/junit/results.tsv).
       - ./artifacts:/app/artifacts
       - ./flows:/app/flows
       - ./fixtures:/app/fixtures

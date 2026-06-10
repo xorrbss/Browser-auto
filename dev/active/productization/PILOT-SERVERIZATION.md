@@ -12,6 +12,8 @@ This document intentionally separates two postures:
 The current codebase is suitable for the first posture with controls. It is not yet suitable for the
 second posture without the P0 serverization work below.
 
+Operational runbook: `dev/active/productization/INTERNAL-PILOT-RUNBOOK.md`.
+
 ## 1. Internal Pilot Goal
 
 Prove that Browser-auto can run one real business journey end to end without reintroducing false-green

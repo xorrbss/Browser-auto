@@ -10,6 +10,24 @@ human-gated safety. Korean operator; **on-prem** model; Windows + Git Bash (and 
 
 ---
 
+## ⚡ 2026-06-10 — PLAYWRIGHT-ONLY MIGRATION LANDED (read this before anything below)
+
+Commit `441294d` "Complete Playwright-only migration cleanup" removed the **agent-browser engine
+entirely** (-5,624 lines): daemon lifecycle, `lib/env.sh`/`assert.sh`/`act.sh`/`daemon.sh`/`cleanup.sh`/
+`flow-steps.sh`, `bin/verify-flow.sh`, `bin/fetch-approvals.sh`/`enrich-approvals.sh`/`daemon-recover.sh`,
+and 13 `capture-*.test.sh`. Everything runs on Playwright (`bin/play-flow.mjs`, `bin/pw-record.mjs`,
+`bin/pw-rpa.mjs`, `approve/*`); `lib/engine.js` refuses `engine:"agent-browser"` fail-closed. Suite:
+27/27 green post-migration. **Consequences for THIS document:** every agent-browser operational note
+below (daemon wedge/os-10060 recovery, `~/.agent-browser` cleanup, AB find/click footguns, the old
+fetch/enrich-approvals drivers, `lib/env.sh`/`assert.sh` in the file map) is HISTORY, not procedure.
+Auth is unified on `fixtures/auth/playwright/<app>.state.json` (legacy `approve/<app>.pw-state.json`
+read as fallback); the 결재 approvals table is fed by the registry sync's GW_APP dual-write
+(`bin/pw-rpa.mjs` → `lib/db.js approvalsFromRecords`). Post-migration hardening (2026-06-10): recorder
+popup/cross-origin fail-loud guards + `tests/capture-e2e.test.sh` (PII masking pinned), verify-mode
+irreversibleAt gate, preflight Playwright-runtime gate, Docker `AQA_PW_CHANNEL=chromium`.
+
+---
+
 ## Where it is now (DONE — on `master`; `feat/approval-automation` + `feat/linux-docker-support` ALREADY MERGED)
 
 **Git topology (corrected 2026-06-07 — earlier notes said "unmerged"; that is stale):** work is on
@@ -49,9 +67,9 @@ Verified working:
   guards, Playwright trusted-click leaf, session/origin gate, audit, and scheduler live-refusal. Uncaptured
   or disabled actions still remain fail-closed/needs implementation.
 
-Recovery note (env): agent-browser daemon wedge (os 10060) = stale `~/.agent-browser` session files;
-fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,pid,port,stream,version}`
-(keep `browsers/`), then run as the first op. Re-auth via `setup/auth.sh` when the session expires.
+~~Recovery note (env): agent-browser daemon wedge (os 10060)…~~ **STALE (2026-06-10): no daemon exists
+anymore.** Re-auth when a session expires = `bash setup/auth.sh <app> <login-url> '<success-url>'` or the
+webui 인증/결재-로그인 button (headed Playwright → `fixtures/auth/playwright/<app>.state.json`).
 
 ---
 
@@ -314,12 +332,15 @@ fix = `agent-browser daemon stop` + kill procs + `rm ~/.agent-browser/*.{engine,
 ## Suggested order
 M1 + M3-Gate A (re-red-team) first → M2 / M4 → M3 implementation (after both gates) → M6 NL productization → M5 ship.
 
-## File map (orient fast)
-- Engine: `lib/db.js` (approvals + systems/records), `lib/aria.js` (shared parser), `lib/llm.js`
-  (on-prem client + transport guard), `lib/env.sh`/`assert.sh`.
-- Extractors: `bin/extract-approvals.js`, `extract-list.js` (generic), `extract-detail.js`,
-  `propose-recipe.js`. Drivers: `fetch-approvals.sh`, `enrich-approvals.sh`, `sync-system.sh`,
-  `analyze-system.sh`. Stores: `store-approvals.js`, `store-records.js`.
+## File map (orient fast) — updated 2026-06-10 (Playwright-only)
+- Engine: `lib/db.js` (approvals + systems/records + approvalsFromRecords), `lib/aria.js` (shared
+  parser), `lib/llm.js` (on-prem client + transport guard), `lib/engine.js` (engine + auth-state
+  resolver), `lib/preflight.sh`/`report.sh`.
+- Extractors: `bin/extract-approvals.js` (golden-pinned), `extract-list.js` (generic),
+  `extract-detail.js`, `propose-recipe.js`. Driver: `bin/pw-rpa.mjs` (analyze/sync/enrich; GW_APP
+  dual-write → approvals) via `sync-system.sh`/`analyze-system.sh`/`enrich-system.sh` wrappers.
+  Stores: `store-approvals.js`, `store-records.js`. Replay/record: `bin/play-flow.mjs`,
+  `bin/pw-record.mjs` + `bin/capture.js`, `bin/probe-record.sh`.
 - Recipes: `recipes/<app>.json` + `recipes/SCHEMA.md` (hiworks, daou).
 - webui: `server.js`, `routes-rpa.js`, `agent.js` (NL), `systems.js`, `jobs.js`, `spawn.js`,
   `public/{app,flows,systems-view,util}.js`.

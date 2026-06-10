@@ -1,5 +1,12 @@
 # DESIGN: selectable browser engine for record and replay
 
+> **⚠ SUPERSEDED (2026-06-10).** The product moved past per-flow engine selection: commit `441294d`
+> made the runtime **Playwright-only** (`lib/engine.js` ENGINES=['playwright']; `engine:"agent-browser"`
+> is refused fail-closed with a migration hint; omitted engine defaults to playwright). The engine
+> resolver, engine-scoped auth layout (`fixtures/auth/playwright/`), pw-record/play-flow, and the webui
+> dispatch described here WERE built and survive — but the agent-browser half no longer exists.
+> Kept as design history only.
+
 ## Goal
 
 Let an operator choose the browser engine for a system or flow:

@@ -1,9 +1,9 @@
 # webui: local control plane for agent-qa
 
 A thin local web UI over the verified agent-qa CLI. It does not reimplement run, record, auth,
-verify, or compile logic; it spawns the existing tools (`run.sh`, `bin/probe-record.sh`,
-`setup/auth.sh`, `bin/play-flow.mjs`) and visualizes their artifacts. Keep it localhost-only unless
-it is fronted by an authenticated tunnel or reverse proxy.
+verify, or compile logic; it spawns the existing tools (`run.sh`, `bin/pw-record.mjs`,
+`approve/auth-pw.mjs`, `bin/play-flow.mjs`, `bin/probe-record.sh`) and visualizes their artifacts.
+Keep it localhost-only unless it is fronted by an authenticated tunnel or reverse proxy.
 
 ## Run
 
@@ -64,7 +64,7 @@ built-in `node:sqlite`.
 - `GET /api/runs`: run summaries from `report.json`.
 - `GET /api/runs/:id`: per-test status, duration, and artifact availability.
 - `GET /artifacts/<path>`: static artifact serving under `artifacts/`.
-- `POST /api/auth`: enqueue headed Playwright auth.
-- `POST /api/flows/:name/record`: enqueue Playwright capture.
-- `POST /api/flows/:name/verify`: enqueue Playwright verification.
-- `POST /api/flows/:name/compile`: compile the flow to a deterministic bash wrapper.
+- `POST /api/auth`: enqueue headed Playwright auth (`{ app, loginUrl, successUrl }`).
+- `POST /api/record`: enqueue Playwright capture (`{ name, url, app?, seconds? }`).
+- `POST /api/verify`: enqueue Playwright verify-repair (`{ name }`).
+- `POST /api/compile`: compile the flow to a deterministic bash wrapper (`{ name }`).

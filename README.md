@@ -10,8 +10,7 @@ author and repair a flow, but the pass/fail gate is deterministic.
 
 - Windows + Git Bash (`C:\Program Files\Git\bin\bash.exe`)
 - `node` >= 22.5 (Node 24 verified; `lib/db.js` uses built-in `node:sqlite`)
-- `jq`
-- `ffmpeg` for video/artifacts (`winget install jqlang.jq Gyan.FFmpeg`)
+- `jq` (`winget install jqlang.jq`)
 - Playwright runtime from `approve/`:
 
 ```bash
@@ -28,6 +27,10 @@ bash run.sh                 # all tests/*.test.sh; CI gate exits 1 if any fail
 bash run.sh login           # tests/login.test.sh
 bash tests/login.test.sh    # single journey standalone
 ```
+
+The default suite skips compiled flows that declare an `app` because they need local Playwright auth
+state. Run those explicitly (`bash run.sh <name>`) or set `AQA_INCLUDE_LIVE_AUTH=1` on an operator
+machine with the matching `fixtures/auth/playwright/<app>.state.json`.
 
 Artifacts land in `artifacts/<run-id>/` (gitignored). Each suite run writes `report.json` and
 `report.junit.xml`.
@@ -92,8 +95,8 @@ New flows should declare Playwright explicitly:
 }
 ```
 
-See `flows/SCHEMA.md` for all step kinds, iframe rules, `needs_review`, values sidecars, replay
-fallback, and assert kinds.
+See `flows/SCHEMA.md` for all step kinds, iframe rules, `needs_review`, values sidecars, verify-time
+locator repair, and assert kinds.
 
 ## Correctness Rules
 
@@ -148,6 +151,22 @@ docker compose exec agent-qa bash run.sh
 Recording and OTP login need the headed browser. Headless replay, results, and compile can be driven
 from the webui. Do not expose the webui or noVNC directly to a public network.
 
+## Scheduling / unattended
+
+`bin/scheduled-task.sh` is the only sanctioned wrapper for host-scheduled runs. It locks against
+overlapping runs, tees output to `data/scheduler.log`, and exports `AQA_SCHEDULED_NO_LIVE=1` so a
+LIVE approve is refused no matter how the arguments were assembled (read/sync/enrich and dry-runs
+only — unattended live approve stays forbidden).
+
+```text
+# Windows Task Scheduler (daily 07:30 sync)
+Program : C:\Program Files\Git\bin\bash.exe
+Args    : C:\project\Browser-auto\bin\scheduled-task.sh bin/sync-system.sh --system hiworks
+
+# cron (Linux/Docker host)
+30 7 * * * /usr/bin/bash /app/bin/scheduled-task.sh bin/sync-system.sh --system hiworks
+```
+
 ## Layout
 
 ```text
@@ -157,11 +176,12 @@ bin/probe-record.sh   scaffold | capture | verify | compile dispatcher
 bin/pw-record.mjs     headed Playwright recorder
 bin/capture.js        in-page recorder script
 bin/build-flow.js     raw events -> flow.json + gitignored sidecars
+record.cmd            Windows launcher for `probe-record.sh capture` (any terminal)
 setup/auth.sh         headed Playwright auth -> fixtures/auth/playwright/*.state.json
 flows/                committed flow.json files; gitignored values/candidates/snapshots
 tests/*.test.sh       one deterministic bash journey each
 webui/                localhost control plane over the CLI
-artifacts/<run>/      videos, screenshots, report.json, report.junit.xml
+artifacts/<run>/      report.json, report.junit.xml, results.tsv (no video pipeline; replay is headless)
 ```
 
 ## Internal Open Checklist

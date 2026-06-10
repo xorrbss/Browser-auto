@@ -28,11 +28,12 @@ function wait(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForStop() {
+async function waitForStop(violations) {
 	if (seconds > 0) {
 		const end = Date.now() + seconds * 1000;
 		console.error(`[pw-record] recording for ${seconds}s...`);
 		while (Date.now() < end) {
+			if (violations.length) return; // scope violation: stop waiting, fail loud at the caller
 			if (stopFile && fs.existsSync(stopFile)) {
 				console.error('[pw-record] stop signal received; finishing capture.');
 				return;
@@ -43,11 +44,17 @@ async function waitForStop() {
 	}
 	if (process.stdin.isTTY) {
 		console.error('\n>>> Recording. Do your journey in the browser window, then press ENTER here to stop...');
-		await new Promise((resolve) => process.stdin.once('data', resolve));
+		await new Promise((resolve) => {
+			const t = setInterval(() => { if (violations.length) { clearInterval(t); resolve(); } }, 500);
+			process.stdin.once('data', () => { clearInterval(t); resolve(); });
+		});
 		return;
 	}
 	console.error('[pw-record] no --seconds and no TTY; waiting for stop-file.');
-	while (!stopFile || !fs.existsSync(stopFile)) await wait(500);
+	while (!stopFile || !fs.existsSync(stopFile)) {
+		if (violations.length) return;
+		await wait(500);
+	}
 }
 
 function tmpFile() {
@@ -147,7 +154,9 @@ async function main() {
 	}
 
 	const chromium = await loadChromium();
-	const launch = { headless: false, channel: process.env.AQA_PW_CHANNEL || 'chrome' };
+	// Recording is HEADED (a human drives the journey). AQA_PW_RECORD_HEADLESS=1 is a test seam only,
+	// so the scope-guard tests can run the recorder without flashing a window.
+	const launch = { headless: process.env.AQA_PW_RECORD_HEADLESS === '1', channel: process.env.AQA_PW_CHANNEL || 'chrome' };
 	const browser = await chromium.launch(launch);
 	let recPath = null;
 	try {
@@ -160,6 +169,20 @@ async function main() {
 		const ctx = await browser.newContext(contextOpts);
 		await ctx.addInitScript({ path: capjs });
 		const page = await ctx.newPage();
+		// FAIL-LOUD SCOPE GUARDS (parity with the deleted agent-browser capture watcher): a popup/new tab or a
+		// mid-recording top-level cross-origin navigation puts journey events where this recorder cannot drain
+		// them (a popup's own sessionStorage / a foreign origin's partition), so a silently-incomplete flow
+		// would be written. Out of scope ⇒ record the violation, stop waiting, REFUSE to write the flow.
+		const scopeViolations = [];
+		ctx.on('page', (p) => {
+			if (p !== page) scopeViolations.push(`a new tab/popup opened during recording (${p.url() || 'about:blank'}) — out of scope: single tab`);
+		});
+		page.on('framenavigated', (frame) => {
+			if (frame !== page.mainFrame()) return; // iframe navs are in scope (frame_ref'd by capture.js)
+			let origin = '';
+			try { origin = new URL(frame.url()).origin; } catch { return; }
+			if (origin !== startOrigin) scopeViolations.push(`top-level cross-origin navigation during recording (${startOrigin} -> ${origin}) — out of scope`);
+		});
 		await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
 		await page.evaluate(() => {
 			sessionStorage.setItem('__aqa_buf', '[]');
@@ -167,7 +190,8 @@ async function main() {
 			sessionStorage.setItem('__aqa_prevurl', location.href);
 		});
 		console.error(`[pw-record] engine=playwright; opened ${startUrl}. Drive the browser journey now.`);
-		await waitForStop();
+		await waitForStop(scopeViolations);
+		if (scopeViolations.length) throw new Error(`${scopeViolations[0]}; recording not written`);
 
 		const nowOrigin = new URL(page.url()).origin;
 		if (nowOrigin !== startOrigin) throw new Error(`top-level cross-origin navigation is out of scope (${startOrigin} -> ${nowOrigin}); recording not written`);

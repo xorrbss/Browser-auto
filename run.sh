@@ -15,7 +15,7 @@ PROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PROBE_ROOT
 
 # RUN_ID groups every artifact from this invocation under artifacts/<RUN_ID>/.
-# Timestamp-based; $$ disambiguates same-second runs. Exported so env.sh picks it up.
+# Timestamp-based; $$ disambiguates same-second runs. Passed explicitly to each test below.
 RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
 export RUN_ID
 RUN_DIR="${PROBE_ROOT}/artifacts/${RUN_ID}"
@@ -29,20 +29,44 @@ REPORT_TSV="${RUN_DIR}/results.tsv"
 
 # Select tests: optional glob arg (e.g. `bash run.sh login`) else all *.test.sh.
 GLOB="${1:-*}"
+EXPLICIT_GLOB=1
+[ $# -gt 0 ] || EXPLICIT_GLOB=0
 shopt -s nullglob
 TESTS=( "${PROBE_ROOT}/tests/"${GLOB}".test.sh" )
 shopt -u nullglob
 
 # Drop scaffold tests: an underscore-prefixed name (tests/_*.test.sh) is a THROWAWAY compiled flow
-# that a unit test (compile-fallback / replay-fallback) writes, runs, and deletes within its own run.
-# Excluding them here means a hard-crash straggler can never be globbed as a real suite test (which
-# would false-fail the gate — e.g. _rfb_red is designed to exit non-zero). Real tests never start '_'.
+# that a unit test (compile-engine-unit / build-flow-unit / play-flow-smoke) writes, runs, and deletes
+# within its own run. Excluding them here means a hard-crash straggler can never be globbed as a real
+# suite test (which would false-fail the gate). Real tests never start '_'.
 _kept=()
 for _t in "${TESTS[@]}"; do
 	case "$(basename "$_t")" in _*) continue ;; esac
 	_kept+=("$_t")
 done
 TESTS=( ${_kept[@]+"${_kept[@]}"} )
+
+# Default suite policy: tests compiled from flows with an app require local
+# Playwright auth state, so keep them out of the portable CI gate unless the
+# operator explicitly asks for that test/glob or opts in to live-auth tests.
+if [ "$EXPLICIT_GLOB" -eq 0 ] && [ "${AQA_INCLUDE_LIVE_AUTH:-0}" != "1" ]; then
+	_kept=()
+	_skipped_live=()
+	for _t in "${TESTS[@]}"; do
+		_name="$(basename "$_t" .test.sh)"
+		_flow="${PROBE_ROOT}/flows/${_name}.flow.json"
+		if [ -s "$_flow" ] && jq -e 'has("app") and (.app != null) and (.app != "")' "$_flow" >/dev/null 2>&1; then
+			_skipped_live+=("$_name")
+			continue
+		fi
+		_kept+=("$_t")
+	done
+	if [ "${#_skipped_live[@]}" -gt 0 ]; then
+		printf '[run] skipped live-auth test(s) from default suite: %s\n' "${_skipped_live[*]}"
+		echo "[run] set AQA_INCLUDE_LIVE_AUTH=1 or pass an explicit glob to include them."
+	fi
+	TESTS=( ${_kept[@]+"${_kept[@]}"} )
+fi
 
 if [ "${#TESTS[@]}" -eq 0 ]; then
 	echo "[run] no tests matched 'tests/${GLOB}.test.sh'" >&2

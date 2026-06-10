@@ -351,11 +351,27 @@ async function resolveFindForVerify(page, step, ladder) {
 async function verifyFlow(page, flow, flowFile, resolveValue) {
 	const ladderByStep = readCandidateLadder(flowFile, flow);
 	const nextSteps = (flow.steps || []).map((s) => ({ ...s }));
+	// VERIFY GATE (irreversibleAt side-door fix): verify re-drives steps ONE AT A TIME with a per-step
+	// reversible:true (a single pre-commit step has no point-of-no-return of its own). That per-step opt-out
+	// must never reach a flow-declared point-of-no-return, so verify STOPS before flow.irreversibleAt exactly
+	// like a dry-run: locators up to the commit get verified/repaired; the commit step and everything after
+	// stay un-executed (fail-closed; they are only verifiable by an audited live run through play mode).
+	const gate = irreversibleOptsFor(flow);
+	const stopBefore = gate.reversible === false ? gate.irreversibleAt : -1;
+	if (gate.reversible === false && (!Number.isInteger(stopBefore) || stopBefore < 0 || stopBefore >= nextSteps.length)) {
+		throw new Error(`verify REFUSED: irreversibleAt ${stopBefore} out of range [0,${nextSteps.length}) — fail-closed (same rule as replay)`);
+	}
+	let stoppedBeforeIrreversible = false;
 	let verified = 0;
 	let repaired = 0;
 	let promoted = 0;
 	let failedStep = null; // a NON-find step (wait/press/scroll) that failed at replay — a real divergence, not repairable
 	for (let i = 0; i < nextSteps.length; i++) {
+		if (i === stopBefore) {
+			stoppedBeforeIrreversible = true;
+			console.error(`[play-flow] verify: stopped BEFORE irreversible step ${i} — ${nextSteps.length - i} step(s) left unverified (fail-closed)`);
+			break;
+		}
 		const s = nextSteps[i];
 		if (s.needs_review) throw new Error(`step ${i}: already needs_review`);
 		try {
@@ -406,7 +422,7 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 		fs.renameSync(tmp, flowFile);
 	}
 	if (failedStep) throw new Error(`verify: step ${failedStep.i} (${failedStep.kind}) failed at replay: ${failedStep.error}`);
-	return { verified, repaired, promoted };
+	return { verified, repaired, promoted, ...(stoppedBeforeIrreversible ? { stoppedBeforeIrreversible: true } : {}) };
 }
 
 let summary = null;

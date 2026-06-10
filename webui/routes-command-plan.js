@@ -15,6 +15,7 @@ import { resolveAction } from '../approve/guards.mjs';
 
 const require = createRequire(import.meta.url);
 const dbm = require('../lib/db.js');
+const { resolveAuthStatePath } = require('../lib/engine.js');
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const ACTOR = 'local-operator';
@@ -54,8 +55,10 @@ function recipePath(system) {
 	return path.join(PROBE_ROOT, 'recipes', `${system}.json`);
 }
 
+// Canonical fixtures/auth/playwright/<system>.state.json first, legacy approve/<system>.pw-state.json
+// compat fallback — same resolution every Playwright driver uses (lib/engine.js).
 function statePath(system) {
-	return path.join(PROBE_ROOT, 'approve', `${system}.pw-state.json`);
+	return resolveAuthStatePath(PROBE_ROOT, 'playwright', system);
 }
 
 function readRecipe(system) {
@@ -333,9 +336,9 @@ function approveArgs(plan, { live }) {
 	const listUrl = listUrlFor(plan.system);
 	if (!listUrl) return { ok: false, reason: 'list_url_missing', error: 'no pending-list URL configured' };
 	if (!fs.existsSync(recipePath(plan.system))) return { ok: false, reason: 'recipe_missing', error: `recipes/${plan.system}.json is missing` };
-	if (!fs.existsSync(statePath(plan.system))) return { ok: false, reason: 'login_missing', error: `approve/${plan.system}.pw-state.json is missing` };
+	if (!fs.existsSync(statePath(plan.system))) return { ok: false, reason: 'login_missing', error: `Playwright login for '${plan.system}' is missing — use the 인증/결재 로그인 button or setup/auth.sh (fixtures/auth/playwright/${plan.system}.state.json)` };
 	const targetsFile = stageApproveTargets(plan);
-	const args = ['--recipe', `recipes/${plan.system}.json`, '--state', `approve/${plan.system}.pw-state.json`, '--list-url', listUrl, '--targets-file', targetsFile, '--reviewed'];
+	const args = ['--recipe', `recipes/${plan.system}.json`, '--state', statePath(plan.system), '--list-url', listUrl, '--targets-file', targetsFile, '--reviewed'];
 	if (live) args.push('--live', '--max', String(plan.targets.targets.length));
 	if (plan.action !== 'approve') args.push('--action', plan.action);
 	return { ok: true, args };

@@ -54,7 +54,6 @@ Keep an explicit legacy engine only as a migration marker for flows that cannot 
 - `startUrl`: required; first URL opened by replay.
 - `steps`: required array; interaction and wait sequence.
 - `asserts`: optional array; final assertions.
-- `replayFallback`: optional boolean; default `false`.
 - `irreversibleAt`: optional integer step index for audited point-of-no-return gates.
 - `reversible`: optional boolean override for effectful-flow gating.
 
@@ -107,11 +106,13 @@ When capture cannot identify one stable unique locator, the step is emitted as:
 `needs_review:true` is non-runnable. Compile and replay must refuse it. A human or agent must select a
 stable locator, adjust the flow, or re-record the journey.
 
-## Replay Fallback
+## Locator Repair
 
-`"replayFallback": true` lets compile use the gitignored candidates sidecar as a loud fallback ladder
-when a primary locator fails. Leave it off by default. A fallback can reduce flake, but it cannot prove
-identity after page drift; downstream waits/assertions still carry the correctness burden.
+There is no replay-time locator fallback: replay runs exactly the committed locators, fail-closed.
+Repair happens at VERIFY time instead — `probe-record.sh verify` re-drives the flow and may swap a
+broken `find` locator for a capture-time-unique candidate from the gitignored candidates sidecar
+(or promote the step to `needs_review`). The historical `replayFallback` flag from the previous
+engine is gone; a flow setting it is ignored.
 
 ## Parameterized Values
 

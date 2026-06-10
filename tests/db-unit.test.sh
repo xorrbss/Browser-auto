@@ -68,6 +68,19 @@ d.deleteSystem(h, 'sys');
 assert.equal(d.getSystem(h, 'sys'), undefined, 'system deleted');
 assert.equal(d.countRecords(h, 'sys'), 0, 'delete cascades records');
 
+// legacy engine normalization: a pre-migration row stored with engine='agent-browser' (written
+// before the Playwright-only cutover) must not brick listSystems()/getSystem() — openDb's
+// _migrateSystemsEngine normalizes it to NULL (=> DEFAULT_ENGINE) one time. A second openDb on
+// the same file (WAL allows concurrent connections) plays the "upgraded deployment reopens" role.
+d.registerSystem(h, { name: 'modern', label: 'M' });
+h.prepare("INSERT INTO systems (name, engine, created_at) VALUES ('legacyab', 'agent-browser', '2026-01-01T00:00:00Z')").run();
+const h2 = d.openDb(); // fresh open runs the migration over the legacy row
+assert.equal(d.listSystems(h2).length, 2, 'listSystems works with a formerly-legacy row present');
+assert.equal(d.getSystem(h2, 'legacyab').engine, 'playwright', 'legacy engine row normalized to the default engine');
+d.closeDb(h2);
+d.deleteSystem(h, 'modern');
+d.deleteSystem(h, 'legacyab');
+
 // approvals: insert/count/default status/lossless amount text
 const inserted = d.upsertApprovals(h, [
 	{
@@ -118,6 +131,22 @@ assert.equal(ap.status, 'approved', 'approval status preserved across re-sync');
 assert.equal(ap.title, 'Buy laptops (rev2)', 'approval title refreshed');
 assert.equal(ap.summary, 'sum-rev2', 'approval summary refreshed');
 assert.equal(d.listApprovals(h, { status: 'approved' }).length, 1, 'approval status filter works');
+
+// approvalsFromRecords: the registry→approvals dual-write mapper (GW_APP 결재 sync path).
+// Picks only SCRAPED_COLS from data, falls back to the record-level summary, nulls the rest —
+// so upsertApprovals' COALESCE keeps a list sync non-destructive over a prior enrich.
+const mapped = d.approvalsFromRecords([
+	{ key: 'D1', data: { title: 'T', drafter: 'Kim', submitted_at: '2026-06-09', extraneous: 'dropme' } },
+	{ key: 'D2', data: { dept: '관리팀', raw_text: 'body' }, summary: 'S2' },
+]);
+assert.equal(mapped[0].doc_id, 'D1', 'mapper: key -> doc_id');
+assert.equal(mapped[0].title, 'T', 'mapper: data field picked');
+assert.equal(mapped[0].dept, null, 'mapper: absent field nulled (COALESCE keeps stored value)');
+assert.equal('extraneous' in mapped[0], false, 'mapper: non-approval field dropped');
+assert.equal(mapped[1].summary, 'S2', 'mapper: record-level summary falls back in');
+d.upsertApprovals(h, mapped, '2026-06-09T00:00:00Z');
+assert.equal(d.getApproval(h, 'D2').dept, '관리팀', 'mapper rows upsert cleanly');
+assert.throws(() => d.approvalsFromRecords('nope'), /array/, 'mapper: non-array rejected');
 
 // approvals input validation
 assert.throws(() => d.upsertApprovals(h, [{ title: 'no id' }]), /doc_id/, 'empty doc_id rejected');

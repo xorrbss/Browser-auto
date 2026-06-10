@@ -57,7 +57,13 @@ if (!Array.isArray(targets) || !targets.length) { console.error('targets-file mu
 // KILL-SWITCH halt-ALL (red-team KILLSWITCH-QUEUED / F-STOP-CLEAR-RACE): if STOP is present at startup,
 // REFUSE to start — a QUEUED batch must not clobber a just-pressed 일괄 중지. STOP is cleared ONLY by an
 // explicit new run (the /api/approve/run route rm's it); a STOP written DURING this run is caught per-doc below.
-if (fs.existsSync(stopFile)) { console.error('[approve] kill-switch (data/approve-STOP) present — refusing to start batch (press ▶ 실행 to clear & resume)'); process.exit(0); }
+// The AQA_JOB_RESULT sentinel is still emitted so a caller that does not clear STOP (e.g. a CommandPlan
+// dispatch) records "refused: kill-switch" instead of an unexplained bare 'failed'. NEVER auto-clears STOP.
+if (fs.existsSync(stopFile)) {
+	console.error('[approve] kill-switch (data/approve-STOP) present — refusing to start batch (press ▶ 실행 to clear & resume)');
+	console.log('AQA_JOB_RESULT=' + JSON.stringify({ live, dry, total: targets.length, approved: 0, refused: 'kill-switch', error: 'kill-switch active (data/approve-STOP) — clear it via ▶ 실행 or delete the file, then retry', results: [] }));
+	process.exit(0);
+}
 
 fs.mkdirSync(path.dirname(auditPath), { recursive: true });
 const audit = (doc_id, stage, detail) => {
@@ -74,7 +80,8 @@ let batchForm = null;      // the form-type heading shared by this batch — a l
 let approvedCount = 0;     // CONFIRMED approvals (for the report)
 let clicksIssued = 0;      // irreversible 확인 commits ISSUED — the --max cap binds THIS (red-team CAP-COUNTS):
                            // a committed-but-uncertain doc must still consume budget, else clicks can exceed --max.
-const browser = await chromium.launch({ headless: false, channel: 'chrome' });
+// channel default = system Chrome; AQA_PW_CHANNEL overrides (e.g. the Docker image's bundled chromium).
+const browser = await chromium.launch({ headless: false, channel: process.env.AQA_PW_CHANNEL || 'chrome' });
 try {
 	const ctx = await browser.newContext({ storageState: statePath });
 	const page = await ctx.newPage();

@@ -38,9 +38,10 @@ node bin/play-flow.mjs --flow flows/<name>.flow.json --validate-only
 node webui/server.js        # http://127.0.0.1:4310  (WEBUI_PORT overrides)
 ```
 
-Prereqs: Git Bash, `node`, `jq`, `ffmpeg`, and the Playwright runtime from `approve/`
-(`cd approve && npm ci && npx playwright install chrome`). Artifacts (video, screenshots,
-`report.json`, `report.junit.xml`) land in `artifacts/<RUN_ID>/` (gitignored).
+Prereqs: Git Bash, `node`, `jq`, and the Playwright runtime from `approve/`
+(`cd approve && npm ci && npx playwright install chrome`). Artifacts (`report.json`,
+`report.junit.xml`, `results.tsv`) land in `artifacts/<RUN_ID>/` (gitignored); there is no
+video/screenshot pipeline — replay is headless Playwright.
 
 ## Architecture
 

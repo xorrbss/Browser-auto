@@ -210,6 +210,22 @@ function upsert(system, items, prefix) {
 	}
 }
 
+// Legacy 결재 dual-write: GW_APP (data/approvals.config) names the 결재 system. The approvals table
+// is still the read model for the 결재 dashboard / NL 결재 query / shadow-eval / approve title-binding,
+// and its dedicated writers (fetch/enrich-approvals.sh) were deleted with the agent-browser engine —
+// so a registry sync/enrich of THAT system keeps approvals fresh too. Other systems write records only.
+function approvalsDualWrite(systemName, items, prefix) {
+	loadShellEnv(path.join(DATA_DIR, 'approvals.config'));
+	if ((process.env.GW_APP || '') !== systemName) return;
+	const db = dbm.openDb();
+	try {
+		const n = dbm.upsertApprovals(db, dbm.approvalsFromRecords(items));
+		log(prefix, `결재 dual-write: ${n} row(s) -> approvals (GW_APP=${systemName})`);
+	} finally {
+		dbm.closeDb(db);
+	}
+}
+
 function urlMatches(got, want) {
 	const esc = String(want).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '*').replace(/\*/g, '.*');
 	return new RegExp(`^${esc}([?#].*)?$`).test(got) || got.includes(String(want));
@@ -279,6 +295,7 @@ async function sync(system, recipePath) {
 		const all = uniqueByKey(pages.flat());
 		log(prefix, `total unique: ${all.length}`);
 		upsert(system.name, all, prefix);
+		approvalsDualWrite(system.name, all, prefix);
 		log(prefix, 'done.');
 	} finally {
 		await browser.close();
@@ -376,6 +393,7 @@ async function enrich(system, recipePath) {
 			log(prefix, 'SUMMARY_MODEL unset - storing detail fields only (set SUMMARY_MODEL + a local endpoint to summarize).');
 		}
 		upsert(system.name, wrapRecords(items), prefix);
+		approvalsDualWrite(system.name, wrapRecords(items), prefix);
 		log(prefix, 'done.');
 	} finally {
 		await browser.close();

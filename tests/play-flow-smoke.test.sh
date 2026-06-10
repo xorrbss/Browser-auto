@@ -5,7 +5,8 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 NAME="_pw_smoke_$$"
 NAME2="_pw_smoke_verifyneg_$$"
-cleanup(){ rm -rf "$TMP"; rm -f "$DIR/flows/$NAME.flow.json" "$DIR/flows/$NAME.values.json" "$DIR/tests/$NAME.test.sh" "$DIR/flows/$NAME2.flow.json" "$DIR/flows/$NAME2.values.json"; }
+NAME3="_pw_smoke_verifyirr_$$"
+cleanup(){ rm -rf "$TMP"; rm -f "$DIR/flows/$NAME.flow.json" "$DIR/flows/$NAME.values.json" "$DIR/tests/$NAME.test.sh" "$DIR/flows/$NAME2.flow.json" "$DIR/flows/$NAME2.values.json" "$DIR/flows/$NAME3.flow.json" "$DIR/flows/$NAME3.values.json"; }
 trap cleanup EXIT
 
 HTML="$TMP/smoke.html"
@@ -83,3 +84,31 @@ esac
 if [ "$RC2" -eq 0 ]; then printf '%s\n' "$OUT2" >&2; echo "  play-flow-smoke verify-negative: verify WRONGLY reported success on a diverged journey" >&2; exit 1; fi
 case "$OUT2" in *'"status":"failed"'*) ;; *) printf '%s\n' "$OUT2" >&2; echo "  play-flow-smoke verify-negative: expected a failed status" >&2; exit 1 ;; esac
 echo "  play-flow-smoke verify-negative: passed"
+
+# --verify must STOP BEFORE a flow-declared irreversibleAt (side-door regression: verify used to re-drive
+# every step with a blanket reversible:true, executing a declared point-of-no-return un-audited/un-capped).
+# Here step 1 (the Save click) is the point-of-no-return: verify must verify only step 0, report
+# stoppedBeforeIrreversible, and exit 0 WITHOUT clicking Save.
+cat > "$DIR/flows/$NAME3.flow.json" <<JSON
+{
+  "name": "$NAME3",
+  "engine": "playwright",
+  "startUrl": "$URL",
+  "irreversibleAt": 1,
+  "steps": [
+    { "kind": "find", "by": "label", "value": "Name", "action": "fill", "text": "{{input_1}}" },
+    { "kind": "find", "by": "role", "value": "button", "name": "Save", "action": "click" }
+  ],
+  "asserts": []
+}
+JSON
+printf '%s\n' '{"input_1":"Ada"}' > "$DIR/flows/$NAME3.values.json"
+
+set +e
+OUT3="$(node "$DIR/bin/play-flow.mjs" --flow "$DIR/flows/$NAME3.flow.json" --verify 2>&1)"
+RC3=$?
+set -e
+if [ "$RC3" -ne 0 ]; then printf '%s\n' "$OUT3" | sed 's/^/    /' >&2; echo "  play-flow-smoke verify-irreversible: verify failed (expected gated ok)" >&2; exit 1; fi
+case "$OUT3" in *'"stoppedBeforeIrreversible":true'*) ;; *) printf '%s\n' "$OUT3" >&2; echo "  play-flow-smoke verify-irreversible: missing stoppedBeforeIrreversible (side door open?)" >&2; exit 1 ;; esac
+case "$OUT3" in *'"verified":1'*) ;; *) printf '%s\n' "$OUT3" >&2; echo "  play-flow-smoke verify-irreversible: expected exactly 1 verified pre-commit step" >&2; exit 1 ;; esac
+echo "  play-flow-smoke verify-irreversible: passed"

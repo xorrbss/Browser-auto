@@ -1,8 +1,8 @@
 // approve/auth-pw.mjs - one-time HEADED Playwright login -> storageState (gitignored).
 //
-// The approve leaf uses Playwright (trusted clicks), NOT agent-browser. agent-browser's
-// fixtures/auth/<app>.state.json is CDP-shaped, so it is not a clean Playwright storageState.
-// Operator logs in once in the window.
+// Operator logs in once in the window. Callers pass the CANONICAL out path
+// fixtures/auth/playwright/<app>.state.json (lib/engine.js playwrightAuthRel); the legacy
+// approve/<app>.pw-state.json location is read-only compat handled by resolveAuthStatePath.
 //
 //   node approve/auth-pw.mjs <loginUrl> <successNeedle> <outFile> [stopFile]
 'use strict';
@@ -20,8 +20,10 @@ if (!loginUrl || !successNeedle || !outFile) {
 const TIMEOUT_MS = Number(process.env.HUMAN_TIMEOUT_MS) || 900000;
 const STOPFILE = stopFileArg || process.env.AQA_AUTH_STOPFILE || '';
 
-// Use the system-installed Google Chrome (channel:'chrome') so no Playwright browser download is needed.
-const browser = await chromium.launch({ headless: false, channel: 'chrome' });
+// Default = system-installed Google Chrome (channel:'chrome', no Playwright browser download).
+// AQA_PW_CHANNEL overrides for environments without branded Chrome (e.g. the Docker image's
+// bundled chromium) — same knob every other driver honors.
+const browser = await chromium.launch({ headless: false, channel: process.env.AQA_PW_CHANNEL || 'chrome' });
 try {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
