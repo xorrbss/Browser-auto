@@ -1,6 +1,6 @@
 {
   "name": "approval_office_hiworks_com_ibizsoftware_net_approval",
-  "engine": "agent-browser",
+  "engine": "playwright",
   "app": "r45",
   "startUrl": "https://approval.office.hiworks.com/ibizsoftware.net/approval/document/lists/W",
   "steps": [

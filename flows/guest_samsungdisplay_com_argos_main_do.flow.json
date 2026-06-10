@@ -1,27 +1,20 @@
 {
   "name": "guest_samsungdisplay_com_argos_main_do",
-  "engine": "agent-browser",
+  "engine": "playwright",
   "app": "guest_samsungdisplay_com",
   "startUrl": "https://guest.samsungdisplay.com/argos/main.do",
   "steps": [
     {
       "kind": "find",
       "action": "click",
-      "by": "role",
-      "value": "group",
-      "name": "3 / 8"
-    },
-    {
-      "kind": "wait",
-      "until": "url",
-      "value": "**/argos/main.do"
+      "by": "text",
+      "value": "내방/차량신청(일반)"
     },
     {
       "kind": "find",
       "action": "click",
-      "by": "role",
-      "value": "link",
-      "name": "내방/차량신청(일반)"
+      "by": "text",
+      "value": "내방/차량신청(일반)"
     },
     {
       "kind": "wait",
@@ -30,54 +23,33 @@
     },
     {
       "kind": "find",
+      "needs_review": true,
+      "candidates": [],
       "action": "click",
       "frame": {
         "by": "urlGlob",
         "value": "/vi/rq/VIRQ001.do"
-      },
-      "by": "role",
-      "value": "textbox"
+      }
     },
     {
       "kind": "find",
-      "action": "fill",
-      "frame": {
-        "by": "urlGlob",
-        "value": "/vi/rq/VIRQ001.do"
-      },
-      "by": "role",
-      "value": "textbox"
-    },
-    {
-      "kind": "find",
+      "needs_review": true,
+      "candidates": [],
       "action": "click",
       "frame": {
         "by": "urlGlob",
         "value": "/vi/rq/VIRQ001.do"
-      },
-      "by": "role",
-      "value": "textbox"
+      }
     },
     {
-      "kind": "find",
-      "action": "fill",
-      "frame": {
-        "by": "urlGlob",
-        "value": "/vi/rq/VIRQ001.do"
-      },
-      "by": "role",
-      "value": "textbox"
+      "kind": "wait",
+      "until": "load",
+      "value": "networkidle"
     },
     {
-      "kind": "find",
-      "action": "click",
-      "frame": {
-        "by": "urlGlob",
-        "value": "/vi/rq/VIRQ001.do"
-      },
-      "by": "role",
-      "value": "link",
-      "name": "다음"
+      "kind": "wait",
+      "until": "load",
+      "value": "networkidle"
     }
   ],
   "asserts": [

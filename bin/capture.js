@@ -1,9 +1,7 @@
-// bin/capture.js — injected via `agent-browser --init-script <abs-path>` into the page
-// being recorded (NOT runtime `addinitscript` — absent from the 0.27.0 binary). Init
-// scripts re-run on every document, so this is idempotent and keeps its buffer in
-// sessionStorage to survive the window reset on same-origin navigation (proven by the
-// Phase 0 PoC). Locator HARDENING + uniqueness happen in-page here, because agent-browser
-// `get count` is CSS-only and cannot count the semantic locators replay `find` uses.
+// bin/capture.js - injected by bin/pw-record.mjs via Playwright addInitScript.
+// Init scripts re-run on every document, so this is idempotent and keeps its buffer in
+// sessionStorage to survive the window reset on same-origin navigation. Locator
+// hardening + uniqueness happen in-page here so committed flows use stable semantic locators.
 //
 // Buffer (sessionStorage, synchronous write-through = durability):
 //   __aqa_buf = ordered JSON array of RecordedAction; __aqa_seq = monotonic counter;
@@ -181,8 +179,8 @@
       else if (c.by === 'label') ok = (!!el.matches && el.matches('input,select,textarea,button,[contenteditable]') && labelText(el) === c.value); // controls only — `find label` resolves to the CONTROL, not the <label> element (which also has labelText)
       else if (c.by === 'text') {
         // Collapse nested same-text chains to the OUTERMOST element (e.g. <button><i>Login</i></button>
-        // is ONE match on the button, not two) so the in-page count matches how agent-browser
-        // `find text` resolves a single element — otherwise the button falls back to the broken role locator.
+        // is ONE match on the button, not two) so exact text candidates stay scoped
+        // to the actionable outer element.
         var tx = normalize(el.textContent);
         var pp = el.parentElement;
         var ancestorSame = !!(pp && normalize(pp.textContent) === c.value);
@@ -198,12 +196,8 @@
   }
 
   // --- candidate ladder (schema by-values only; never css/xpath/@eN) ---
-  // Weights are ordered by what agent-browser 0.27.0 `find` ACTUALLY resolves, not by
-  // theoretical stability: empirically `find role --name` does NOT match elements on this
-  // version (verified on heading+link, even with the exact accessible name from snapshot),
-  // while `find text|label|placeholder|testid` work. So role is demoted to a low-priority
-  // candidate (kept for human needs_review use), and the engine-supported locators lead.
-  // (Robust v2: a verify-repair replay probing each candidate via `find ... hover --json`.)
+  // Weights are ordered by stable semantic replay preference. Role candidates are useful,
+  // but testid/label/text-style locators usually make clearer authored flows.
   var WKIND = { testid: 50, text: 40, label: 38, placeholder: 32, role: 24, alt: 18, title: 12 };
   // C1: a locator whose value/name exceeds 80 chars is KEPT in the candidate ladder (so a
   // needs_review step always offers a reviewable option — the engine empirically matches long
@@ -272,13 +266,9 @@
     return el;
   }
 
-  // --- engine-reliability gate for a role+name PRIMARY (agent-browser 0.27.0) ---
-  // `find role <r> --name <n>` resolution is element-shape specific (probe-verified): it reliably
-  // matches an aria-label BUTTON (a native <button> or an explicit role="button"), but NOT a native
-  // <a>/<input>/<heading> (implicit role), and NOT a name sourced from aria-labelledby. So ONLY an
-  // aria-label button may become a role PRIMARY; every other role+name stays a needs_review candidate
-  // rather than a primary that would silently fail replay. (Native <input type=button> / <summary> map
-  // to role button via roleOf() but are unverified, so they are conservatively excluded here.)
+  // --- role+name primary gate ---
+  // Keep role primaries conservative: an explicit aria-label button is a stable replay target;
+  // other role+name shapes stay candidates for human review.
   function roleAriaLabelButton(el, c) {
     if (c.by !== 'role' || c.value !== 'button' || !c.name) return false;
     if (looksAutoName(c.name)) return false;   // a structurally auto-generated / dynamic aria-label is fragile -> needs_review
@@ -482,9 +472,8 @@
     // WRONG final state (false-green). Record the absolute desired post-state and emit `check`, which
     // replay sets absolutely. el is read at the RECORDED click — for a label/ancestor click (raw!==el)
     // the control toggles AFTER this handler, so el.checked is still PRE-toggle and must be flipped
-    // (probe-verified); a radio always ends checked. UNCHECK stays a `click`: agent-browser 0.27.0
-    // `uncheck` is broken (probe: success=false), so an absolute uncheck is unavailable — a click is the
-    // documented best-effort residual (works when the page's initial state matches capture).
+    // a radio always ends checked. Unchecking stays a click because it records the
+    // user's gesture without guessing custom checkbox semantics.
     var cbType = checkableType(el);
     var cbChecked = cbType && ((cbType === 'radio') || ((raw === el) ? el.checked : !el.checked));
     emit(cbChecked ? 'check' : 'click', el);
@@ -498,8 +487,7 @@
   // single printable key, e.g. Ctrl+S) IS captured as a combo press but FLAGGED `modifier` so build-flow
   // WARNS: its effect is app-specific and may not replay deterministically. Shift is NOT a "shortcut"
   // modifier (Shift+Tab / Shift+Arrow are normal navigation), so a Shift-only combo is not flagged.
-  // agent-browser `press` is best-effort (returns success for ANY key name — probe-verified), like
-  // scroll: a no-op press can't false-green a FOLLOWING locator (which gates correctness). CAVEAT: a RUN
+  // A no-op press cannot false-green a FOLLOWING locator (which gates correctness). CAVEAT: a RUN
   // of consecutive focus/index-relative presses (esp. Arrows driving a custom listbox/menu) has no
   // intervening locator, so if the page's initial selection/option order drifts at replay a different
   // item can be chosen — build-flow WARNS on arrow presses to surface this drift sensitivity. flushAll()

@@ -10,7 +10,6 @@ const AUTH_DIR = path.join(PROBE_ROOT, 'fixtures', 'auth');
 const PLAYWRIGHT_AUTH_DIR = path.join(AUTH_DIR, 'playwright');
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const AUTH_SOURCES = Object.freeze([
-	{ engine: 'agent-browser', dir: AUTH_DIR },
 	{ engine: 'playwright', dir: PLAYWRIGHT_AUTH_DIR },
 ]);
 
@@ -76,13 +75,12 @@ export async function deleteAuthState(app) {
 	if (!validApp(app)) return { ok: false, error: 'invalid app name' };
 	let deleted = false;
 	const errors = [];
-	for (const full of [path.join(AUTH_DIR, `${app}.state.json`), path.join(PLAYWRIGHT_AUTH_DIR, `${app}.state.json`)]) {
-		try {
-			await unlink(full);
-			deleted = true;
-		} catch (e) {
-			if (e.code !== 'ENOENT') errors.push(e.message);
-		}
+	const full = path.join(PLAYWRIGHT_AUTH_DIR, `${app}.state.json`);
+	try {
+		await unlink(full);
+		deleted = true;
+	} catch (e) {
+		if (e.code !== 'ENOENT') errors.push(e.message);
 	}
 	if (deleted) return { ok: true };
 	if (errors.length) return { ok: false, error: errors.join('; ') };

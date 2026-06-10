@@ -172,7 +172,7 @@ for (let i = 0; i < records.length; i++) {
     // A needs_review select (no primary, or insufficient — e.g. <select multiple>) must NOT tokenize a
     // value: a multi-select only captured option#1, so writing that partial value to the sidecar would
     // be misleading. actionFind emits the needs_review step (action:select) and the human supplies the
-    // value(s) when resolving it (agent-browser `select <sel> <val…>` does accept multiple values).
+    // intended value(s) when resolving it.
     if (!rec.primary || rec.insufficient) {
       actionFind(rec, 'select');
     } else {
@@ -180,7 +180,7 @@ for (let i = 0; i < records.length; i++) {
       const { tok } = token(real);
       actionFind(rec, 'select', { val: tok });
       if (rec.select_text != null && rec.select_text !== real) {
-        warns.push(`select step (#${steps.length - 1}) option text "${rec.select_text}" != value "${real}"; verify 0.27.0 find select matching`);
+        warns.push(`select step (#${steps.length - 1}) option text "${rec.select_text}" != value "${real}"; verify Playwright select matching`);
       }
     }
   } else if (t === 'scroll') {

@@ -55,7 +55,7 @@ echo "  play-flow-smoke: passed"
 
 # --verify must FAIL LOUD when a NON-find step diverges at replay (regression for the verifyFlow
 # silent-OK bug: a failing wait/press/scroll used to break the loop with promoted=0 ⇒ status:'ok').
-# The bad `press` key throws at replay; verify must report failed + exit non-zero (matches verify-flow.sh).
+# The bad `press` key throws at replay; verify must report failed + exit non-zero.
 cat > "$DIR/flows/$NAME2.flow.json" <<JSON
 {
   "name": "$NAME2",

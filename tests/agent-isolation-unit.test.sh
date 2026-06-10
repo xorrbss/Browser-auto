@@ -26,14 +26,16 @@ for f in webui/agent.js webui/routes-rpa.js; do
 	fi
 done
 
-# nodeLeaf is allowed ONLY to spawn the Playwright RPA READ drivers (bin/pw-rpa.mjs). A nodeLeaf wiring the
-# approve LEAF (approve/approve-run.mjs) — or any other effectful leaf — would be the exact escape this test
-# guards, so pin every nodeLeaf( CALL's target. (The destructured `nodeLeaf }` param has no '(' and is ignored.)
+# nodeLeaf is allowed ONLY to spawn the Playwright RPA READ driver (bin/pw-rpa.mjs) or the headed
+# Playwright auth setup leaf (approve/auth-pw.mjs). A nodeLeaf wiring the approve execution leaf
+# (approve/approve-run.mjs) would be the exact escape this test guards, so pin every nodeLeaf( call's target.
+# The destructured `nodeLeaf }` param has no '(' and is ignored.
 while IFS= read -r line; do
 	[ -n "$line" ] || continue
 	case "$line" in
-		*"bin/pw-rpa.mjs"*) ;; # an RPA read driver (analyze/sync/enrich) — data collection, not approval
-		*) echo "  ✗ agent-isolation: a nodeLeaf( call does not target bin/pw-rpa.mjs (only RPA-read spawns allowed; the model must never spawn the approve leaf):"; echo "      $line"; fail=1 ;;
+		*"bin/pw-rpa.mjs"*) ;; # RPA read driver (analyze/sync/enrich), data collection not approval
+		*"approve/auth-pw.mjs"*) ;; # Playwright auth state capture, not approval execution
+		*) echo "  ✗ agent-isolation: a nodeLeaf( call targets an unapproved leaf (the model must never spawn the approve execution leaf):"; echo "      $line"; fail=1 ;;
 	esac
 done < <(grep -nE 'nodeLeaf\(' "$DIR/webui/agent.js" "$DIR/webui/routes-rpa.js" 2>/dev/null)
 

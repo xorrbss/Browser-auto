@@ -1,21 +1,18 @@
-// webui/jobs.js — single-slot serial job queue for browser-driving CLI spawns.
+// webui/jobs.js - single-slot serial job queue for browser-driving Playwright jobs.
 //
-// The project shares ONE agent-browser daemon, so AT MOST ONE browser job (run / record /
-// verify / auth) may run at a time — concurrency wedges the daemon. This module is the only
-// place that launches such children, and it chains them on a single promise tail: a job's
-// child must reach 'close' (process exited AND stdio closed) before the next job's child is
-// spawned. That structurally guarantees serialization. Read-only HTTP endpoints do NOT go
-// through here (they touch no daemon) and run concurrently.
+// Headed browser jobs share the operator desktop and persisted auth/profile files, so WebUI
+// runs at most one browser-driving job (run / record / verify / auth) at a time. This module
+// chains them on a single promise tail: a job's child must reach 'close' before the next job's
+// child is spawned. Read-only HTTP endpoints do not go through here and run concurrently.
 
 import fs from 'node:fs';
-import { killTree, gitBash } from './spawn.js';
+import { killTree } from './spawn.js';
 
 const MAX_LOG = 2000; // per-job log ring-buffer cap
 const MAX_JOBS = 50; // most-recent job records kept in memory
-// Watchdog: a child that never reaches 'close' (e.g. a wedged agent-browser daemon) would
-// otherwise stall the single slot forever and brick the whole queue. Cap each job; on timeout
-// we tree-kill it so its 'close' fires and the chain advances. Generous default (the full
-// suite is ~5 min); override with WEBUI_JOB_TIMEOUT_MS.
+// Watchdog: a child that never reaches 'close' would otherwise stall the single slot forever.
+// Cap each job; on timeout we tree-kill it so its 'close' fires and the chain advances.
+// Generous default (the full suite is ~5 min); override with WEBUI_JOB_TIMEOUT_MS.
 const JOB_TIMEOUT_MS = Number(process.env.WEBUI_JOB_TIMEOUT_MS) || 20 * 60 * 1000;
 const JOB_KILL_GRACE_MS = Number(process.env.WEBUI_JOB_KILL_GRACE_MS) || 15000;
 
@@ -24,24 +21,6 @@ let tail = Promise.resolve(); // the serial chain
 let runningId = null; // id of the job whose child is currently alive, or null
 const pending = []; // FIFO of queued (not-yet-running) job ids
 const jobs = new Map(); // id -> job record
-
-// reapDaemon(): best-effort graceful `agent-browser daemon stop` after a SIGKILL'd browser job. A
-// tree-killed job (cancel/watchdog) never ran its bash EXIT-trap cleanup, so its agent-browser+Chrome
-// session leaks and would wedge the NEXT job's daemon connection. Stopping the (shared, serial)
-// daemon clears that — agent-browser respawns a fresh one on next use. Cross-platform via the same
-// bash/PATH the drivers use; bounded by a timeout so a wedged stop can't stall the queue.
-function reapDaemon() {
-	return new Promise((resolve) => {
-		let done = false;
-		const fin = () => { if (!done) { done = true; resolve(); } };
-		try {
-			const c = gitBash('-c', ['agent-browser daemon stop >/dev/null 2>&1 || true']);
-			c.on('error', fin);
-			c.on('close', fin);
-			setTimeout(fin, 10000).unref();
-		} catch { fin(); }
-	});
-}
 
 function publicJob(job) {
 	return {
@@ -195,7 +174,6 @@ async function runJob(job) {
 		if (timer) clearTimeout(timer);
 		if (killGraceTimer) clearTimeout(killGraceTimer);
 		if (job.stopFile) { try { fs.rmSync(job.stopFile, { force: true }); } catch {} } // clear the stop signal
-		const wasKilled = job.cancelled || job.timedOut; // SIGKILL path skipped the driver's cleanup trap
 		job.child = null;
 		job.endedAt = Date.now();
 		if (typeof job.onFinish === 'function') {
@@ -204,8 +182,6 @@ async function runJob(job) {
 		}
 		runningId = null;
 		finishJob(job);
-		// Reap a leaked daemon BEFORE the chain advances, so the next job starts on a clean daemon.
-		if (wasKilled) { try { await reapDaemon(); } catch {} }
 	}
 }
 
@@ -292,12 +268,12 @@ export function stop(id) {
 		pushLine(job, `[webui] stop signal write failed: ${(e && e.message) || e}`);
 		return false;
 	}
-	pushLine(job, '[webui] stop requested — finishing the recording (complete capture)…');
+	pushLine(job, '[webui] stop requested - finishing the recording (complete capture)');
 	return true;
 }
 
 // killRunning(): best-effort tree-kill of the in-flight child, for server shutdown so the
-// run.sh -> agent-browser -> Chrome tree is not orphaned (which would wedge the next run).
+// browser-driver tree is not orphaned.
 export function killRunning() {
 	if (runningId) {
 		const job = jobs.get(runningId);

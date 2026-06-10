@@ -2,15 +2,14 @@
 # bin/scheduled-task.sh — a locked, FAIL-CLOSED entrypoint for UNATTENDED periodic agent-qa tasks, meant to
 # be called by the host scheduler (Windows Task Scheduler / cron). It reuses the EXISTING drivers (no new
 # automation engine) and adds exactly two things they lack for unattended use:
-#   1. SERIALIZATION — a mkdir lock so two ticks (or an overlapping long run) can't drive the single shared
-#      agent-browser daemon at once (concurrency wedges it). A stale lock (a crashed tick) self-heals after 2h.
+#   1. SERIALIZATION — a mkdir lock so two ticks (or an overlapping long run) can't drive the same
+#      browser-backed account flow at once. A stale lock (a crashed tick) self-heals after 2h.
 #   2. A SAFETY GATE — read/sync/enrich carry no financial risk and may be scheduled freely, but UNATTENDED
 #      LIVE auto-approve is FORBIDDEN (any '--live' is REFUSED) until the operator-accompanied prerequisites
 #      are met: live end-to-end verification + a Gate-B amount-cell capture + agreed auto-approve criteria.
 #      So a scheduled approve can only ever be DRY-RUN; a live schedule fails closed here, by design.
 #
 # Usage (the driver is a repo-relative .sh or .mjs; args pass through):
-#   bash bin/scheduled-task.sh bin/fetch-approvals.sh --app hiworks     # 결재 list sync
 #   bash bin/scheduled-task.sh bin/sync-system.sh   --system hiworks     # generic RPA sync
 #   bash bin/scheduled-task.sh bin/enrich-system.sh --system hiworks     # detail + on-prem summary
 # Output is teed to data/scheduler.log. See README "Scheduling / unattended" for Task Scheduler + cron lines.

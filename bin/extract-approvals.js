@@ -45,7 +45,7 @@ function main() {
 	const rowRole = recipe.collection.row || 'row';
 
 	const data = JSON.parse(input.trim() || '{}');
-	if (typeof data.snapshot !== 'string') die('stdin has no .snapshot tree (expected the fetch-approvals .data object)');
+	if (typeof data.snapshot !== 'string') die('stdin has no .snapshot tree');
 	const lines = aria.parse(data);
 
 	const hits = aria.findByRoleName(lines, role, recipe.collection.name);

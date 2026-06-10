@@ -1,7 +1,7 @@
 // webui/approvals.js — read-only view over the approvals store (lib/db.js) for the dashboard.
 //
 // Mirrors the project rule that the web layer never reimplements logic: the DB schema + CRUD
-// live in lib/db.js (shared with bin/fetch-approvals); this module just opens, reads, closes.
+// live in lib/db.js; this module just opens, reads, closes.
 // ESM importing a CJS module — Node's named-export interop resolves lib/db.js's module.exports.
 //
 // Unlike index.js (runs are fs-authoritative — report.json IS the source of truth), approvals

@@ -1,0 +1,12 @@
+{
+  "name": "login",
+  "engine": "playwright",
+  "startUrl": "https://example.com",
+  "steps": [
+    { "kind": "find", "by": "text", "value": "Learn more", "action": "click" },
+    { "kind": "wait", "until": "url", "value": "**/help/example-domains" }
+  ],
+  "asserts": [
+    { "kind": "url", "value": "iana.org" }
+  ]
+}

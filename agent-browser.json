@@ -1,5 +1,0 @@
-{
-  "headless": true,
-  "defaultTimeout": 25000,
-  "_comment": "Project defaults for agent-qa. headless=true for deterministic CI replay; setup/auth.*.sh override with --headed for the one-time human OTP step. ffmpegPath is resolved at runtime by lib/preflight.sh (config -> PATH -> winget Gyan.FFmpeg dir); set ffmpegPath here only to pin an explicit binary for reproducibility."
-}

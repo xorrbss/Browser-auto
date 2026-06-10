@@ -8,50 +8,47 @@ import { validSysName, listSystemsView, getSystemView, saveSystem, removeSystem,
 
 // rpaPost(p, bodyJson, res, {sendJson, enqueue, gitBash}) -> handled? (async: /api/agent classifies)
 export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, authSpawn, nodeLeaf }) {
-	// 결재 동기화: bin/fetch-approvals.sh (login -> scrape inbox -> DB). Browser job -> serial queue.
 	if (p === '/api/sync') {
-		const app = bodyJson.app ? String(bodyJson.app).trim() : '';
-		if (app && !validSysName(app)) { sendJson(res, 400, { error: 'invalid app name (use [A-Za-z0-9_-])' }); return true; }
-		const job = enqueue({ kind: 'sync', label: app ? `sync ${app}` : 'sync approvals', spawnFn: () => gitBash('bin/fetch-approvals.sh', app ? ['--app', app] : []) });
-		sendJson(res, 202, { job });
+		sendJson(res, 410, { error: 'legacy approvals sync was removed with the agent-browser runtime; register a Playwright system and use /api/systems/:name/sync.' });
 		return true;
 	}
 
 	// 자연어 명령 라우터: on-prem 모델은 분류만(실행 권한 없음). read는 인라인, browser intent는 직렬 큐.
 	// approve는 후보 조회만(실행은 2단계). 모델 실패→clarify(행위 진행 안 함).
-	if (p === '/api/agent') {
+		if (p === '/api/agent') {
 		const text = String(bodyJson.text || '').trim();
 		if (!text) { sendJson(res, 400, { error: 'empty command' }); return true; }
-		const intent = await classifyIntent(text);
-		if (intent.action === 'sync') {
-			const job = enqueue({ kind: 'sync', label: 'sync approvals (NL)', spawnFn: () => gitBash('bin/fetch-approvals.sh', []) });
-			sendJson(res, 200, { intent, job });
-			return true;
-		}
-		if (intent.action === 'summarize') {
-			const args = intent.limit ? ['--limit', String(intent.limit)] : [];
-			const job = enqueue({ kind: 'summarize', label: 'summarize (NL)', spawnFn: () => gitBash('bin/enrich-approvals.sh', args) });
-			sendJson(res, 200, { intent, job });
-			return true;
-		}
+			const intent = await classifyIntent(text);
+			if (intent.action === 'sync') {
+				sendJson(res, 410, { intent, error: 'legacy approvals sync was removed; use a registered Playwright system sync.' });
+				return true;
+			}
+			if (intent.action === 'summarize') {
+				sendJson(res, 410, { intent, error: 'legacy approvals enrichment was removed; use a registered Playwright system enrich.' });
+				return true;
+			}
 		if (intent.action === 'query') { sendJson(res, 200, { intent, approvals: runQuery(intent.filter || {}), systems: runRecordsQuery(intent.filter || {}) }); return true; }
 		if (intent.action === 'approve') { sendJson(res, 200, { intent, approvals: runQuery(intent.filter || {}), note: '승인 후보입니다. 실제 승인 실행은 아직 비활성(2단계, 항목별 사람 확인 후).' }); return true; }
 		// review = PREPARE the human checkbox-review surface: optionally summarize (read/on-prem), then the UI
 		// shows the 결재 checkbox review. NEVER approves — the model has NO path to the approve route; the human
 		// checks the items and clicks 선택 항목 결재 (that separate route is the only approve execution).
-		if (intent.action === 'review') {
-			const resp = { intent, surface: 'approvals-review' };
-			if (intent.summarize) resp.job = enqueue({ kind: 'summarize', label: '요약 (검토-결재 준비)', spawnFn: () => gitBash('bin/enrich-approvals.sh', []) });
-			sendJson(res, 200, resp);
-			return true;
-		}
+			if (intent.action === 'review') {
+				const resp = { intent, surface: 'approvals-review' };
+				if (intent.summarize) resp.error = 'legacy approvals enrichment was removed; use a registered Playwright system enrich.';
+				sendJson(res, 200, resp);
+				return true;
+			}
 		sendJson(res, 200, { intent });
 		return true;
 	}
 
 	// --- Generic RPA system registry (register any data-collection system) ---
 	if (p === '/api/systems') {
-		const r = saveSystem({ name: String(bodyJson.name || '').trim(), label: bodyJson.label, engine: bodyJson.engine, login_url: bodyJson.login_url, success_url: bodyJson.success_url, target_url: bodyJson.target_url, recipe: bodyJson.recipe });
+		if (bodyJson.engine && bodyJson.engine !== 'playwright') {
+			sendJson(res, 400, { error: 'system.engine: WebUI is Playwright-only' });
+			return true;
+		}
+		const r = saveSystem({ name: String(bodyJson.name || '').trim(), label: bodyJson.label, engine: 'playwright', login_url: bodyJson.login_url, success_url: bodyJson.success_url, target_url: bodyJson.target_url, recipe: bodyJson.recipe });
 		r.ok ? sendJson(res, 200, r) : sendJson(res, 400, r);
 		return true;
 	}
@@ -65,13 +62,12 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, au
 		if (!sysv) { sendJson(res, 404, { error: 'no such system' }); return true; }
 		if (action === 'auth') {
 			if (!sysv.login_url || !sysv.success_url) { sendJson(res, 400, { error: 'register login_url + success_url first' }); return true; }
-			const engine = sysv.engine || 'playwright';
 			const job = enqueue({
 					kind: 'auth',
-					label: `auth ${name} (${engine})`,
+					label: `auth ${name} (playwright)`,
 				spawnFn: () => authSpawn
-					? authSpawn(engine, name, sysv.login_url, sysv.success_url)
-					: gitBash('setup/auth.sh', ['--engine', engine, name, sysv.login_url, sysv.success_url]),
+					? authSpawn('playwright', name, sysv.login_url, sysv.success_url)
+					: nodeLeaf('approve/auth-pw.mjs', [sysv.login_url, sysv.success_url, `fixtures/auth/playwright/${name}.state.json`]),
 			});
 			sendJson(res, 202, { job });
 			return true;
@@ -79,10 +75,8 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, au
 		if (action === 'analyze') {
 			const job = enqueue({
 				kind: 'analyze',
-				label: `analyze ${name} (${sysv.engine || 'playwright'})`,
-				spawnFn: () => (sysv.engine || 'playwright') === 'playwright'
-					? nodeLeaf('bin/pw-rpa.mjs', ['analyze', '--system', name])
-					: gitBash('bin/analyze-system.sh', ['--system', name]),
+				label: `analyze ${name} (playwright)`,
+				spawnFn: () => nodeLeaf('bin/pw-rpa.mjs', ['analyze', '--system', name]),
 			});
 			sendJson(res, 202, { job });
 			return true;
@@ -90,10 +84,8 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, au
 		if (action === 'sync') {
 			const job = enqueue({
 				kind: 'sync',
-				label: `sync ${name} (${sysv.engine || 'playwright'})`,
-				spawnFn: () => (sysv.engine || 'playwright') === 'playwright'
-					? nodeLeaf('bin/pw-rpa.mjs', ['sync', '--system', name])
-					: gitBash('bin/sync-system.sh', ['--system', name]),
+				label: `sync ${name} (playwright)`,
+				spawnFn: () => nodeLeaf('bin/pw-rpa.mjs', ['sync', '--system', name]),
 			});
 			sendJson(res, 202, { job });
 			return true;
@@ -102,10 +94,8 @@ export async function rpaPost(p, bodyJson, res, { sendJson, enqueue, gitBash, au
 		if (action === 'enrich') {
 			const job = enqueue({
 				kind: 'summarize',
-				label: `enrich ${name} (${sysv.engine || 'playwright'})`,
-				spawnFn: () => (sysv.engine || 'playwright') === 'playwright'
-					? nodeLeaf('bin/pw-rpa.mjs', ['enrich', '--system', name])
-					: gitBash('bin/enrich-system.sh', ['--system', name]),
+				label: `enrich ${name} (playwright)`,
+				spawnFn: () => nodeLeaf('bin/pw-rpa.mjs', ['enrich', '--system', name]),
 			});
 			sendJson(res, 202, { job });
 			return true;

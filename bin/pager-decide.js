@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 'use strict';
-// bin/pager-decide.js — the SHARED, fail-closed page-combobox decision for the bash RPA pagers
-// (fetch-approvals.sh, sync-system.sh, enrich-system.sh). It reuses approve/guards.mjs `pagerDecision`
-// — the SAME pure rule the Playwright engine (bin/pw-rpa.mjs / approve/approve-run.mjs) trusts — so both
-// engines agree on what a trustworthy pager is, instead of the bash side hand-rolling a looser rule.
+// bin/pager-decide.js - shared, fail-closed page-combobox decision for ARIA
+// snapshots. It reuses approve/guards.mjs `pagerDecision`, the same pure rule
+// the Playwright engine (bin/pw-rpa.mjs / approve/approve-run.mjs) trusts.
 //
 // The old bash rule was unsafe: it counted EVERY numeric <option> anywhere as a page (a rows-per-page
 // select [10,20,50] inflated the count) and drove the FIRST combobox in the snapshot — possibly a filter
 // or rows-per-page dropdown. Selecting "2" on a filter changes the row set, the gate sees rows change and
 // "settles", and those wrong rows get STORED. This makes the decision fail-closed instead.
 //
-// Input  : the agent-browser snapshot `.data` JSON on stdin (has `.refs`: { <refId>: { role, name, … } }).
+// Input  : an ARIA snapshot `.data` JSON on stdin.
 // Argv   : the recipe's pagination.mode (e.g. "combobox"; anything falsy ⇒ single page).
 // Output : one line "<kind> <total> <ref>" —
 //            pager     <N> <refId>   a trustworthy 1..N page combobox; drive <refId>, scan N pages

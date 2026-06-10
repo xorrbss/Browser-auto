@@ -77,8 +77,8 @@ function sysAction(action, onEnd) {
 				streamJob(j.job.id, log, (done) => {
 					sysJob = null; loadSystems();
 					// Clear failure banner on a non-zero job (was: silently leave the raw log) so the operator
-					// sees WHY the analyze/sync failed (auth expired, daemon wedge, no table found, …).
-					if (done && done.status !== 'done') { log.textContent += `\n\n✗ ${action} 실패 (${statusKo(done.status)}${done.exitCode != null ? `, 종료 ${done.exitCode}` : ''}) — 위 로그에서 원인을 확인하세요. 인증 만료면 🔑 인증, 데몬 wedge면 재시도하세요.`; return; }
+					// sees WHY the analyze/sync failed (auth expired, no table found, ...).
+					if (done && done.status !== 'done') { log.textContent += `\n\n✗ ${action} 실패 (${statusKo(done.status)}${done.exitCode != null ? `, 종료 ${done.exitCode}` : ''}) — 위 로그에서 원인을 확인하세요. 인증 만료면 다시 인증하고 재시도하세요.`; return; }
 					if (onEnd) onEnd(name);
 				});
 			}

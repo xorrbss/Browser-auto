@@ -8,13 +8,14 @@ import { runSteps, validateSteps, buildLocator, irreversibleOptsFor } from '../a
 
 const require = createRequire(import.meta.url);
 const {
-	assertFlowEngine,
 	resolveAuthStatePath,
 } = require('../lib/engine.js');
+const aria = require('../lib/aria.js');
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 const ASSERT_KINDS = new Set(['url', 'text', 'value', 'visible', 'count', 'absent']);
 const EFFECTFUL = new Set(['click', 'fill', 'type', 'select', 'check', 'uncheck']);
+const SAFE_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -40,6 +41,12 @@ function readJson(file, fallback = null) {
 	}
 }
 
+function applyStrip(value, suffix) {
+	const s = String(value == null ? '' : value);
+	if (!suffix) return s.trim() || null;
+	return (s.endsWith(suffix) ? s.slice(0, s.length - suffix.length).trim() : s.trim()) || null;
+}
+
 function valuesPathFor(file) {
 	return file.replace(/\.flow\.json$/i, '.values.json');
 }
@@ -58,6 +65,7 @@ function validateAsserts(asserts) {
 		if (!ASSERT_KINDS.has(a.kind)) throw new Error(`assert ${i}: unknown kind "${a.kind}"`);
 		if (['url', 'text'].includes(a.kind) && (typeof a.value !== 'string' || !a.value)) throw new Error(`assert ${i}: value required`);
 		if (['value', 'visible', 'count', 'absent'].includes(a.kind) && (typeof a.selector !== 'string' || !a.selector)) throw new Error(`assert ${i}: selector required`);
+		if (a.kind === 'value' && typeof (a.text != null ? a.text : a.value) !== 'string') throw new Error(`assert ${i}: value/text required`);
 		if (a.kind === 'count' && !Number.isInteger(a.n)) throw new Error(`assert ${i}: integer n required`);
 	}
 }
@@ -79,6 +87,137 @@ function preflightValues(flow, resolveValue) {
 			if (s.val != null) resolveValue(s.val);
 		}
 	}
+	for (const a of flow.asserts || []) {
+		if (!a) continue;
+		if (a.kind === 'text') resolveValue(a.value);
+		if (a.kind === 'value') resolveValue(a.text != null ? a.text : a.value);
+	}
+}
+
+function assertPlayableEngine(flow) {
+	const raw = flow && flow.engine;
+	const engine = raw == null || raw === '' ? 'playwright' : String(raw).trim();
+	if (engine === 'playwright') return engine;
+	if (engine === 'agent-browser') {
+		throw new Error('flow.engine is "agent-browser"; Playwright-only runtime refuses legacy flows. Set flow.engine="playwright" (or omit engine) and run `node bin/play-flow.mjs --flow <flow> --validate-only` before replay.');
+	}
+	throw new Error(`flow.engine: invalid engine "${engine}" (expected playwright)`);
+}
+
+function preflightOpenRecords(flow) {
+	for (const s of flow.steps || []) {
+		if (s && s.kind === 'open_record') readOpenRecordRecipe(s.recipe);
+	}
+}
+
+function recipePathFor(name) {
+	if (typeof name !== 'string' || !SAFE_NAME_RE.test(name)) throw new Error(`invalid open_record recipe "${name || ''}"`);
+	return path.join(PROBE_ROOT, 'recipes', `${name}.json`);
+}
+
+function readOpenRecordRecipe(name) {
+	const recipePath = recipePathFor(name);
+	if (!fs.existsSync(recipePath)) throw new Error(`open_record recipe missing: ${path.relative(PROBE_ROOT, recipePath).replace(/\\/g, '/')}`);
+	const recipe = readJson(recipePath);
+	if (!recipe?.collection?.name) throw new Error(`open_record recipe ${name}: collection.name required`);
+	if (!recipe.columns || typeof recipe.columns !== 'object' || !Object.keys(recipe.columns).length) throw new Error(`open_record recipe ${name}: columns required`);
+	if (!recipe.key || !Object.prototype.hasOwnProperty.call(recipe.columns, recipe.key)) throw new Error(`open_record recipe ${name}: key must name one of columns`);
+	return recipe;
+}
+
+async function locatorText(locator) {
+	return aria.clean(await locator.innerText());
+}
+
+async function extractLiveRecipeRows(page, recipe) {
+	const role = recipe.collection.role || 'table';
+	const rowRole = recipe.collection.row || 'row';
+	const table = page.getByRole(role, { name: recipe.collection.name, exact: true });
+	await table.first().waitFor({ timeout: 20000 });
+	const tableCount = await table.count();
+	if (tableCount !== 1) throw new Error(`open_record: ${role} "${recipe.collection.name}" matched ${tableCount} elements (need exactly 1)`);
+
+	const rows = table.first().getByRole(rowRole);
+	const rowCount = await rows.count();
+	let headerLabels = null;
+	const dataRows = [];
+	for (let i = 0; i < rowCount; i++) {
+		const row = rows.nth(i);
+		const headerCells = row.getByRole('columnheader');
+		const headerCount = await headerCells.count();
+		if (headerCount > 0) {
+			if (!headerLabels) {
+				headerLabels = [];
+				for (let h = 0; h < headerCount; h++) headerLabels.push(aria.norm(await locatorText(headerCells.nth(h))));
+			}
+			continue;
+		}
+		const cells = row.getByRole('cell');
+		const cellCount = await cells.count();
+		if (cellCount > 0) dataRows.push({ row, cells, cellCount });
+	}
+	if (!headerLabels) throw new Error('open_record: no header row found in live table');
+
+	const idx = {};
+	for (const [field, label] of Object.entries(recipe.columns)) {
+		const want = aria.norm(label);
+		const found = [];
+		headerLabels.forEach((h, i) => { if (h === want) found.push(i); });
+		if (found.length === 0) throw new Error(`open_record: column "${label}" (${field}) not found in live table`);
+		if (found.length > 1) throw new Error(`open_record: column "${label}" (${field}) is ambiguous in live table`);
+		idx[field] = found[0];
+	}
+
+	const strip = recipe.strip || {};
+	const fields = Object.keys(recipe.columns);
+	const items = [];
+	for (const row of dataRows) {
+		if (row.cellCount !== headerLabels.length) throw new Error(`open_record: row has ${row.cellCount} cells but header has ${headerLabels.length}`);
+		const data = {};
+		const cellByField = {};
+		for (const field of fields) {
+			const cell = row.cells.nth(idx[field]);
+			data[field] = applyStrip(await locatorText(cell), strip[field]);
+			cellByField[field] = cell;
+		}
+		const key = data[recipe.key];
+		if (!key) continue;
+		items.push({ key, data, cellByField });
+	}
+	const seen = new Set();
+	for (const item of items) {
+		if (seen.has(item.key)) throw new Error(`open_record: recipe key "${recipe.key}" is not unique in live table`);
+		seen.add(item.key);
+	}
+	return { rows: items, idx };
+}
+
+async function clickOpenRecordCell(cell, value) {
+	const title = cell.getByTitle(value, { exact: true });
+	if ((await title.count()) === 1) return title.first().click();
+	const text = cell.getByText(value, { exact: true });
+	if ((await text.count()) === 1) return text.first().click();
+	const link = cell.getByRole('link');
+	if ((await link.count()) === 1) return link.first().click();
+	const button = cell.getByRole('button');
+	if ((await button.count()) === 1) return button.first().click();
+	return cell.click();
+}
+
+async function openRecord(page, step) {
+	const recipe = readOpenRecordRecipe(step.recipe);
+	const source = step.source || 'first';
+	const rowIndex = source === 'row_index' ? step.rowIndex : (step.rowIndex ?? 0);
+	const field = step.field || recipe.key;
+	if (field !== 'key' && !Object.prototype.hasOwnProperty.call(recipe.columns, field)) throw new Error(`open_record: field "${field}" is not in recipe columns`);
+	const { rows } = await extractLiveRecipeRows(page, recipe);
+	const row = rows[rowIndex];
+	if (!row) throw new Error(`open_record: rowIndex ${rowIndex} is out of range (rows=${rows.length})`);
+	const clickValue = field === 'key' ? row.key : row.data[field];
+	const cell = field === 'key' ? row.cellByField[recipe.key] : row.cellByField[field];
+	if (!clickValue || !cell) throw new Error(`open_record: rowIndex ${rowIndex} field "${field}" is empty`);
+	console.error(`[play-flow] open_record:${source === 'row_index' ? `row_index:${rowIndex}` : 'first'} recipe=${step.recipe} field=${field} key=${row.key} value=${clickValue}`);
+	return clickOpenRecordCell(cell, clickValue);
 }
 
 async function loadChromium() {
@@ -188,10 +327,10 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 					repaired++;
 				}
 				await buildLocator(page, r.step).first().hover();
-				await runSteps(page, [r.step], { reversible: true, dryRun: false, resolveValue });
+				await runSteps(page, [r.step], { reversible: true, dryRun: false, resolveValue, openRecord });
 				verified++;
 			} else {
-				await runSteps(page, [s], { reversible: true, dryRun: false, resolveValue });
+				await runSteps(page, [s], { reversible: true, dryRun: false, resolveValue, openRecord });
 			}
 		} catch (e) {
 			if (s.kind === 'find') {
@@ -208,7 +347,7 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 			} else {
 				// A non-find step (wait/press/scroll) failing at replay means the journey DIVERGED — it cannot
 				// be repaired or promoted (it has no locator). Record it and fail loud below; a silent break here
-				// would let verify report status:'ok' on a broken journey (matches the bash twin verify-flow.sh).
+					// would let verify report status:'ok' on a broken journey.
 				failedStep = { i, kind: s.kind, error: String(e && e.message || e) };
 			}
 			break;
@@ -227,7 +366,7 @@ let summary = null;
 try {
 	const absFlow = path.resolve(flowPath);
 	const flow = readJson(absFlow);
-	assertFlowEngine(flow, 'playwright');
+	assertPlayableEngine(flow);
 	const stepsValidation = validateSteps(flow.steps);
 	if (!stepsValidation.ok) throw new Error('invalid steps: ' + stepsValidation.reason);
 	validateAsserts(flow.asserts || []);
@@ -236,6 +375,7 @@ try {
 	const values = readJson(valuesFile, {});
 	const resolveValue = makeResolveValue(values, valuesFile);
 	preflightValues(flow, resolveValue);
+	preflightOpenRecords(flow);
 	if (validateOnly) {
 		console.error('[play-flow] validate-only OK');
 		process.exit(0);
@@ -256,7 +396,7 @@ try {
 			// irreversible point-of-no-return replays through the audited fail-closed gate; every other flow
 			// stays reversible exactly as before. See approve/flow-runner.mjs irreversibleOptsFor.
 			const gate = irreversibleOptsFor(flow);
-			const runOpts = { dryRun: false, resolveValue, ...gate };
+			const runOpts = { dryRun: false, resolveValue, openRecord, ...gate };
 			if (gate.reversible === false) runOpts.onBeforeIrreversible = (i, step) => appendPlayAudit(absFlow, flow, i, step);
 			await runSteps(page, flow.steps, runOpts);
 			await runAsserts(page, flow.asserts || [], resolveValue);

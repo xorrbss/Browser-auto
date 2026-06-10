@@ -4,71 +4,95 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`agent-qa` — a web test-automation framework built on [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) **0.27.0**. The central design decision: **one bash file = one user journey**. Replay is deterministic and AI-free (`bash $0`, no API key, no LLM in the loop). AI/human authoring is confined to *writing* and *repairing* flows — it never touches the pass/fail gate.
+`agent-qa` is a Playwright-backed web test-automation framework. The central design decision remains:
+**one bash file = one user journey**. Replay is deterministic and AI-free (`bash $0`, no API key, no
+LLM in the loop). AI/human authoring is confined to writing and repairing flows; it never touches the
+pass/fail gate.
 
-Target platform is **Windows + Git Bash** (`C:\Program Files\Git\bin\bash.exe`). `README.md` is the authoritative spec; `flows/SCHEMA.md` documents the flow format. Read both before changing recorder or compiler behavior.
+Target platform is **Windows + Git Bash** (`C:\Program Files\Git\bin\bash.exe`). `README.md` is the
+authoritative spec; `flows/SCHEMA.md` documents the flow format. Read both before changing recorder,
+runner, or compiler behavior.
 
 ## Commands
 
 ```bash
-# Run the suite (CI gate — exit 1 if ANY test fails)
-bash run.sh                 # all tests/*.test.sh
-bash run.sh login           # glob: tests/login.test.sh
-bash tests/login.test.sh    # single test standalone (no suite/report aggregation)
+# Run the suite (CI gate: exit 1 if ANY test fails)
+bash run.sh
+bash run.sh login
+bash tests/login.test.sh
 
-# Authoring pipeline (no AI API key needed — the coding agent IS the "AI")
-bash bin/probe-record.sh scaffold <name> <url>      # -> flows/<name>.snapshot.txt + stub flow.json
-bash bin/probe-record.sh capture  <name> <url> [--app <app>] [--seconds N]  # record live journey
-bash bin/probe-record.sh verify   flows/<name>.flow.json   # re-drive, repair/promote locators
-bash bin/probe-record.sh compile  flows/<name>.flow.json   # -> tests/<name>.test.sh
-.\record.cmd <name> <url>   # Windows launcher for `capture` (runs from any terminal)
+# Playwright authoring pipeline
+bash setup/auth.sh <app> <login-url> '<success-url>'
+bash bin/probe-record.sh scaffold <name> <url>
+bash bin/probe-record.sh capture  <name> <url> --app <app> [--seconds N]
+bash bin/probe-record.sh verify   flows/<name>.flow.json
+bash bin/probe-record.sh compile  flows/<name>.flow.json
+bash tests/<name>.test.sh
 
-# One-time interactive OTP/2FA login -> cached state (Phase 1)
-APP=myapp LOGIN_URL="https://app.example.com/login" SUCCESS_URL="**/dashboard" bash setup/auth.sh
+# Direct Playwright flow runner
+node bin/play-flow.mjs --flow flows/<name>.flow.json
+node bin/play-flow.mjs --flow flows/<name>.flow.json --verify
+node bin/play-flow.mjs --flow flows/<name>.flow.json --validate-only
 
-# Local control-plane web UI (zero npm deps, Node 18+ stdlib only)
+# Local control-plane web UI
 node webui/server.js        # http://127.0.0.1:4310  (WEBUI_PORT overrides)
-
-# Environment preflight (proves video actually records on this box)
-bash lib/preflight.sh
 ```
 
-Prereqs: `agent-browser` 0.27.0 (`npm i -g agent-browser && agent-browser install`), `jq`, `ffmpeg`, `node`. Artifacts (video/screenshots/`report.json`/`report.junit.xml`) land in `artifacts/<RUN_ID>/` (gitignored).
+Prereqs: Git Bash, `node`, `jq`, `ffmpeg`, and the Playwright runtime from `approve/`
+(`cd approve && npm ci && npx playwright install chrome`). Artifacts (video, screenshots,
+`report.json`, `report.junit.xml`) land in `artifacts/<RUN_ID>/` (gitignored).
 
 ## Architecture
 
-**Dependency direction is strictly one-way:** `run.sh` → `lib/*` (leaves); `run.sh` spawns `tests/*.test.sh` (which source `lib/*` themselves). Tests never import `run.sh`; `lib/*` never import `run.sh`. Preserve this — it's a load-bearing structural invariant.
+**Dependency direction is strictly one-way:** `run.sh` -> `lib/*` (leaves); `run.sh` spawns
+`tests/*.test.sh` (which source or invoke leaves themselves). Tests never import `run.sh`;
+`lib/*` never import `run.sh`. Preserve this invariant.
 
-- **`run.sh`** — suite runner + CI gate. Owns the daemon lifecycle, ffmpeg PATH injection, a stable `RUN_ID`, running each test in an isolated subshell (a failed `set -e` aborts only that test), aggregating results, and reaping the daemon. Exit 1 if any test failed.
-- **`lib/env.sh`** — sourced first by every test. Provides `S` (per-test isolated session), `ARTDIR`, and the call wrappers `AB`, `AB_AUTH`, `AB_JSON`, `BATCH`.
-- **`lib/assert.sh`** — the ONLY sanctioned way to assert. `assert_url`, `assert_text`, `assert_value`, `assert_visible`, `assert_count`, `assert_absent`, `assert_no_snapshot_change`, plus `wait_url`.
-- **`lib/cleanup.sh`** — `EXIT` trap: finalize video + close the session no matter how the test ends. Observability-only, never changes the exit code.
-- **`lib/preflight.sh` / `lib/report.sh`** — env gate (sourced by `run.sh`) and report emission (`report.json` + JUnit XML via pure jq).
-- **`bin/`** — authoring tools: `probe-record.sh` (scaffold/capture/verify/compile dispatcher), `capture.js` (in-page recorder injected via `--init-script`), `build-flow.js` (raw events → `flow.json`), `verify-flow.sh` (re-drive + repair).
-- **`flows/`** — declarative twins (`<name>.flow.json`); `.values.json`/`.candidates.json`/`.snapshot.txt` are gitignored sidecars regenerated by the authoring tools, never source of truth.
-- **`webui/`** — thin localhost control plane over the CLI; spawns the existing bash tools via `child_process`, does NOT reimplement any test/record/compile logic. Has its own `package.json` (`"type":"module"` scoped to `webui/` only — do not move it to repo root, it would change how `bin/*.js` parse).
+- **`run.sh`**: suite runner + CI gate. Owns a stable `RUN_ID`, runs each test in an isolated
+  subshell, aggregates results, and emits reports. Exit 1 if any test failed.
+- **`bin/play-flow.mjs`**: deterministic Playwright flow runner used by compiled Playwright tests.
+- **`setup/auth.sh`**: one-time headed Playwright login/OTP flow; saves
+  `fixtures/auth/playwright/<app>.state.json`.
+- **`bin/probe-record.sh`**: authoring dispatcher for scaffold, capture, verify, and compile.
+- **`bin/pw-record.mjs` / `bin/capture.js` / `bin/build-flow.js`**: headed capture and flow generation.
+- **`flows/`**: declarative twins (`<name>.flow.json`); `.values.json`, `.candidates.json`, and
+  `.snapshot.txt` are gitignored sidecars regenerated by authoring tools.
+- **`tests/*.test.sh`**: standalone deterministic bash wrappers. For Playwright flows, compile emits a
+  wrapper that calls `node bin/play-flow.mjs --flow ...`.
+- **`webui/`**: thin localhost control plane over the CLI. It spawns existing tools via
+  `child_process` and does not reimplement test, record, compile, or auth logic.
 
-## The one rule that makes this framework correct
+## Correctness Rules
 
-**agent-browser 0.27.0 returns exit 0 even when an action FAILS** (element not found, false result — exit codes only catch infra errors). Therefore:
+- Replay must be AI-free and deterministic. No model call may decide pass/fail or drive a live replay.
+- Never write `@eN` refs into a test or flow. Refs go stale on page changes. Use semantic locators:
+  `testid`, `role`, `label`, `text`, `placeholder`, `alt`, or `title`.
+- Locator priority for authored flows: `testid > role+name > label > exact-text > placeholder > title`.
+  Pick a locator that is unique in the relevant page/frame.
+- Gate every page transition with a URL, text, or load wait so the next locator runs against a settled page.
+- `needs_review` is fail-closed. Resolve the step before compile/replay; do not guess or silently drop it.
+- Sensitive values stay out of committed flows. `{{input_N}}` tokens are filled from gitignored
+  `flows/<name>.values.json`.
 
-- **Never assert via `$?` / exit code.** `AB_JSON` surfaces the `--json` envelope; `assert_*` and `BATCH` read the `.success` field. A bare `is`/`find` in a test is a false-green waiting to happen — it will silently pass. Always route assertions through `lib/assert.sh`.
-- **`batch --bail` exits 0 even on a failed step** — `BATCH` pipes the result array to `_batch_check`, which fails the test on the first `.success == false`. Never trust `BATCH`'s exit code alone.
+## Legacy Flow Migration
 
-## Other verified footguns (do not reintroduce)
+Old flows may contain `"engine": "agent-browser"`. Omitted `engine` now defaults to Playwright, though
+new flows may still set `"engine": "playwright"` explicitly for clarity. To migrate a legacy flow:
 
-- **`wait --url` is broken for globs on 0.27.0** — `["wait","--url","**/x"]` ignores the timeout, hangs ~34s, then fails with `os error 10060`. Gate URL transitions with the `wait_url` helper (polls the reliable `get url`) instead. In-batch `["wait","--text",…]` / `["wait","--load","networkidle"]` are fine.
-- **Never write `@eN` refs into a test or flow** — they go stale on any page change. Use semantic locators only: `find role|text|label|placeholder|alt|title|testid`. Locator priority: testid > role+name > label > exact-text > placeholder > title; pick one that is UNIQUE in the snapshot.
-- **`find role --name` is a substring match** — add `--exact` so capture-time `count==1` agrees with the engine.
-- **Gate every page transition** so the next locator runs against a settled page (`wait_url` or an in-batch text/load wait).
-- **Run via `run.sh`**, which owns the daemon + ffmpeg PATH. Ad-hoc `agent-browser` calls from a stale-PATH shell can silently drop video.
-- **`agent-browser` 0.27.0 `uncheck` is broken** (returns success=false, leaves the box checked) — the recorder compiles an ending-checked box to `find … check` (absolute set) but leaves uncheck as a `click` (documented residual).
+1. Add or change the flow to `"engine": "playwright"`.
+2. Re-run Playwright auth: `bash setup/auth.sh <app> <login-url> '<success-url>'`.
+3. Validate without side effects where possible:
+   `node bin/play-flow.mjs --flow flows/<name>.flow.json --validate-only`.
+4. Run `bash bin/probe-record.sh verify flows/<name>.flow.json`, resolve any `needs_review`, then compile.
+5. Run the compiled bash wrapper through `bash run.sh <name>` or `bash tests/<name>.test.sh`.
 
-When a principle/footgun conflicts with a requested change, stop and surface it (per the user's global invariants) rather than papering over it.
+If a legacy flow cannot be migrated yet, keep the engine declaration explicit and treat it as technical
+debt outside the Playwright-only path.
 
 ## Conventions
 
-- Tests are standalone-runnable bash. A `_`-prefixed `tests/_*.test.sh` is a THROWAWAY compiled flow that a unit test writes/runs/deletes; `run.sh` excludes them from globbing. Real tests never start with `_`.
-- The recorder **fails loud or marks `needs_review`** rather than guessing — single top-frame/single-tab, same-origin only; sensitive fields are masked to `{{input_N}}` tokens (filled by hand in the gitignored `.values.json`). See README "Capture scope & limitations" for the full matrix before changing capture behavior.
-- Visual regression: prefer structural `assert_no_snapshot_change` (parses `diff snapshot --json`) over pixel diff (Windows font AA false-positives).
-- `dev/active/*` holds per-workstream design/dev notes (not runtime code).
+- Tests are standalone-runnable bash. A `_`-prefixed `tests/_*.test.sh` is a throwaway compiled flow
+  that unit tests may write/run/delete; `run.sh` excludes them from globbing.
+- The recorder fails loud or marks `needs_review` rather than guessing.
+- Visual regression should prefer structural snapshot assertions over pixel diff when possible.
+- `dev/active/*` holds per-workstream design/dev notes, not runtime code.

@@ -4,22 +4,16 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fail(){ echo "  compile-engine-unit: $1" >&2; exit 1; }
 
-AB="_eng_ab_frame_$$"
 PW="_eng_pw_frame_$$"
+PWOPEN="_eng_pw_open_record_$$"
+OMIT="_eng_pw_omit_$$"
+LEGACY="_eng_legacy_$$"
 VAL="_eng_pw_values_$$"
-OLD="_eng_old_$$"
-NAMES="$AB $PW $VAL $OLD"
-cleanup(){ for n in $NAMES; do rm -f "$DIR/flows/$n.flow.json" "$DIR/flows/$n.values.json" "$DIR/tests/$n.test.sh"; done; }
+RECIPE="_eng_recipe_$$"
+NAMES="$PW $PWOPEN $OMIT $LEGACY $VAL"
+cleanup(){ for n in $NAMES; do rm -f "$DIR/flows/$n.flow.json" "$DIR/flows/$n.values.json" "$DIR/tests/$n.test.sh"; done; rm -f "$DIR/recipes/$RECIPE.json"; }
 trap cleanup EXIT
 cleanup
-
-cat > "$DIR/flows/$AB.flow.json" <<JSON
-{"name":"$AB","startUrl":"https://example.test","steps":[{"kind":"find","by":"role","value":"button","name":"Go","action":"click","frame":{"by":"id","value":"f"}}],"asserts":[]}
-JSON
-if bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$AB.flow.json" >/tmp/aqa-eng-ab.out 2>&1; then
-	fail "agent-browser default flow with frame compiled (must fail closed)"
-fi
-grep -q 'iframe' /tmp/aqa-eng-ab.out || fail "agent-browser frame refusal should name iframe"
 
 cat > "$DIR/flows/$PW.flow.json" <<JSON
 {"name":"$PW","engine":"playwright","startUrl":"https://example.test","steps":[{"kind":"find","by":"role","value":"button","name":"Go","action":"click","frame":{"by":"id","value":"f"}}],"asserts":[]}
@@ -27,15 +21,31 @@ JSON
 bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$PW.flow.json" >/dev/null 2>&1 || fail "playwright flow compile failed"
 grep -q 'bin/play-flow.mjs' "$DIR/tests/$PW.test.sh" || fail "playwright compile did not emit play-flow wrapper"
 if grep -q 'lib/env.sh' "$DIR/tests/$PW.test.sh"; then fail "playwright wrapper must not source agent-browser env"; fi
+if grep -Eq '\bAB(_AUTH|_JSON|X)?\b|BATCH|wait_url|record start' "$DIR/tests/$PW.test.sh"; then fail "playwright wrapper leaked legacy agent-browser commands"; fi
 bash -n "$DIR/tests/$PW.test.sh" || fail "playwright wrapper bash syntax invalid"
 
-cat > "$DIR/flows/$OLD.flow.json" <<JSON
-{"name":"$OLD","startUrl":"https://example.test","steps":[{"kind":"find","by":"text","value":"Example Domain","action":"hover"}],"asserts":[]}
+cat > "$DIR/flows/$OMIT.flow.json" <<JSON
+{"name":"$OMIT","startUrl":"https://example.test","steps":[{"kind":"find","by":"text","value":"Example Domain","action":"hover"}],"asserts":[]}
 JSON
-if node "$DIR/bin/play-flow.mjs" --flow "$DIR/flows/$OLD.flow.json" --validate-only >/tmp/aqa-eng-old.out 2>&1; then
-	fail "play-flow accepted an agent-browser/default flow"
+bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$OMIT.flow.json" >/dev/null 2>&1 || fail "omitted flow.engine should compile as playwright"
+grep -q 'bin/play-flow.mjs' "$DIR/tests/$OMIT.test.sh" || fail "omitted engine compile did not emit play-flow wrapper"
+
+cat > "$DIR/flows/$LEGACY.flow.json" <<JSON
+{"name":"$LEGACY","engine":"agent-browser","startUrl":"https://example.test","steps":[{"kind":"find","by":"text","value":"Example Domain","action":"hover"}],"asserts":[]}
+JSON
+if bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$LEGACY.flow.json" >/tmp/aqa-eng-legacy.out 2>&1; then
+	fail "legacy agent-browser flow compiled"
 fi
-grep -q 'flow.engine' /tmp/aqa-eng-old.out || fail "play-flow mismatch should name flow.engine"
+grep -q 'legacy' /tmp/aqa-eng-legacy.out || fail "legacy refusal should include migration hint"
+
+cat > "$DIR/recipes/$RECIPE.json" <<JSON
+{"collection":{"name":"Tickets"},"key":"id","columns":{"id":"id","subject":"subject"}}
+JSON
+cat > "$DIR/flows/$PWOPEN.flow.json" <<JSON
+{"name":"$PWOPEN","engine":"playwright","startUrl":"https://example.test","steps":[{"kind":"open_record","source":"row_index","recipe":"$RECIPE","rowIndex":1}],"asserts":[]}
+JSON
+bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$PWOPEN.flow.json" >/dev/null 2>&1 || fail "playwright open_record flow compile failed"
+node "$DIR/bin/play-flow.mjs" --flow "$DIR/flows/$PWOPEN.flow.json" --validate-only >/dev/null 2>&1 || fail "play-flow validate-only rejected open_record flow"
 
 cat > "$DIR/flows/$VAL.flow.json" <<JSON
 {"name":"$VAL","engine":"playwright","startUrl":"https://example.test","steps":[{"kind":"find","by":"label","value":"Email","action":"fill","text":"{{input_1}}"}],"asserts":[]}

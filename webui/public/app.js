@@ -4,7 +4,6 @@
 import { $, el, getJson, fmtTime, streamJob, cancelJob, stopJob } from './util.js';
 
 const DEFAULT_ENGINE = 'playwright';
-const ENGINES = ['playwright', 'agent-browser'];
 const FLOW_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 const VIEW_TITLES = {
@@ -178,8 +177,7 @@ async function makePlan(source) {
 	}
 }
 
-// 동기화: hiworks 결재 대기함을 스크랩해 DB(/api/approvals)를 채운다. fetch-approvals.sh 브라우저 작업을
-// 직렬 큐에 올리고, 끝나면 대상 검토 표를 새로고침한다. 동기화 전에는 검토할 대기 문서가 없다.
+	// 동기화: 등록된 Playwright system sync를 직렬 큐에 올리고, 끝나면 대상 검토 표를 새로고침한다.
 async function runApprovalsSync() {
 	const app = state.selectedSystem || 'hiworks';
 	const log = $('#job-log');
@@ -189,7 +187,7 @@ async function runApprovalsSync() {
 		$('#job-log-badge').className = 'badge info';
 	}
 	try {
-		const data = await postJson('/api/sync', { app });
+		const data = await postJson(`/api/systems/${encodeURIComponent(app)}/sync`, {});
 		if (data.job) {
 			setView('queue');
 			streamJob(data.job.id, log || document.createElement('pre'), async () => {
@@ -363,7 +361,7 @@ function automationForm() {
 		autoApp,
 		matchedApp,
 		autoSuccessUrl,
-		engine: $('#auto-engine')?.value || DEFAULT_ENGINE,
+		engine: DEFAULT_ENGINE,
 		seconds: Math.min(Math.max(parseInt($('#auto-seconds')?.value, 10) || 180, 5), 1800),
 		goal: $('#auto-goal')?.value.trim() || '',
 	};
@@ -494,7 +492,7 @@ function looksLikeLoginUrl(url) {
 }
 
 function automationLoggedIn(form = automationForm()) {
-	return !!(form.app && (state.authStates || []).some((auth) => auth.app === form.app && (auth.engine || DEFAULT_ENGINE) === form.engine));
+	return !!(form.app && (state.authStates || []).some((auth) => auth.app === form.app && (auth.engine || DEFAULT_ENGINE) === DEFAULT_ENGINE));
 }
 
 function queueWork() {
@@ -823,7 +821,7 @@ async function startAutomationRecord(overwrite = false) {
 			name: flowName,
 			startUrl: form.recordUrl,
 			app: form.app || undefined,
-			engine: form.engine,
+			engine: DEFAULT_ENGINE,
 			seconds: form.seconds,
 			overwrite,
 		});
@@ -889,7 +887,7 @@ async function runAutomationAuth() {
 			app: form.app,
 			loginUrl: form.loginUrl,
 			successUrl: form.successUrl,
-			engine: form.engine,
+			engine: DEFAULT_ENGINE,
 		});
 		if (data.job) {
 			state.automation.authJob = data.job.id;
@@ -1423,7 +1421,7 @@ function renderSystemsTable() {
 		const btn = el('button', { class: 'btn small', type: 'button' }, '열기');
 		btn.addEventListener('click', () => selectSystem(s.name));
 		body.append(el('tr', { class: state.selectedSystem === s.name ? 'row-selected' : '' },
-			el('td', { class: 'col-key', title: `${s.name} / ${s.engine || DEFAULT_ENGINE}` }, `${s.label || s.name} (${s.engine || DEFAULT_ENGINE})`),
+			el('td', { class: 'col-key', title: `${s.name} / Playwright` }, `${s.label || s.name} (Playwright)`),
 			el('td', { title: safeText(s.target_url) }, safeText(s.target_url, '-')),
 			el('td', { class: 'col-short' }, safeText(s.recordCount, '0')),
 			el('td', { class: 'col-status' }, statusBadge(s.recipe ? 'ready' : 'pending')),
@@ -1445,12 +1443,7 @@ function selectedSystemObj() {
 }
 
 function ensureSystemEngineField() {
-	if ($('#sys-engine')) return;
-	const login = $('#sys-login');
-	if (!login) return;
-	const select = el('select', { id: 'sys-engine' }, ...ENGINES.map((engine) => el('option', { value: engine }, engine === 'playwright' ? 'Playwright' : engine)));
-	const wrap = el('label', { class: 'input-wrap' }, el('span', {}, 'Engine'), select);
-	login.closest('.input-wrap')?.before(wrap);
+	return;
 }
 
 function renderSystemForm() {
@@ -1463,7 +1456,6 @@ function renderSystemForm() {
 	if (!document.activeElement || !document.activeElement.closest('.systems-layout')) {
 		$('#sys-name').value = sys?.name || state.selectedSystem || '';
 		$('#sys-label').value = sys?.label || '';
-		$('#sys-engine').value = sys?.engine || DEFAULT_ENGINE;
 		$('#sys-login').value = sys?.login_url || '';
 		$('#sys-success').value = sys?.success_url || '';
 		$('#sys-target').value = sys?.target_url || '';
@@ -1478,7 +1470,7 @@ function systemFormBody() {
 	return {
 		name: $('#sys-name').value.trim(),
 		label: $('#sys-label').value.trim() || undefined,
-		engine: $('#sys-engine')?.value || DEFAULT_ENGINE,
+		engine: DEFAULT_ENGINE,
 		login_url: $('#sys-login').value.trim() || undefined,
 		success_url: $('#sys-success').value.trim() || undefined,
 		target_url: $('#sys-target').value.trim() || undefined,
@@ -1830,7 +1822,6 @@ function bindEvents() {
 	$('#auto-compile').addEventListener('click', compileAutomationFlow);
 	$('#auto-run').addEventListener('click', runAutomationFlow);
 	['#auto-record-url', '#auto-login-url', '#auto-success-url', '#auto-app', '#auto-goal'].forEach((sel) => $(sel)?.addEventListener('input', renderAutomation));
-	$('#auto-engine')?.addEventListener('change', renderAutomation);
 	$('#cc-sync').addEventListener('click', runApprovalsSync);
 	$('#cc-create-plan').addEventListener('click', () => makePlan($('#cc-command').value));
 	$('#cc-dry-run').addEventListener('click', runDryRun);

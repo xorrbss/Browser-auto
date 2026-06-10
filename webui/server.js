@@ -16,14 +16,14 @@
 //   GET  /api/jobs/:id         -> job status | 404
 //   GET  /api/jobs/:id/stream  -> SSE live log (replay buffer + live lines + end)
 // Routes (P2 — recorder + flow editor, flows.js):
-//   POST /api/record           -> enqueue record.cmd capture (headed, serial); { job, flow }
+//   POST /api/record           -> enqueue headed Playwright capture (serial); { job, flow }
 //   GET  /api/flows            -> [{ name, steps, needsReview, inputTokens, compiled }]
 //   GET  /api/flows/:name      -> flow detail (steps, needsReviewSteps, values, compilable)
 //   POST /api/flows/:name/resolve { step, candidate } -> pick a candidate (human flow.json edit)
 //   POST /api/flows/:name/resolve-clicked-record { step, recipe, field? } -> dynamic clicked-row-position open
 //   POST /api/flows/:name/values  { values }          -> write the {{input_N}} sidecar
 //   POST /api/verify           -> enqueue verify-repair re-drive (browser, serial); { job }
-//   POST /api/compile          -> compile flow -> tests/<name>.test.sh (sync, daemon-free)
+//   POST /api/compile          -> compile flow -> tests/<name>.test.sh (sync)
 // Routes (P3 — trends + auth):
 //   GET  /api/trends           -> { runs:[{passRate...}], tests:{name:[{status}]} } (read-only)
 //   GET  /api/auth             -> { apps:[<cached state names>] }
@@ -38,7 +38,6 @@ import { createReadStream, statSync } from 'node:fs';
 import { pipeline } from 'node:stream';
 import path from 'node:path';
 import os from 'node:os';
-import { createRequire } from 'node:module';
 import { listRuns, getRun, getTrends, pruneArtifacts, ARTIFACTS_DIR } from './index.js';
 import { enqueue, jobStatus, jobResult, subscribe, queueState, cancel, stop, killRunning } from './jobs.js';
 import { gitBash, browserBash, recordCmd, nodeLeaf } from './spawn.js';
@@ -52,8 +51,6 @@ import { commandPlanPost, commandPlanGet, recordCommandGateRefusal } from './rou
 import { issueSessionIfNeeded, approveGate } from './session.js';
 
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
-const require = createRequire(import.meta.url);
-const { normalizeEngine, flowEngine } = require('../lib/engine.js');
 // Bind address. Default 127.0.0.1 (localhost-only — the safe default for native Windows/macOS use).
 // A 127.0.0.1 listener inside a container is unreachable through Docker's published port, so the
 // Docker image sets WEBUI_HOST=0.0.0.0; that stays safe because compose publishes the port only to
@@ -122,7 +119,7 @@ async function readJson(req) {
 }
 
 // Run a child to completion, capturing merged stdout+stderr. For the deterministic, NON-browser
-// compile step (it never touches the daemon, so it does NOT go through the serial queue).
+// Compile is synchronous and does not drive a browser, so it does not go through the serial queue.
 function runCapture(child) {
 	return new Promise((resolve) => {
 		let out = '';
@@ -133,10 +130,13 @@ function runCapture(child) {
 	});
 }
 
-function systemAuthSpawn(engine, app, loginUrl, successUrl) {
-	return engine === 'playwright'
-		? nodeLeaf('approve/auth-pw.mjs', [loginUrl, successNeedle(successUrl), `fixtures/auth/playwright/${app}.state.json`])
-		: browserBash('setup/auth.sh', ['--engine', 'agent-browser', app, loginUrl, successUrl]);
+function requirePlaywrightEngine(value, label) {
+	if (value && value !== 'playwright') throw new Error(`${label}: WebUI is Playwright-only`);
+	return 'playwright';
+}
+
+function systemAuthSpawn(_engine, app, loginUrl, successUrl) {
+	return nodeLeaf('approve/auth-pw.mjs', [loginUrl, successNeedle(successUrl), `fixtures/auth/playwright/${app}.state.json`]);
 }
 
 // Resolve reqPath under base, refusing any traversal / NUL / absolute escape. Returns an
@@ -321,12 +321,8 @@ const server = http.createServer(async (req, res) => {
 				}
 				if (app && !validName(app)) return sendJson(res, 400, { error: 'invalid app name' });
 				let engine;
-				try {
-					const sysDefault = app ? getSystemView(app)?.engine : null;
-					engine = normalizeEngine(bodyJson.engine || sysDefault, 'record.engine');
-				} catch (e) {
-					return sendJson(res, 400, { error: e.message });
-				}
+				try { engine = requirePlaywrightEngine(bodyJson.engine || (app ? getSystemView(app)?.engine : null), 'record.engine'); }
+				catch (e) { return sendJson(res, 400, { error: e.message }); }
 				// Re-recording overwrites flows/<name>.flow.json (and may lose manual resolutions);
 				// require an explicit overwrite flag so it is never silent.
 				if (flowExists(name) && bodyJson.overwrite !== true) {
@@ -352,24 +348,28 @@ const server = http.createServer(async (req, res) => {
 				}
 
 				if (p === '/api/verify') {
-				const name = String(bodyJson.name || '').trim();
-				if (!flowExists(name)) return sendJson(res, 400, { error: 'no such flow' });
-				const flow = await getFlow(name);
-				const engine = flowEngine(flow);
+					const name = String(bodyJson.name || '').trim();
+					if (!flowExists(name)) return sendJson(res, 400, { error: 'no such flow' });
+					const flow = await getFlow(name);
+					if (flow.engineError) return sendJson(res, 400, { error: flow.engineError });
+					const engine = flow.engine;
+					if (engine !== 'playwright') return sendJson(res, 400, { error: `flow '${name}' is ${engine}; WebUI verify is Playwright-only` });
 				const job = enqueue({
 					kind: 'verify',
 					label: `verify ${name} (${engine})`,
-					spawnFn: () => engine === 'playwright'
-						? nodeLeaf('bin/play-flow.mjs', ['--flow', `flows/${name}.flow.json`, '--verify'])
-						: browserBash('bin/probe-record.sh', ['verify', `flows/${name}.flow.json`]),
+					spawnFn: () => nodeLeaf('bin/play-flow.mjs', ['--flow', `flows/${name}.flow.json`, '--verify']),
 				});
 				return sendJson(res, 202, { job });
 			}
 
 			if (p === '/api/compile') {
-				const name = String(bodyJson.name || '').trim();
-				if (!flowExists(name)) return sendJson(res, 400, { error: 'no such flow' });
-				// compile is deterministic + daemon-free -> run directly (not via the serial queue).
+					const name = String(bodyJson.name || '').trim();
+					if (!flowExists(name)) return sendJson(res, 400, { error: 'no such flow' });
+					const flow = await getFlow(name);
+					if (flow.engineError) return sendJson(res, 400, { error: flow.engineError });
+					const engine = flow.engine;
+					if (engine !== 'playwright') return sendJson(res, 400, { error: `flow '${name}' is ${engine}; WebUI compile is Playwright-only` });
+				// compile is deterministic and browser-free -> run directly (not via the serial queue).
 				const { code, output } = await runCapture(gitBash('bin/probe-record.sh', ['compile', `flows/${name}.flow.json`]));
 				return sendJson(res, 200, { ok: code === 0, code, output, testFile: code === 0 ? `tests/${name}.test.sh` : null });
 			}
@@ -397,7 +397,7 @@ const server = http.createServer(async (req, res) => {
 					return sendJson(res, 400, { error: 'invalid successUrl' });
 				}
 				let engine;
-				try { engine = normalizeEngine(bodyJson.engine, 'auth.engine'); }
+				try { engine = requirePlaywrightEngine(bodyJson.engine, 'auth.engine'); }
 				catch (e) { return sendJson(res, 400, { error: e.message }); }
 				// setup/auth.sh opens headed Chrome for human OTP, then saves fixtures/auth/<app>.state.json.
 				// Browser job -> through the single-slot serial queue. (successUrl is an inert arg via Git-Bash.)
@@ -410,9 +410,7 @@ const server = http.createServer(async (req, res) => {
 					kind: 'auth',
 					label: `auth ${app} (${engine})`,
 					stopFile: authStopFile || undefined,
-					spawnFn: () => engine === 'playwright'
-						? nodeLeaf('approve/auth-pw.mjs', [loginUrl, successNeedle(successUrl), `fixtures/auth/playwright/${app}.state.json`], { AQA_AUTH_STOPFILE: authStopFile })
-						: browserBash('setup/auth.sh', ['--engine', 'agent-browser', app, loginUrl, successUrl], { AQA_AUTH_STOPFILE: authStopFile }),
+					spawnFn: () => nodeLeaf('approve/auth-pw.mjs', [loginUrl, successNeedle(successUrl), `fixtures/auth/playwright/${app}.state.json`], { AQA_AUTH_STOPFILE: authStopFile }),
 				});
 				return sendJson(res, 202, { job, app });
 			}
@@ -578,8 +576,7 @@ server.on('error', (e) => {
 	process.exit(1);
 });
 
-// Graceful shutdown: tree-kill any in-flight browser job so the run.sh -> agent-browser ->
-// Chrome tree is not orphaned (an orphaned daemon wedges the next run). Then exit.
+// Graceful shutdown: tree-kill any in-flight browser job, then exit.
 let shuttingDown = false;
 function shutdown(sig) {
 	if (shuttingDown) return;

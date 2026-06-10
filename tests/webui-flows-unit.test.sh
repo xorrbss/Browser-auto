@@ -42,7 +42,7 @@ TREE
 cat > "$FLOW" <<JSON
 {
   "name": "$FLOW_NAME",
-  "engine": "agent-browser",
+  "engine": "playwright",
   "startUrl": "https://example.test/tickets",
   "steps": [
     {
@@ -61,7 +61,7 @@ JSON
 cat > "$MISSING_FLOW" <<JSON
 {
   "name": "$MISSING_NAME",
-  "engine": "agent-browser",
+  "engine": "playwright",
   "startUrl": "https://example.test/tickets",
   "steps": [
     { "kind": "find", "by": "title", "value": "T-1", "action": "click" }

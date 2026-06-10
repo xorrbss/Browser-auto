@@ -18,6 +18,12 @@ const WAIT_UNTIL = new Set(['url', 'text', 'load']);
 const SCROLL_DIR = new Set(['up', 'down', 'left', 'right']);
 const FRAME_BY = new Set(['id', 'name', 'title', 'urlGlob', 'index']); // iframe-step scope (same-origin recording)
 const EFFECTFUL = new Set(['click', 'fill', 'type', 'select', 'check', 'uncheck']); // hover is non-effectful
+const OPEN_RECORD_SOURCE = new Set(['first', 'row_index']);
+const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
+
+function isEffectfulStep(s) {
+	return (s && s.kind === 'find' && EFFECTFUL.has(s.action)) || (s && s.kind === 'open_record');
+}
 
 // validateSteps(steps): PURE structural validation of a flow.json step array (no browser). Fail-closed on any
 // unknown/unresolved/malformed step — never "best-effort". Returns { ok, reason }.
@@ -52,6 +58,18 @@ export function validateSteps(steps) {
 			if (typeof s.value !== 'string' || !s.value) return { ok: false, reason: `step ${i}: press.value required` };
 		} else if (s.kind === 'scroll') {
 			if (!SCROLL_DIR.has(s.dir)) return { ok: false, reason: `step ${i}: scroll.dir "${s.dir}" invalid` };
+			const px = Number(s.px);
+			if (!(Number.isFinite(px) && px > 0)) return { ok: false, reason: `step ${i}: scroll.px must be a positive number` };
+		} else if (s.kind === 'open_record') {
+			const source = s.source || 'first';
+			if (!OPEN_RECORD_SOURCE.has(source)) return { ok: false, reason: `step ${i}: open_record.source "${source}" invalid` };
+			if (typeof s.recipe !== 'string' || !SAFE_NAME.test(s.recipe)) return { ok: false, reason: `step ${i}: open_record.recipe invalid` };
+			if (s.field != null && s.field !== '' && (typeof s.field !== 'string' || !SAFE_NAME.test(s.field))) return { ok: false, reason: `step ${i}: open_record.field invalid` };
+			if (source === 'row_index') {
+				if (!(Number.isInteger(s.rowIndex) && s.rowIndex >= 0)) return { ok: false, reason: `step ${i}: open_record.rowIndex must be a non-negative integer` };
+			} else if (s.rowIndex != null && !(Number.isInteger(s.rowIndex) && s.rowIndex >= 0)) {
+				return { ok: false, reason: `step ${i}: open_record.rowIndex must be a non-negative integer` };
+			}
 		} else {
 			return { ok: false, reason: `step ${i}: unknown kind "${s.kind}"` };
 		}
@@ -91,7 +109,8 @@ export function buildLocator(page, s) {
 
 // runStep(page, step, resolveValue): execute ONE step. An effectful find FAILS CLOSED unless the locator is
 // UNIQUE (count===1) — never act on first-of-many. resolveValue substitutes {{input_N}} tokens from the sidecar.
-async function runStep(page, s, resolveValue) {
+async function runStep(page, s, opts) {
+	const { resolveValue = (x) => x, openRecord } = opts;
 	if (s.kind === 'wait') {
 		if (s.until === 'url') return page.waitForURL(s.value, { timeout: 20000 });
 		if (s.until === 'text') return page.getByText(s.value, { exact: false }).first().waitFor({ timeout: 20000 });
@@ -102,6 +121,10 @@ async function runStep(page, s, resolveValue) {
 		const px = Math.abs(parseInt(s.px, 10) || 0);
 		const d = { up: [0, -px], down: [0, px], left: [-px, 0], right: [px, 0] }[s.dir] || [0, 0];
 		return page.mouse.wheel(d[0], d[1]);
+	}
+	if (s.kind === 'open_record') {
+		if (typeof openRecord !== 'function') throw new Error('open_record step requires an openRecord runner callback');
+		return openRecord(page, s);
 	}
 	// find
 	const loc = buildLocator(page, s);
@@ -128,7 +151,7 @@ async function runStep(page, s, resolveValue) {
 // replay stays reversible — BYTE-IDENTICAL to the prior behavior for every existing flow (none declare it).
 export function irreversibleOptsFor(flow) {
 	const steps = (flow && Array.isArray(flow.steps)) ? flow.steps : [];
-	const hasEffectful = steps.some((s) => s && s.kind === 'find' && EFFECTFUL.has(s.action));
+	const hasEffectful = steps.some(isEffectfulStep);
 	if (flow && flow.reversible === true) return { reversible: true };
 	if (flow && Number.isInteger(flow.irreversibleAt) && hasEffectful) return { reversible: false, irreversibleAt: flow.irreversibleAt };
 	return { reversible: true };
@@ -148,12 +171,12 @@ export async function runSteps(page, steps, opts = {}) {
 	// (in live) an onBeforeIrreversible callback. A mis-set / out-of-range / non-effectful marker, or a missing
 	// callback, would silently run the commit step UNAUDITED + UNCAPPED, so REFUSE up-front (never run effectfully
 	// through an un-gated commit). A genuinely reversible action opts out with reversible:true.
-	const hasEffectful = steps.some((s) => s.kind === 'find' && EFFECTFUL.has(s.action));
+	const hasEffectful = steps.some(isEffectfulStep);
 	if (!reversible && hasEffectful) {
 		if (!Number.isInteger(irreversibleAt) || irreversibleAt < 0 || irreversibleAt >= steps.length)
 			throw new Error(`REFUSED: irreversibleAt ${irreversibleAt} out of range [0,${steps.length}) — an effectful action must pin its point-of-no-return (or pass reversible:true) — fail-closed`);
 		const irr = steps[irreversibleAt];
-		if (!(irr.kind === 'find' && EFFECTFUL.has(irr.action)))
+		if (!isEffectfulStep(irr))
 			throw new Error(`REFUSED: irreversibleAt ${irreversibleAt} is "${irr.kind}/${irr.action || ''}", not an effectful find — the real commit would run un-gated (fail-closed)`);
 		if (!dryRun && typeof onBeforeIrreversible !== 'function')
 			throw new Error('REFUSED: a live irreversible run requires an onBeforeIrreversible callback (audit + cap) — fail-closed');
@@ -163,7 +186,7 @@ export async function runSteps(page, steps, opts = {}) {
 			if (dryRun) { log(`dry-run: stop BEFORE irreversible step ${i}`); return { stoppedBeforeIrreversible: true }; }
 			await onBeforeIrreversible(i, steps[i]); // audit 'clicked' + consume the cap BEFORE the commit (guaranteed present by the check above)
 		}
-		await runStep(page, steps[i], resolveValue);
+		await runStep(page, steps[i], opts);
 		// NOTE (red-team STEPS_AFTER_IRREVERSIBLE): any steps after irreversibleAt are POST-COMMIT — the commit was
 		// already audited ('clicked') by onBeforeIrreversible, so a post-step failure surfaces as the leaf's
 		// completion/reconciliation outcome (committed-but-uncertain), never a silently-lost commit.

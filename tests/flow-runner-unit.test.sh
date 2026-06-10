@@ -20,6 +20,11 @@ const STEPS = [
   { kind: "wait", until: "text", value: "확인" },
   { kind: "find", by: "role", value: "button", name: "확인", action: "click" },
 ];
+assert(validateSteps([{ kind: "open_record", source: "row_index", recipe: "tickets", rowIndex: 1 }]).ok === true, "open_record row_index validates");
+assert(validateSteps([{ kind: "open_record", recipe: "tickets" }]).ok === true, "open_record first shorthand validates");
+assert(validateSteps([{ kind: "open_record", source: "nth", recipe: "tickets", rowIndex: 1 }]).ok === false, "bad open_record.source refused");
+assert(validateSteps([{ kind: "open_record", source: "row_index", recipe: "tickets", rowIndex: -1 }]).ok === false, "bad open_record.rowIndex refused");
+assert(validateSteps([{ kind: "open_record", source: "row_index", recipe: "../tickets", rowIndex: 0 }]).ok === false, "bad open_record.recipe refused");
 assert(validateSteps(STEPS).ok === true, "a valid step sequence validates");
 assert(validateSteps([]).ok === false, "empty steps ⇒ refused");
 assert(validateSteps([{ kind: "frob" }]).ok === false, "unknown kind ⇒ refused");
@@ -103,6 +108,22 @@ function mockPage(calls, countVal = 1) {
   let ok = true;
   try { await runSteps(mockPage([], 2), [{ kind: "find", by: "text", value: "x", action: "hover" }], { dryRun: false }); } catch { ok = false; }
   assert(ok, "hover (non-effectful) does NOT require uniqueness");
+}
+
+// --- open_record dispatches through the caller-provided Playwright recipe opener ---
+{
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "open_record", source: "row_index", recipe: "tickets", rowIndex: 2 }], {
+    dryRun: false,
+    reversible: true,
+    openRecord: async (_page, step) => calls.push("open:" + step.recipe + ":" + step.rowIndex),
+  });
+  assert(calls.includes("open:tickets:2"), "open_record invoked the runner callback");
+}
+{
+  let threw = false;
+  try { await runSteps(mockPage([]), [{ kind: "open_record", source: "row_index", recipe: "tickets", rowIndex: 0 }], { dryRun: false, reversible: true }); } catch { threw = true; }
+  assert(threw, "open_record without callback refused");
 }
 
 // --- iframe steps (same-origin recording): a `frame` scopes the find INTO the iframe via frameLocator ---

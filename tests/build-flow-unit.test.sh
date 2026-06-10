@@ -15,7 +15,7 @@ eq(){ [ "$1" = "$2" ] || fail "$3: expected '$2', got '$1'"; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 REC="$TMP/records.json"; FLOWS="$TMP/flows"; mkdir -p "$FLOWS"
-BF_ENGINE="agent-browser"
+BF_ENGINE="playwright"
 
 cat > "$REC" <<'JSON'
 [
@@ -135,8 +135,8 @@ eq "$(jq -rc '.steps[2]|[.kind,.until,.value]' "$FLOW4")" '["wait","url","**/b"]
 eq "$(jq -rc '.steps[3]|[.kind,.value]' "$FLOW4")" '["find","OnPageB"]' "navds step3 find on page B"
 
 # 16. scroll (#2): a valid page-scroll record -> {kind:scroll,dir,px}; malformed scrolls (bad dir /
-#     px<=0) are DROPPED; and compile emits a STANDALONE `AB scroll <dir> <px>` line (splits the batch,
-#     never a _run_batch command — batch rejects scroll).
+#     px<=0) are DROPPED; compile emits only the thin Playwright wrapper, and play-flow validates
+#     the scroll step directly.
 REC5="$TMP/records5.json"; FLOWS5="$TMP/flows5"; mkdir -p "$FLOWS5"
 cat > "$REC5" <<'JSON'
 [
@@ -154,15 +154,14 @@ eq "$(jq -r '.steps|length' "$FLOW5")" '3' "scroll: the two malformed records (b
 eq "$(jq -rc '.steps[0]|[.kind,.value,.action]' "$FLOW5")" '["find","Open","click"]' "scroll step0 click"
 eq "$(jq -rc '.steps[1]|[.kind,.dir,.px]' "$FLOW5")" '["scroll","down",700]' "scroll step1 -> {kind:scroll,dir:down,px:700}"
 eq "$(jq -rc '.steps[2]|[.kind,.value]' "$FLOW5")" '["find","Loaded"]' "scroll step2 click after the dropped scrolls"
-# compile -> a standalone `AB scroll 'down' '700'` line (column 0, not inside a _run_batch).
 SCN="_bfu_scroll_$$"
 jq --arg n "$SCN" '.name=$n' "$FLOW5" > "$DIR/flows/$SCN.flow.json"
 bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$SCN.flow.json" >/dev/null 2>&1 || fail "scroll flow compile failed"
-grep -qE "^AB scroll 'down' '700'$" "$DIR/tests/$SCN.test.sh" || fail "compile must emit a standalone 'AB scroll down 700' line"
-# the scroll must SPLIT the batch: a _run_batch (find Open) BEFORE it, the scroll, a _run_batch (find
-# Loaded) AFTER (segment order B S B) — proving it is a standalone line, never coalesced into a batch.
-sseq="$(grep -oE "^_run_batch |^AB scroll " "$DIR/tests/$SCN.test.sh" | sed "s/_run_batch /B/; s/AB scroll /S/" | tr -d ' \n')"
-eq "$sseq" 'BSB' "scroll splits the batch: find-batch, scroll, find-batch (B S B)"
+grep -q 'bin/play-flow.mjs' "$DIR/tests/$SCN.test.sh" || fail "scroll compile did not emit play-flow wrapper"
+if grep -Eq '\bAB(_AUTH|_JSON|X)?\b|BATCH|wait_url|record start' "$DIR/tests/$SCN.test.sh"; then
+	fail "scroll wrapper leaked legacy agent-browser commands"
+fi
+node "$DIR/bin/play-flow.mjs" --flow "$DIR/flows/$SCN.flow.json" --validate-only >/dev/null 2>&1 || fail "play-flow validate-only rejected scroll flow"
 rm -f "$DIR/flows/$SCN.flow.json" "$DIR/flows/$SCN.candidates.json" "$DIR/tests/$SCN.test.sh"
 
 echo "  ✓ build-flow-unit.test.sh passed"

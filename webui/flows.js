@@ -1,7 +1,7 @@
 // webui/flows.js — flow read + the documented HUMAN edits on flow.json / values.json.
 //
-// PURE filesystem: no CLI, no daemon, no spawn. The agent-qa CLI has NO "resolve" subcommand
-// (verify-flow.sh refuses to drive past a needs_review step, compile refuses to emit one), so
+// PURE filesystem: no CLI and no spawn. The agent-qa CLI has NO "resolve" subcommand
+// (Playwright verify refuses to drive past a needs_review step, compile refuses to emit one), so
 // resolving a needs_review step is the documented human edit — pick one of the listed
 // candidates and write it as the step's locator. Doing that here is NOT reimplementing CLI
 // logic; it is the same hand-edit a human would make in the JSON. Real input values live in a
@@ -54,6 +54,17 @@ function collectTokens(flow) {
 		}
 	}
 	return [...tokens];
+}
+
+function safeFlowEngine(flow) {
+	try {
+		return { engine: flowEngine(flow), engineError: null };
+	} catch (e) {
+		return {
+			engine: String(flow?.engine || 'legacy'),
+			engineError: String(e && e.message || e),
+		};
+	}
 }
 
 async function readJsonFile(p) {
@@ -197,16 +208,18 @@ export async function listFlows() {
 	}
 	const names = entries.filter((f) => f.endsWith('.flow.json')).map((f) => f.slice(0, -'.flow.json'.length));
 	const out = [];
-	for (const name of names) {
-		if (!validName(name)) continue;
-		const flow = await readJsonFile(flowPath(name));
-		if (!flow) continue;
-		const steps = Array.isArray(flow.steps) ? flow.steps : [];
-		out.push({
-			name,
-			engine: flowEngine(flow),
-			startUrl: flow.startUrl || '',
-			app: flow.app || null,
+		for (const name of names) {
+			if (!validName(name)) continue;
+			const flow = await readJsonFile(flowPath(name));
+			if (!flow) continue;
+			const steps = Array.isArray(flow.steps) ? flow.steps : [];
+			const engine = safeFlowEngine(flow);
+			out.push({
+				name,
+				engine: engine.engine,
+				engineError: engine.engineError,
+				startUrl: flow.startUrl || '',
+				app: flow.app || null,
 			steps: steps.length,
 			needsReview: steps.filter((s) => s.needs_review === true).length,
 			inputTokens: collectTokens(flow),
@@ -225,9 +238,11 @@ export async function getFlow(name) {
 	const steps = Array.isArray(flow.steps) ? flow.steps : [];
 	const values = (await readJsonFile(valuesPath(name))) || {};
 	const tokens = collectTokens(flow);
+	const engine = safeFlowEngine(flow);
 	return {
 		name,
-		engine: flowEngine(flow),
+		engine: engine.engine,
+		engineError: engine.engineError,
 		startUrl: flow.startUrl || '',
 		app: flow.app || null,
 		steps,
@@ -241,7 +256,7 @@ export async function getFlow(name) {
 		missingValues: tokens.filter((t) => !(t in values) || values[t] === ''),
 		compiled: compiledFresh(name),
 		// compile is safe only when no needs_review remains AND every token has a value.
-		compilable: steps.every((s) => s.needs_review !== true) && tokens.every((t) => t in values && values[t] !== ''),
+		compilable: !engine.engineError && steps.every((s) => s.needs_review !== true) && tokens.every((t) => t in values && values[t] !== ''),
 	};
 }
 
@@ -300,7 +315,6 @@ async function resolveClickedRecordStepInner(name, stepIndex, recipe, field = ''
 	if (!existsSync(snapshotPath(name))) return { ok: false, error: `missing snapshot flows/${name}.snapshot.txt; cannot infer clicked row position` };
 	const flow = await readJsonFile(flowPath(name));
 	if (!flow) return { ok: false, error: 'no such flow' };
-	if (flowEngine(flow) !== 'agent-browser') return { ok: false, error: 'clicked-row open is only available for agent-browser flows' };
 	const steps = Array.isArray(flow.steps) ? flow.steps : [];
 	const step = steps[stepIndex];
 	if (!step) return { ok: false, error: 'invalid step index' };

@@ -1,29 +1,27 @@
 # flows/*.flow.json schema
 
-The OPTIONAL declarative twin of a `tests/*.test.sh`. Produced by `bin/probe-record.sh`
-(AI authoring) or hand-written. The `.test.sh` is the runnable source of truth; the
-`.flow.json` is a diff-able / machine-generatable mirror.
+The optional declarative twin of a `tests/*.test.sh`. A flow may be produced by
+`bin/probe-record.sh` or written by hand. The compiled `.test.sh` remains the deterministic,
+standalone runnable journey; the `.flow.json` is the diffable authoring source.
 
-**Hard rule: NO `@eN` ref field exists in this schema.** Refs go stale on any page
-change, so by omitting the field entirely, a stale-ref bug is impossible by
-construction. Every step targets an element by a *semantic locator* only.
+**Hard rule: no `@eN` ref field exists in this schema.** Refs go stale on page changes. Every action
+targets an element through a semantic locator.
 
 ```jsonc
 {
-  "name": "checkout",                    // matches tests/<name>.test.sh
-  "engine": "agent-browser",             // optional; agent-browser|playwright. Absent == agent-browser
-  "app": "myapp",                        // optional; if set, test starts with AB_AUTH <app>
+  "name": "checkout",
+  "engine": "playwright",
+  "app": "myapp",
   "startUrl": "https://app.example.com/cart",
   "steps": [
-    // interaction step — semantic locator only
-    { "kind": "find", "by": "text",  "value": "Checkout", "action": "click" },
+    { "kind": "find", "by": "text", "value": "Checkout", "action": "click" },
     { "kind": "wait", "until": "url", "value": "**/payment" },
-    { "kind": "find", "by": "label", "value": "Card number", "action": "fill", "text": "4111111111111111" },
-    { "kind": "find", "by": "role",  "value": "button", "name": "Pay", "action": "click" },
+    { "kind": "find", "by": "label", "value": "Card number", "action": "fill", "text": "{{input_1}}" },
+    { "kind": "find", "by": "role", "value": "button", "name": "Pay", "action": "click" },
     { "kind": "wait", "until": "text", "value": "Order confirmed" }
   ],
   "asserts": [
-    { "kind": "url",  "value": "**/receipt" },
+    { "kind": "url", "value": "**/receipt" },
     { "kind": "text", "value": "Order #" }
   ]
 }
@@ -31,185 +29,107 @@ construction. Every step targets an element by a *semantic locator* only.
 
 ## Engine
 
-Top-level `engine` is optional and may be `"agent-browser"` or `"playwright"`.
-Back-compat rule: if the field is absent, the flow is treated as
-`"agent-browser"`.
+New and migrated flows use:
 
-`flow.engine` is the replay source of truth. `system.engine` is only the default
-for new auth/record/play work and never migrates existing flows. Compile, verify,
-and replay must fail closed if the requested engine and `flow.engine` disagree;
-there is no silent fallback to the other engine. New captures write the field.
+```json
+{ "engine": "playwright" }
+```
 
-## Irreversible point-of-no-return (optional, `irreversibleAt`)
+`flow.engine` is the replay source of truth. Compile, verify, and replay fail closed if the requested
+runner and `flow.engine` disagree; there is no silent fallback to another engine.
 
-Two OPTIONAL top-level fields let a Playwright flow opt into the **audited, fail-closed
-point-of-no-return gate** (the same gate `approve/flow-runner.mjs` enforces) when it is
-replayed by `bin/play-flow.mjs`:
+### Legacy migration
 
-- `irreversibleAt` — an integer step index. The step at that index MUST be an *effectful*
-  `find` (click/fill/type/select/check/uncheck) — it is the real commit. When set, play
-  replay runs with `reversible:false`: before that step it calls an `onBeforeIrreversible`
-  callback that appends the commit to an fsync'd `data/play-audit.jsonl` trail, and the
-  runner refuses (throws) if the marker is mis-set (out of range / not effectful).
-- `reversible` — an explicit boolean opt-out. `reversible:true` keeps replay un-gated even
-  for an effectful flow.
+Older flows may declare `"engine": "agent-browser"`. Treat those as legacy. Omitted `engine` now
+defaults to Playwright. To migrate an explicit legacy flow, set `"engine": "playwright"`, refresh auth
+with `bash setup/auth.sh <app> <login-url> '<success-url>'`, run
+`node bin/play-flow.mjs --flow flows/<name>.flow.json --validate-only`, then verify and compile.
+Keep an explicit legacy engine only as a migration marker for flows that cannot be migrated yet.
 
-**Back-compat:** absent both fields, a flow replays reversible exactly as before — every
-existing flow is unaffected (none declare these). The fields only *add* the ability to gate
-a commit; they do not retroactively gate undeclared flows. The agent-browser compile path
-does not consume them (Playwright replay only).
+## Top-Level Fields
 
-## Step kinds
+- `name`: required; matches `tests/<name>.test.sh`.
+- `engine`: required for new work; use `"playwright"`.
+- `app`: optional; when set, Playwright replay loads `fixtures/auth/playwright/<app>.state.json`.
+- `startUrl`: required; first URL opened by replay.
+- `steps`: required array; interaction and wait sequence.
+- `asserts`: optional array; final assertions.
+- `replayFallback`: optional boolean; default `false`.
+- `irreversibleAt`: optional integer step index for audited point-of-no-return gates.
+- `reversible`: optional boolean override for effectful-flow gating.
 
-- `find`  — `by` ∈ {testid,role,label,text,placeholder,alt,title}, `value`, `action`
-  (click|fill|type|select|check|uncheck|hover), optional `name` (for role), `text`/`val`
-  (for fill/type/select). `check` is the ABSOLUTE set capture emits for a native checkbox/radio that
-  ends checked (vs a toggling `click`, which would false-green when the page's initial state differs).
-  `uncheck` is in the schema but capture does NOT emit it — agent-browser 0.27.0 `uncheck` is broken
-  (returns success=false), so a checkbox-uncheck stays a `click` (a hand-written `uncheck` step would
-  fail at replay). Locator priority when AI-authored:
-  **testid > role+name > label > exact-text > placeholder > title** (most stable first).
-  Uniqueness is verified **in-page** at capture time (mirroring how replay `find` matches);
-  host-side `get count` is CSS-only and CANNOT count semantic locators, so it serves only
-  as a redundant cross-check for the testid CSS-equivalent `[data-testid="v"]`.
-- `open_record` — recipe-driven dynamic row open. Preferred shape:
-  `{ "kind":"open_record", "source":"row_index", "rowIndex":1, "recipe":"hiworks", "field":"doc_id" }`
-  where `rowIndex` is 0-based and `field` is optional/defaults to the recipe's `key`.
-  Replay snapshots the CURRENT list page, parses it with `recipes/<recipe>.json` via
-  `bin/extract-list.js`, reads the requested data row, and clicks that row's key/field
-  value using semantic locators. Back-compat: `{ "source":"first" }` remains valid and
-  means `rowIndex:0`. Web UI resolution must infer `rowIndex` from the capture snapshot
-  and the clicked locator/candidate value; if the snapshot is missing or the value does
-  not map to exactly one recipe row, it fails loud and must not silently fall back to first.
-  This is NOT a raw DOM nth click: the recipe must find exactly one list container, headers
-  must map cleanly, row keys must be unique, and empty/out-of-range rows fail loud.
-  Downstream `wait`/assert/detail gates must still bind the journey after the click.
-- `wait`  — `until` ∈ {url,text,load}, `value`. URL globs are normalized to `**/<stable-path>`
-  (query/fragment stripped, volatile path segments → `**`); a wait is emitted only when the
-  URL actually changed at that boundary. **Replay note:** a `until:url` step does NOT compile to
-  agent-browser `wait --url` — that command is broken for glob patterns on 0.27.0 (it hangs ~34s
-  then fails with `os error 10060`; only plain substrings work). Instead `compile` emits a
-  `wait_url '<glob>'` call (lib/assert.sh) that polls the reliable `get url` and matches with the
-  same logic as `assert_url`. This splits the surrounding `batch` at each url-wait boundary.
-  `until:text`/`until:load` waits DO work and stay inline in the batch. Capture also emits an
-  inline settle wait (`until:text` on the next step's target, else `until:load networkidle`) when
-  a click swaps a large DOM subtree but changes **no** URL (a pure client-side SPA route).
-- `scroll` — `dir` ∈ {up,down,left,right}, `px` (positive int). An explicit **PAGE** scroll, captured
-  as a coalesced gesture (capture.js debounces `window` scroll; a scrollable container's scroll never
-  changes `window.scrollY`, so containers are ignored — they'd need a selector, out of scope). Compiles
-  to a standalone `AB scroll <dir> <px>` line (NOT a `batch` command — `batch` rejects `scroll`), so
-  like a url-wait it splits the surrounding batch. The scroll runs via the bare `AB` passthrough (no
-  `.success` gate) — intentionally, like the bare-`AB` `open` / `record start`: scroll is **best-effort
-  setup**, not an assertion. A scroll that no-ops cannot false-green — if the scroll was essential
-  (lazy-load) the next step's locator fails (gated), and if it was incidental the run passes correctly. Replay scrolls BY `px` in `dir` from the current
-  position, so successive captured deltas compose. Mostly redundant (replay auto-scrolls to each
-  element); the real value is **lazy-load / infinite-scroll** journeys where a scroll reveals content
-  the next step needs. (`drag` and file `upload` are NOT captured: agent-browser's `drag`/`upload` take
-  a CSS selector or stale `@ref` — both forbidden here — and drag targets are usually non-semantic
-  `<div>`s with no stable locator. See README "Capture scope & limitations".)
+## Step Kinds
 
-- `press` — `value` (a key name). Captured non-text keyboard actions: **Enter** + a navigation allowlist
-  **Esc / Tab / Arrow{Up,Down,Left,Right}** (and `Shift+` / modifier combos). Compiles to agent-browser
-  `press <value>`. **Space and bare printable keys are NOT captured** (they are text → a `fill`, or a
-  button's synthetic click — both already captured); **AltGr-composed characters** (intl layouts, where
-  AltGr is synthesized as Ctrl+Alt — detected via `getModifierState('AltGraph')`) are likewise treated as
-  text, not a shortcut. `press` is **best-effort** (agent-browser returns success for ANY key name, like
-  `scroll`): a no-op press can't false-green a **following** locator (which gates correctness), so capture
-  must emit correct names (it does, from `e.key`). **Caveat:** a *run* of consecutive focus/index-relative
-  presses (especially **arrows** on a custom listbox/menu) has no intervening locator — if the page's
-  selection or option order drifts at replay a *different* item can be chosen, so build-flow **warns on
-  arrow presses**. A **modifier shortcut** (ctrl/meta/alt, e.g. `Control+s`) is captured but build-flow
-  warns (its effect is app-specific; review that replaying it is safe). `Shift+` alone (e.g. `Shift+Tab`)
-  is normal navigation, not warned.
+- `find`: element interaction.
+  - `by`: one of `testid`, `role`, `label`, `text`, `placeholder`, `alt`, `title`.
+  - `value`: locator value.
+  - `name`: optional accessible name for `role`.
+  - `action`: one of `click`, `fill`, `type`, `select`, `check`, `uncheck`, `hover`.
+  - `text` / `val`: value for `fill`, `type`, or `select`.
+  - `frame`: optional same-origin iframe scope.
+- `wait`: deterministic settling gate.
+  - `until`: one of `url`, `text`, `load`.
+  - `value`: URL glob/text/load state as appropriate.
+- `scroll`: page scroll captured as `{ "dir": "up|down|left|right", "px": 300 }`.
+- `press`: non-text keyboard action, such as `Enter`, `Escape`, `Tab`, or arrow keys.
+- `open_record`: recipe-driven dynamic row open for RPA/detail flows.
 
-### iframe steps (additive `frame` field on a `find` step) — SAME-ORIGIN only
+Locator priority when authoring: **testid > role+name > label > exact-text > placeholder > title**.
+Uniqueness is checked during capture/verification; a non-unique or fragile target must become
+`needs_review` instead of a guessed selector.
 
-A `find` step performed inside a **same-origin** `<iframe>` carries an optional **`frame`** locator that scopes
-replay into that frame: `{ by: "id"|"name"|"title"|"urlGlob"|"index", value }` — the **parent-visible** identity
-of the iframe element (id > name > title > src-path > index), semantic, **never an `@ref`/CSS**. Capture works
-because same-origin iframes **share the top `sessionStorage`** (empirically verified), so the existing top-frame
-drain already collects the frame's actions; `bin/capture.js` tags each in-frame action with `frame_ref` (the
-parent-visible identifiers) + a `timestamp_ms`, and `build-flow.js` emits the `frame` field.
+## Iframes
 
-- **Replay is `approve/flow-runner.mjs` (Playwright) ONLY** — it `page.frameLocator(...)`s into the frame, and
-  the in-frame uniqueness count is frame-local. The agent-browser TEST-compile path does **not** support frame
-  scoping (a documented ceiling) — a frame step there stays unsupported.
-- **CROSS-ORIGIN iframes are a ceiling, fail-closed:** the recorder can't read their storage, so their actions
-  are not captured (`probe-record.sh` warns when a cross-origin iframe is present), and any action `build-flow`
-  sees tagged `crossOrigin` is forced **`needs_review`** (unreplayable — the parent can't scope into it). An
-  iframe with no stable identity is likewise `needs_review`.
+A `find` step inside a same-origin iframe may include:
 
-### needs_review (additive field on a `find` step)
+```json
+{ "frame": { "by": "id", "value": "payment-frame" } }
+```
 
-When recording finds **no unique stable locator** for an element, the step is emitted with:
+Supported frame locators are `id`, `name`, `title`, `urlGlob`, and `index`. Cross-origin iframes are a
+ceiling for capture and must fail closed or become `needs_review`.
 
-- `needs_review` (boolean true) — the step is **non-compilable** until a human/agent resolves it.
-- `candidates` (a **non-empty** array of `{by, value, name?, count}`) — the alternatives observed,
-  with their in-page match counts. A needs_review step carries **no accepted top-level by/value**.
-  The array can hold a **single** candidate when only one alternative exists yet is not auto-acceptable
-  as a primary — e.g. an icon-only **link** / native checkbox / `aria-labelledby` control whose lone
-  `role+name` the engine won't resolve, or a long (>80-char) exact-text / role-name value (too fragile).
-  Non-empty is the only hard invariant. A **`<select multiple>`** is also emitted `needs_review` (even
-  with a good locator): `el.value` exposes only the first selected option, so the single-value `select`
-  action can't faithfully represent a multi-selection — a human resolves it.
+## `needs_review`
 
-Absent field == false; hand-written flows are unaffected. `compile` **refuses** (exits
-non-zero, lists the offending steps) on any `needs_review:true` — never a silent drop, never
-a fragile/positional fallback.
+When capture cannot identify one stable unique locator, the step is emitted as:
 
-**verify-repair (optional, `probe-record.sh verify`).** Because in-page uniqueness is only an
-estimate of how the engine's `find` resolves (an open risk), a step can pass capture yet fail at
-replay. `verify` re-drives the flow and, for each `find` step, non-destructively probes the
-locator (`find … hover`); if it no longer resolves it **repairs** the step from the captured
-candidate ladder or **promotes** it to `needs_review`, then rewrites the flow. The ladder lives in
-a **gitignored** `flows/<name>.candidates.json` sidecar (per-step `{by, value, name?}` alternates,
-written by capture); it is page structure, not PII, and is regenerated on each capture. `verify` also
-re-checks each resolved **`testid`** step's uniqueness with `get count` on the CSS-equivalent 4-attr
-selector: a testid that now matches **≥2** elements is promoted to `needs_review` (replay's `find` would
-silently act on the first), while `0`/`1` is accepted (`0` = inconclusive, e.g. shadow DOM — never a
-false RED). Non-`testid` locators have no replay-count primitive on 0.27.0, so verify's verdict states
-that their uniqueness remains a capture-time estimate.
+```jsonc
+{
+  "kind": "find",
+  "action": "click",
+  "needs_review": true,
+  "candidates": [
+    { "by": "text", "value": "Edit", "count": 4 }
+  ]
+}
+```
 
-### Replay fallback (opt-in, `replayFallback: true`)
+`needs_review:true` is non-runnable. Compile and replay must refuse it. A human or agent must select a
+stable locator, adjust the flow, or re-record the journey.
 
-An OPTIONAL top-level boolean. **Absent/false (the default) ⇒ compile output is byte-identical to
-not having the feature** — existing flows are unaffected by construction. When `true`, `compile`
-bakes a per-step *fallback ladder* into each RESOLVED `find` step of the generated test: at replay,
-if the step's primary locator fails, it retries down capture-time-UNIQUE sibling candidates (from the
-gitignored `<name>.candidates.json` sidecar) instead of immediately going red. This reduces FLAKE on
-healthy journeys; it is **not** a `needs_review` reducer (a `needs_review` step has no auto-acceptable
-primary, and the fallback filter below excludes `role` and any non-unique candidate, so a needs_review
-step's leftover candidates — e.g. an icon-only link's lone `role+name` — are never usable as a
-fallback; `compile` still refuses such a step).
+## Replay Fallback
 
-- **Eligibility** (a fallback may only ever be as strong as the primary it replaces): a sibling
-  candidate is used only if `count == 1` at capture, value ≤ 80 chars and name ≤ 80 chars (not
-  overLong), `by != "role"` (role+name is unreliable on 0.27.0), and it is not the primary itself.
-- **Loud on use**: when a fallback actually fires at replay, the test prints a `⚠ FALLBACK` line to
-  stderr naming the failed primary and the substituted locator — a fallback is never silent.
-- **Fail-loud at compile**: `replayFallback: true` requires a non-stale candidates sidecar
-  (`._steps` must equal the flow's step count, the same guard `verify` uses); otherwise `compile`
-  refuses rather than silently downgrading. The compiled `.test.sh` is self-contained (the sidecar is
-  only an authoring-time input — it is not needed at run time).
-- **Residual risk (inherent, documented)**: `cardinality ≠ identity` — a candidate that was unique at
-  capture can resolve to a *different* single element at replay if the page drifts, so a fallback
-  could act on the wrong element (a false-green). 0.27.0 has no semantic-count primitive at replay to
-  re-verify uniqueness, so this is mitigated, not eliminated, by the count==1 bar + non-role filter +
-  opt-in + the loud log + the flow's own downstream steps/asserts. **Leave it off unless a flow is
-  flaky enough to need it**, and review runs where the `⚠ FALLBACK` line appears.
+`"replayFallback": true` lets compile use the gitignored candidates sidecar as a loud fallback ladder
+when a primary locator fails. Leave it off by default. A fallback can reduce flake, but it cannot prove
+identity after page drift; downstream waits/assertions still carry the correctness burden.
 
-### Parameterized input values (flows/*.flow.json is git-committed)
+## Parameterized Values
 
-`fill`/`type`/`select` steps store **`{{input_N}}` tokens**, never the literal value, in the
-committed flow.json. A **`contenteditable`** element is captured as a `fill` step too — its text is
-read from `textContent` (it has no `.value`) and replays via `find … fill`. Real values live in a **gitignored** `flows/<name>.values.json` sidecar
-(`{"input_1":"user@example.com", ...}`), mirroring auth-state handling. `compile`/run
-substitute tokens from the sidecar at runtime (fail-loud if a referenced key is missing).
-Sensitive fields (password / OTP / card / SSN — by type/autocomplete/inputmode heuristics)
-are **masked at capture** and never recorded at all.
+Committed flows store `{{input_N}}` tokens rather than literal field values. Real values live in the
+gitignored `flows/<name>.values.json` sidecar:
 
-## Assert kinds (map 1:1 to lib/assert.sh)
+```json
+{ "input_1": "4111111111111111" }
+```
 
-- `url` → assert_url · `text` → assert_text · `value` → assert_value (needs `selector`)
-- `visible` → assert_visible (needs `selector`) · `count` → assert_count (needs `selector`,`n`)
-- `absent` → assert_absent (needs `selector`)
+Sensitive fields such as passwords, OTPs, card numbers, and SSNs are masked at capture and never
+committed.
+
+## Assert Kinds
+
+- `url`: URL glob or substring match.
+- `text`: visible text must appear.
+- `value`: selector value assertion.
+- `visible`: selector must be visible.
+- `count`: selector count must equal `n`.
+- `absent`: selector must be absent.

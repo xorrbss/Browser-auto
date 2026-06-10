@@ -1,21 +1,13 @@
-// webui/spawn.js — the ONE place the web layer shells out to the existing CLI.
+// webui/spawn.js - the one place the web layer shells out.
 //
-// shell:false + array args => web-form input is NEVER interpreted by a shell (no injection).
-// cwd is always PROBE_ROOT so the CLI resolves paths/tools exactly as it does from a terminal.
-// P1 uses gitBash() only; P2 will add recordCmd() (headed Chrome via record.cmd).
+// shell:false + array args means web-form input is never interpreted by a
+// shell. Browser-driving WebUI record/auth/verify paths are Playwright-only.
 
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
-const { normalizeEngine } = require('../lib/engine.js');
 
 export const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 
-// Bash that runs the CLI. Windows: Git Bash (MINGW64) — the SAME shim record.cmd uses, NOT WSL
-// bash (which breaks the CLI). Linux/macOS (e.g. the Docker recording server): the system bash.
-// Override either via WEBUI_BASH.
 const IS_WIN = process.platform === 'win32';
 const GIT_BASH = process.env.WEBUI_BASH || (IS_WIN ? 'C:\\Program Files\\Git\\bin\\bash.exe' : 'bash');
 
@@ -24,69 +16,37 @@ function spawnOpts(extraEnv = null) {
 		cwd: PROBE_ROOT,
 		env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
 		windowsHide: true,
-		// POSIX: run the child in its OWN process group (pgid === pid) so killTree() can reap the
-		// whole bash -> run.sh -> agent-browser -> Chrome tree with one group kill. We never unref()
-		// — jobs.js still awaits 'close', so the parent keeps tracking it. Windows uses taskkill /T
-		// and must NOT be detached (detached there spawns a stray console window).
+		// POSIX: put the child in its own process group so killTree() can reap
+		// the whole browser-driver tree. Windows uses taskkill /T.
 		detached: !IS_WIN,
 	};
 }
 
-// gitBash(scriptRel, args): run a bash CLI script (path relative to PROBE_ROOT), e.g.
-// gitBash('run.sh', ['login'])  ->  bash.exe run.sh login   (cwd = PROBE_ROOT).
 export function gitBash(scriptRel, args = [], extraEnv = null) {
 	return spawn(GIT_BASH, [scriptRel, ...args], spawnOpts(extraEnv));
 }
 
-// browserBash(): run a browser-driving bash job after proving the shared agent-browser daemon is
-// healthy. Non-browser bash calls (compile, daemon stop) keep using raw gitBash().
+// Compatibility wrapper for bash browser jobs. WebUI record/auth/verify use
+// Playwright leaves.
 export function browserBash(scriptRel, args = [], extraEnv = null) {
-	return spawn(GIT_BASH, [
-		'-lc',
-		'source ./lib/daemon.sh && ensure_daemon && export AQA_DAEMON_ENSURED=1 && exec bash "$@"',
-		'aqa-webui-daemon',
-		scriptRel,
-		...args,
-	], spawnOpts(extraEnv));
+	return gitBash(scriptRel, args, extraEnv);
 }
 
-// recordCmd(name, startUrl, {app, seconds}): launch the headed-Chrome recorder. We invoke
-// bin/probe-record.sh capture DIRECTLY via Git-Bash (exactly what record.cmd's body does:
-// `bash.exe bin/probe-record.sh capture %*`) rather than going through `cmd.exe /c record.cmd`.
-// Going through cmd.exe is a COMMAND-INJECTION hole: cmd.exe re-parses its own command line, so
-// a startUrl containing & | < > ^ " escapes the arg and runs arbitrary commands — defeating
-// shell:false. gitBash() passes an argv array to bash.exe with no shell, so startUrl is one
-// inert argument. (Chrome is still shown by agent-browser's headed mode; only the bash console
-// is hidden.) --seconds is MANDATORY: capture()'s interactive /dev/tty stop is unreachable from
-// a non-tty spawn, so a timed auto-stop is the only web-drivable way to end a recording.
 export function recordCmd(name, startUrl, { app, seconds, stopFile, engine } = {}) {
-	const selected = normalizeEngine(engine, 'record.engine');
-	const args = selected === 'playwright' ? ['--name', name, '--url', startUrl] : ['capture', name, startUrl, '--engine', selected];
+	if (engine && engine !== 'playwright') {
+		throw new Error(`record.engine: invalid engine "${engine}" (WebUI is Playwright-only)`);
+	}
+	const args = ['--name', name, '--url', startUrl];
 	if (app) args.push('--app', app);
 	args.push('--seconds', String(seconds));
-	// stopFile (optional): a path the web UI touches to request a GRACEFUL early finish; capture()
-	// watches AQA_CAPTURE_STOPFILE and breaks into its normal drain path (a complete flow).
-	if (selected === 'playwright') {
-		if (stopFile) args.push('--stop-file', stopFile);
-		return nodeLeaf('bin/pw-record.mjs', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
-	}
-	return browserBash('bin/probe-record.sh', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
+	if (stopFile) args.push('--stop-file', stopFile);
+	return nodeLeaf('bin/pw-record.mjs', args, stopFile ? { AQA_CAPTURE_STOPFILE: stopFile } : null);
 }
 
-// nodeLeaf(scriptRel, args, extraEnv): run a Node leaf (path relative to PROBE_ROOT) with the SAME node
-// binary running the webui, e.g. nodeLeaf('approve/approve-run.mjs', ['--recipe', ...]). Used for the
-// EFFECTFUL approve leaf (Playwright trusted-click driver) — distinct from gitBash (bash CLI). shell:false
-// + array args => no shell interprets web-form input. Same process-group / windowsHide treatment as
-// gitBash so killTree() reaps the whole node -> Chromium tree.
 export function nodeLeaf(scriptRel, args = [], extraEnv = null) {
 	return spawn(process.execPath, [scriptRel, ...args], spawnOpts(extraEnv));
 }
 
-// killTree(pid): kill a process AND its whole descendant tree. child.kill() only signals the top
-// process — it does NOT reap bash -> run.sh -> agent-browser -> Chrome, which would leave a wedged
-// daemon. Windows: taskkill /T walks the tree, /F forces. POSIX: gitBash() spawned the child
-// detached (its own process group, pgid === pid), so a negative-pid SIGKILL reaps the whole group.
-// Best-effort either way — the child's own 'close' still resolves the queue slot.
 export function killTree(pid) {
 	if (!pid) return;
 	try {
@@ -96,6 +56,6 @@ export function killTree(pid) {
 			process.kill(-pid, 'SIGKILL');
 		}
 	} catch {
-		/* best-effort: the child's own 'close' still resolves the queue slot */
+		/* best-effort: the child's own close still resolves the queue slot */
 	}
 }

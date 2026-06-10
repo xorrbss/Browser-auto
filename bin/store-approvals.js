@@ -2,7 +2,7 @@
 'use strict';
 // bin/store-approvals.js — persist scraped 결재 items into the approvals store.
 //
-// Reads a JSON array of items from stdin (the extraction step of bin/fetch-approvals.sh emits it)
+// Reads a JSON array of approval items from stdin.
 // and upserts them via lib/db.js, then prints the count. Kept as a tiny CJS helper (like the other
 // bin/*.js) so the real persistence logic isn't bloated into bash/jq. Pure storage: NO scraping,
 // NO network. The DB is the single source of truth for fetched 결재 (webui reads it).
@@ -30,7 +30,7 @@ process.stdin.on('end', () => {
 	const db = openDb();
 	try {
 		const n = upsertApprovals(db, items);
-		console.log(`[fetch-approvals] stored ${n} 결재 item(s) -> ${DEFAULT_DB_PATH}`);
+		console.log(`[store-approvals] stored ${n} 결재 item(s) -> ${DEFAULT_DB_PATH}`);
 	} catch (e) {
 		console.error('store-approvals: ' + e.message);
 		process.exit(1);

@@ -3,7 +3,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"; rm -f "$DIR/fixtures/auth/capunit.state.json" "$DIR/approve/capunit.pw-state.json"' EXIT
+trap 'rm -rf "$TMP"; rm -f "$DIR/fixtures/auth/capunit.state.json" "$DIR/approve/capunit.pw-state.json"; rm -rf "$DIR/fixtures/auth/playwright/capunit.state.json"' EXIT
 
 ( cd "$DIR" && AQA_DB_PATH="$TMP/t.db" node --input-type=module - <<'NODE'
 import fs from 'node:fs';
@@ -14,8 +14,10 @@ const require = createRequire(import.meta.url);
 const dbm = require('./lib/db.js');
 
 fs.mkdirSync('fixtures/auth', { recursive: true });
+fs.mkdirSync('fixtures/auth/playwright', { recursive: true });
 fs.mkdirSync('approve', { recursive: true });
 fs.writeFileSync('fixtures/auth/capunit.state.json', '{}');
+fs.writeFileSync('fixtures/auth/playwright/capunit.state.json', '{}');
 fs.writeFileSync('approve/capunit.pw-state.json', '{}');
 
 const recipe = {
@@ -42,7 +44,7 @@ const assert = (cond, msg) => { if (!cond) { console.error('  systems-capabiliti
 
 const st = systemState('capunit');
 assert(st.system.engine === 'playwright' && st.auth.engine === 'playwright', 'system engine defaults to playwright');
-assert(st.auth.state === 'ready' && st.auth.agentBrowser === 'ready' && st.auth.playwright === 'ready' && st.sync.enabled === true, 'engine-scoped auth and sync enabled from fixture state + recipe');
+assert(st.auth.state === 'ready' && st.auth.playwright === 'ready' && st.sync.enabled === true, 'playwright auth and sync enabled from fixture state + recipe');
 assert(st.sync.engine === 'playwright' && st.enrich.engine === 'playwright' && st.sync.limited === false && st.enrich.limited === false, 'read drivers use the selected playwright engine');
 assert(st.enrich.enabled === true && st.recordStats.total === 2 && st.recordStats.missingSummary === 1, 'enrich and record stats computed');
 assert(st.approve.loginState === 'ready' && st.approve.listUrl === true, 'approve readiness includes Playwright state and list URL');

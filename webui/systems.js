@@ -9,7 +9,7 @@ import { listUrlFor } from './routes-approve.js';
 
 const require = createRequire(import.meta.url);
 const { openDb, closeDb, registerSystem, listSystems, getSystem, deleteSystem, queryRecords, countRecords } = require('../lib/db.js');
-const { normalizeEngine, authStateExists, agentBrowserAuthRel, playwrightAuthRel, playwrightCompatAuthRel } = require('../lib/engine.js');
+const { authStateExists, playwrightAuthRel, playwrightCompatAuthRel } = require('../lib/engine.js');
 
 const DATA_DIR = path.join(import.meta.dirname, '..', 'data');
 const PROBE_ROOT = path.join(import.meta.dirname, '..');
@@ -30,11 +30,8 @@ export function getSystemView(name) {
 // collection.name + key + columns (so a malformed recipe can't be saved and then fail every sync).
 export function saveSystem(sys) {
 	if (!validSysName(sys && sys.name)) return { ok: false, error: 'invalid system name (use [A-Za-z0-9_-])' };
-	try {
-		if (sys.engine != null && sys.engine !== '') sys.engine = normalizeEngine(sys.engine, 'system.engine');
-	} catch (e) {
-		return { ok: false, error: e.message };
-	}
+	if (sys.engine && sys.engine !== 'playwright') return { ok: false, error: 'system.engine: WebUI is Playwright-only' };
+	sys.engine = 'playwright';
 	if (sys.recipe != null) {
 		const r = sys.recipe;
 		if (typeof r !== 'object' || !r.collection || !r.collection.name || !r.columns || !Object.keys(r.columns).length || !r.key || !r.columns[r.key]) {
@@ -84,12 +81,11 @@ export function systemState(name, db0 = null) {
 	try {
 		const sys = getSystem(db, name);
 		if (!sys) return null;
-		const engine = normalizeEngine(sys.engine, 'system.engine');
+		const engine = 'playwright';
 		const recipeOk = recipeReady(sys.recipe);
 		const proposed = readProposed(name);
-		const agentAuth = authStateExists(PROBE_ROOT, 'agent-browser', name);
 		const pwAuth = authStateExists(PROBE_ROOT, 'playwright', name);
-		const selectedAuth = engine === 'playwright' ? pwAuth : agentAuth;
+		const selectedAuth = pwAuth;
 		const approveLogin = hasFile(playwrightCompatAuthRel(name)) || hasFile(playwrightAuthRel(name));
 		const stats = recordStats(db, name);
 		const detailReady = !!(sys.recipe && sys.recipe.detail && sys.recipe.detail.idLabel);
@@ -104,10 +100,8 @@ export function systemState(name, db0 = null) {
 				engine,
 				state: selectedAuth ? 'ready' : 'missing',
 				selected: selectedAuth ? 'ready' : 'missing',
-				agentBrowser: agentAuth ? 'ready' : 'missing',
 				playwright: pwAuth ? 'ready' : 'missing',
 				paths: {
-					agentBrowser: agentBrowserAuthRel(name).replace(/\\/g, '/'),
 					playwright: playwrightAuthRel(name).replace(/\\/g, '/'),
 					playwrightCompat: playwrightCompatAuthRel(name).replace(/\\/g, '/'),
 				},
