@@ -16,7 +16,7 @@ trap cleanup EXIT
 cleanup
 
 cat > "$DIR/flows/$PW.flow.json" <<JSON
-{"name":"$PW","engine":"playwright","startUrl":"https://example.test","steps":[{"kind":"find","by":"role","value":"button","name":"Go","action":"click","frame":{"by":"id","value":"f"}}],"asserts":[]}
+{"name":"$PW","engine":"playwright","environment":"staging","riskClass":"read","startUrl":"https://example.test","steps":[{"kind":"find","by":"role","value":"button","name":"Go","action":"click","frame":{"by":"id","value":"f"}}],"asserts":[]}
 JSON
 bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$PW.flow.json" >/dev/null 2>&1 || fail "playwright flow compile failed"
 grep -q 'bin/play-flow.mjs' "$DIR/tests/$PW.test.sh" || fail "playwright compile did not emit play-flow wrapper"
@@ -25,13 +25,13 @@ if grep -Eq '\bAB(_AUTH|_JSON|X)?\b|BATCH|wait_url|record start' "$DIR/tests/$PW
 bash -n "$DIR/tests/$PW.test.sh" || fail "playwright wrapper bash syntax invalid"
 
 cat > "$DIR/flows/$OMIT.flow.json" <<JSON
-{"name":"$OMIT","startUrl":"https://example.test","steps":[{"kind":"find","by":"text","value":"Example Domain","action":"hover"}],"asserts":[]}
+{"name":"$OMIT","environment":"staging","riskClass":"read","startUrl":"https://example.test","steps":[{"kind":"find","by":"text","value":"Example Domain","action":"hover"}],"asserts":[]}
 JSON
 bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$OMIT.flow.json" >/dev/null 2>&1 || fail "omitted flow.engine should compile as playwright"
 grep -q 'bin/play-flow.mjs' "$DIR/tests/$OMIT.test.sh" || fail "omitted engine compile did not emit play-flow wrapper"
 
 cat > "$DIR/flows/$LEGACY.flow.json" <<JSON
-{"name":"$LEGACY","engine":"agent-browser","startUrl":"https://example.test","steps":[{"kind":"find","by":"text","value":"Example Domain","action":"hover"}],"asserts":[]}
+{"name":"$LEGACY","engine":"agent-browser","environment":"staging","riskClass":"read","startUrl":"https://example.test","steps":[{"kind":"find","by":"text","value":"Example Domain","action":"hover"}],"asserts":[]}
 JSON
 if bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$LEGACY.flow.json" >/tmp/aqa-eng-legacy.out 2>&1; then
 	fail "legacy agent-browser flow compiled"
@@ -42,13 +42,13 @@ cat > "$DIR/recipes/$RECIPE.json" <<JSON
 {"collection":{"name":"Tickets"},"key":"id","columns":{"id":"id","subject":"subject"}}
 JSON
 cat > "$DIR/flows/$PWOPEN.flow.json" <<JSON
-{"name":"$PWOPEN","engine":"playwright","startUrl":"https://example.test","steps":[{"kind":"open_record","source":"row_index","recipe":"$RECIPE","rowIndex":1}],"asserts":[]}
+{"name":"$PWOPEN","engine":"playwright","environment":"staging","riskClass":"read","startUrl":"https://example.test","steps":[{"kind":"open_record","source":"row_index","recipe":"$RECIPE","rowIndex":1}],"asserts":[]}
 JSON
 bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$PWOPEN.flow.json" >/dev/null 2>&1 || fail "playwright open_record flow compile failed"
 node "$DIR/bin/play-flow.mjs" --flow "$DIR/flows/$PWOPEN.flow.json" --validate-only >/dev/null 2>&1 || fail "play-flow validate-only rejected open_record flow"
 
 cat > "$DIR/flows/$VAL.flow.json" <<JSON
-{"name":"$VAL","engine":"playwright","startUrl":"https://example.test","steps":[{"kind":"find","by":"label","value":"Email","action":"fill","text":"{{input_1}}"}],"asserts":[]}
+{"name":"$VAL","engine":"playwright","environment":"staging","riskClass":"read","startUrl":"https://example.test","steps":[{"kind":"find","by":"label","value":"Email","action":"fill","text":"{{input_1}}"}],"asserts":[]}
 JSON
 if node "$DIR/bin/play-flow.mjs" --flow "$DIR/flows/$VAL.flow.json" --validate-only >/tmp/aqa-eng-val.out 2>&1; then
 	fail "play-flow validate-only accepted missing values sidecar"

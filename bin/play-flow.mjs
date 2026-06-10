@@ -10,6 +10,12 @@ const require = createRequire(import.meta.url);
 const {
 	resolveAuthStatePath,
 } = require('../lib/engine.js');
+const {
+	validateFlowRunPolicy,
+	classifyAuthChallenge,
+	failureSuggestion,
+	sanitizeUrl,
+} = require('../lib/flow-policy.js');
 const aria = require('../lib/aria.js');
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
@@ -71,6 +77,35 @@ function describeStep(s) {
 
 function errorMessage(e) {
 	return String(e && e.message || e);
+}
+
+function policyOptions(phase) {
+	return {
+		phase,
+		runMode: process.env.AQA_RUN_MODE || 'local',
+		allowlist: process.env.AQA_LIVE_ALLOWLIST || '',
+		liveActionApprove: process.env.AQA_LIVE_ACTION_APPROVE || '',
+		scheduledNoLive: process.env.AQA_SCHEDULED_NO_LIVE === '1',
+	};
+}
+
+function assertFlowPolicy(flow, phase) {
+	const policyValidation = validateFlowRunPolicy(flow, policyOptions(phase));
+	if (!policyValidation.ok) throw new Error('flow policy refused: ' + policyValidation.reason);
+	return policyValidation;
+}
+
+function shouldCheckAuthReadiness(flow) {
+	const env = String(flow?.environment || 'local');
+	return !!flow?.app || env.startsWith('live');
+}
+
+async function assertPageAuthReady(page, flow, label) {
+	if (!shouldCheckAuthReadiness(flow)) return;
+	const text = await page.locator('body').innerText({ timeout: 2500 }).catch(() => '');
+	const diag = classifyAuthChallenge({ url: page.url(), text });
+	if (diag.state === 'ready') return;
+	throw new Error(`auth readiness ${diag.state} at ${label}: ${diag.reason}; currentUrl=${sanitizeUrl(page.url())}; suggestedAction=${diag.suggestedAction}`);
 }
 
 function assertUrlMatch(got, want) {
@@ -333,7 +368,7 @@ function appendPlayAudit(flowFile, flow, i, step) {
 async function newContext(browser, flow) {
 	if (!flow.app) return browser.newContext();
 	const statePath = resolveAuthStatePath(PROBE_ROOT, 'playwright', flow.app);
-	if (!fs.existsSync(statePath)) throw new Error(`missing Playwright auth state for app "${flow.app}" (${path.relative(PROBE_ROOT, statePath).replace(/\\/g, '/')})`);
+	if (!fs.existsSync(statePath)) throw new Error(`missing Playwright auth state for app "${flow.app}"; run setup/auth.sh before deterministic replay`);
 	return browser.newContext({ storageState: statePath });
 }
 
@@ -486,8 +521,10 @@ async function runFlowStepsWithDiagnostics(page, steps, opts) {
 		try {
 			if (gate.reversible === false && i === gate.irreversibleAt) await onBeforeIrreversible(i, step);
 			await runSteps(page, [replayStep(step, opts.resolveValue)], oneStepOpts);
+			if (typeof opts.afterStep === 'function') await opts.afterStep(i, step);
 		} catch (e) {
-			throw new Error(`step ${i} (${describeStep(step)}) failed: ${errorMessage(e)}`);
+			const msg = errorMessage(e);
+			throw new Error(`step ${i} (${describeStep(step)}) failed: ${msg}; currentUrl=${sanitizeUrl(page.url())}; suggestedAction=${failureSuggestion(msg)}`);
 		}
 	}
 	return { stoppedBeforeIrreversible: false };
@@ -502,6 +539,7 @@ try {
 	if (!stepsValidation.ok) throw new Error('invalid steps: ' + stepsValidation.reason);
 	validateAsserts(flow.asserts || []);
 	if (!flow.startUrl) throw new Error('startUrl required');
+	const policyValidation = assertFlowPolicy(flow, validateOnly || verify ? 'validate' : 'run');
 	const valuesFile = valuesPathFor(absFlow);
 	const values = readJson(valuesFile, {});
 	const resolveValue = makeResolveValue(values, valuesFile);
@@ -518,20 +556,21 @@ try {
 		const ctx = await newContext(browser, flow);
 		const page = await ctx.newPage();
 		await page.goto(flow.startUrl, { waitUntil: 'domcontentloaded' });
+		await assertPageAuthReady(page, flow, 'initial navigation');
 		if (verify) {
 			const v = await verifyFlow(page, flow, absFlow, resolveValue);
 			if (v.promoted) throw new Error(`verify promoted ${v.promoted} step(s) to needs_review`);
-			summary = { status: 'ok', mode: 'verify', ...v };
+			summary = { status: 'ok', mode: 'verify', policy: policyValidation, ...v };
 		} else {
 			// Gate config from the flow itself (NOT a hardcoded reversible:true): a flow that declares an
 			// irreversible point-of-no-return replays through the audited fail-closed gate; every other flow
 			// stays reversible exactly as before. See approve/flow-runner.mjs irreversibleOptsFor.
 			const gate = irreversibleOptsFor(flow);
-			const runOpts = { resolveValue, openRecord, gate };
+			const runOpts = { resolveValue, openRecord, gate, afterStep: (_i, _step) => assertPageAuthReady(page, flow, 'post-step') };
 			if (gate.reversible === false) runOpts.onBeforeIrreversible = (i, step) => appendPlayAudit(absFlow, flow, i, step);
 			await runFlowStepsWithDiagnostics(page, flow.steps, runOpts);
 			await runAsserts(page, flow.asserts || [], resolveValue);
-			summary = { status: 'ok', mode: 'play', flow: flow.name || path.basename(absFlow) };
+			summary = { status: 'ok', mode: 'play', flow: flow.name || path.basename(absFlow), policy: policyValidation };
 		}
 	} finally {
 		await browser.close();

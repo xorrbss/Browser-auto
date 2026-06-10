@@ -12,9 +12,11 @@ import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { latestTestResultsByName } from './index.js';
+import { authReadinessForApp } from './auth.js';
 
 const require = createRequire(import.meta.url);
-const { authStateExists, flowEngine } = require('../lib/engine.js');
+const { flowEngine } = require('../lib/engine.js');
+const { validateFlowRunPolicy } = require('../lib/flow-policy.js');
 const aria = require('../lib/aria.js');
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
@@ -72,29 +74,62 @@ function missingTokens(tokens, values) {
 	return tokens.filter((t) => !(t in values) || values[t] === '');
 }
 
-function authStatus(flow, engine) {
+async function authStatus(flow, engine) {
 	if (!flow?.app || engine.engineError) return { required: !!flow?.app, ready: true, app: flow?.app || null };
 	try {
-		return { required: true, ready: authStateExists(PROBE_ROOT, engine.engine, flow.app), app: flow.app };
+		const readiness = await authReadinessForApp(flow.app);
+		return {
+			required: true,
+			app: flow.app,
+			ready: readiness.ready && readiness.state === 'ready',
+			state: readiness.state,
+			readiness: readiness.readiness,
+			refreshNeeded: readiness.state === 'stale-auth',
+			present: readiness.present,
+			valid: readiness.valid,
+			stale: readiness.stale,
+			ageMs: readiness.ageMs,
+			staleAfterMs: readiness.staleAfterMs,
+			otpMfa: readiness.otpMfa,
+			source: readiness.source,
+			domains: readiness.domains,
+		};
 	} catch (e) {
 		return { required: true, ready: false, app: flow.app, error: String(e?.message || e) };
 	}
 }
 
-function buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun }) {
+function flowPolicyStatus(flow) {
+	const policy = validateFlowRunPolicy(flow, { phase: 'validate' });
+	return policy.ok
+		? policy
+		: {
+			ok: false,
+			environment: flow?.environment || '',
+			riskClass: flow?.riskClass || '',
+			reason: policy.reason,
+		};
+}
+
+async function buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun }) {
 	const needsReview = steps.filter((s) => s.needs_review === true).length;
-	const auth = authStatus(flow, engine);
+	const auth = await authStatus(flow, engine);
+	const policy = flowPolicyStatus(flow);
 	const reasons = [];
 	if (engine.engineError) reasons.push(engine.engineError);
+	if (!policy.ok) reasons.push(`policy: ${policy.reason}`);
 	if (needsReview) reasons.push(`${needsReview} needs_review step(s)`);
 	if (missingValues.length) reasons.push(`missing values: ${missingValues.join(', ')}`);
-	if (auth.required && !auth.ready) reasons.push(auth.error || `missing Playwright auth for app "${auth.app}"`);
+	if (auth.required && auth.refreshNeeded) reasons.push(`auth refresh needed: ${auth.state}`);
+	else if (auth.required && !auth.ready) reasons.push(auth.error || `missing Playwright auth for app "${auth.app}"`);
 	if (!compiled) reasons.push('compiled test is missing or older than the flow');
 
 	let state = 'ready';
 	if (engine.engineError) state = 'engine-error';
+	else if (!policy.ok) state = 'policy-blocked';
 	else if (needsReview) state = 'needs-review';
 	else if (missingValues.length) state = 'missing-values';
+	else if (auth.required && auth.refreshNeeded) state = 'stale-auth';
 	else if (auth.required && !auth.ready) state = 'missing-auth';
 	else if (!compiled) state = 'needs-compile';
 	else if (lastRun?.status === 'fail') state = 'last-run-failed';
@@ -109,6 +144,7 @@ function buildScenarioStatus({ flow, steps, engine, compiled, missingValues, las
 		missingValues,
 		compiled,
 		auth,
+		policy,
 		lastRun: lastRun || null,
 		lastFailureReason: lastRun?.status === 'fail' ? lastRun.failureReason : '',
 	};
@@ -266,11 +302,14 @@ export async function listFlows() {
 		const engine = safeFlowEngine(flow);
 		const compiled = compiledFresh(name);
 		const missingValues = missingTokens(tokens, values);
-		const scenarioStatus = buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun: latestResults[name] || null });
+		const scenarioStatus = await buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun: latestResults[name] || null });
 		out.push({
 			name,
 			engine: engine.engine,
 			engineError: engine.engineError,
+			environment: flow.environment || '',
+			riskClass: flow.riskClass || '',
+			policy: scenarioStatus.policy,
 			startUrl: flow.startUrl || '',
 			app: flow.app || null,
 			steps: steps.length,
@@ -279,7 +318,7 @@ export async function listFlows() {
 			missingValues,
 			hasValues: existsSync(valuesPath(name)),
 			compiled,
-			compilable: !engine.engineError && scenarioStatus.needsReview === 0 && missingValues.length === 0,
+			compilable: !engine.engineError && scenarioStatus.policy.ok && scenarioStatus.needsReview === 0 && missingValues.length === 0,
 			runnable: scenarioStatus.runnable,
 			runBlockedReason: scenarioStatus.unrunnableReason,
 			lastRun: scenarioStatus.lastRun,
@@ -302,11 +341,14 @@ export async function getFlow(name) {
 	const compiled = compiledFresh(name);
 	const missingValues = missingTokens(tokens, values);
 	const latestResults = await latestTestResultsByName();
-	const scenarioStatus = buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun: latestResults[name] || null });
+	const scenarioStatus = await buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun: latestResults[name] || null });
 	return {
 		name,
 		engine: engine.engine,
 		engineError: engine.engineError,
+		environment: flow.environment || '',
+		riskClass: flow.riskClass || '',
+		policy: scenarioStatus.policy,
 		startUrl: flow.startUrl || '',
 		app: flow.app || null,
 		steps,
@@ -321,7 +363,7 @@ export async function getFlow(name) {
 		compiled,
 		scenarioStatus,
 		// compile is safe only when no needs_review remains AND every token has a value.
-		compilable: !engine.engineError && steps.every((s) => s.needs_review !== true) && tokens.every((t) => t in values && values[t] !== ''),
+		compilable: !engine.engineError && scenarioStatus.policy.ok && steps.every((s) => s.needs_review !== true) && tokens.every((t) => t in values && values[t] !== ''),
 		runnable: scenarioStatus.runnable,
 		runBlockedReason: scenarioStatus.unrunnableReason,
 		lastRun: scenarioStatus.lastRun,

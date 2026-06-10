@@ -11,6 +11,8 @@ targets an element through a semantic locator.
 {
   "name": "checkout",
   "engine": "playwright",
+  "environment": "local",
+  "riskClass": "read",
   "app": "myapp",
   "startUrl": "https://app.example.com/cart",
   "steps": [
@@ -50,12 +52,33 @@ Keep an explicit legacy engine only as a migration marker for flows that cannot 
 
 - `name`: required; matches `tests/<name>.test.sh`.
 - `engine`: required for new work; use `"playwright"`.
+- `environment`: required for new work; one of `local`, `staging`, `live-readonly`, or `live-action`.
+- `riskClass`: required for new work; one of `read`, `effectful`, or `destructive`.
 - `app`: optional; when set, Playwright replay loads `fixtures/auth/playwright/<app>.state.json`.
 - `startUrl`: required; first URL opened by replay.
 - `steps`: required array; interaction and wait sequence.
 - `asserts`: optional array; final assertions.
 - `irreversibleAt`: optional integer step index for audited point-of-no-return gates.
 - `reversible`: optional boolean override for effectful-flow gating.
+
+## Live-Readiness Policy
+
+Replay validates `environment` and `riskClass` before opening a browser.
+
+- `local`: deterministic local/file/localhost fixtures; default CI lane.
+- `staging`: staging-safe systems; manual lane.
+- `live-readonly`: live/public read-only browsing; default CI skips it.
+- `live-action`: live effectful work; must declare `riskClass:"effectful"` or `"destructive"` and an
+  `irreversibleAt` step that points at the effectful point of no return.
+
+Actual replay of non-local environments is gated by `AQA_RUN_MODE`. A `live-action` replay also requires
+`AQA_LIVE_ALLOWLIST` to include the flow name, app, or start URL origin, plus
+`AQA_LIVE_ACTION_APPROVE=1` or the exact flow name. Scheduled runs (`AQA_SCHEDULED_NO_LIVE=1`) refuse live
+environments. `live-readonly` flows that look like submit/approve/delete/transfer/save actions fail closed.
+
+OTP/MFA is never automated in deterministic replay. A `fill`/`type`/`select` step whose locator looks like an
+OTP, MFA, one-time, SMS, email-code, authenticator, push, or recovery-code challenge is refused; refresh auth
+with headed `setup/auth.sh` instead.
 
 ## Step Kinds
 
@@ -66,12 +89,15 @@ Keep an explicit legacy engine only as a migration marker for flows that cannot 
   - `action`: one of `click`, `fill`, `type`, `select`, `check`, `uncheck`, `hover`.
   - `text` / `val`: value for `fill`, `type`, or `select`.
   - `frame`: optional same-origin iframe scope.
+  - `timeoutMs`: optional per-step timeout override, positive integer up to 600000.
 - `wait`: deterministic settling gate.
   - `until`: one of `url`, `text`, `load`.
   - `value`: URL glob/text/load state as appropriate.
+  - `timeoutMs`: optional per-step timeout override, positive integer up to 600000.
 - `scroll`: page scroll captured as `{ "dir": "up|down|left|right", "px": 300 }`.
 - `press`: non-text keyboard action, such as `Enter`, `Escape`, `Tab`, or arrow keys.
 - `open_record`: recipe-driven dynamic row open for RPA/detail flows.
+  - `timeoutMs`: optional per-step timeout override for runner-controlled work where supported.
 
 Locator priority when authoring: **testid > role+name > label > exact-text > placeholder > title**.
 Uniqueness is checked during capture/verification; a non-unique or fragile target must become

@@ -22,6 +22,13 @@ valid_name() {
 	[[ "${1:-}" =~ ^[A-Za-z0-9_-]+$ ]]
 }
 
+default_environment() {
+	case "${1:-}" in
+		data:*|file:*|about:*|http://localhost*|https://localhost*|http://127.*|https://127.*|http://\[::1\]*|https://\[::1\]*) echo local ;;
+		*) echo staging ;;
+	esac
+}
+
 flow_engine() {
 	local flow="$1" engine
 	engine="$(jq -r '.engine // "playwright"' "$flow")"
@@ -96,8 +103,10 @@ NODE
 	if [ -s "$stub" ]; then
 		echo "[probe] $stub already exists; left untouched."
 	else
-		jq -n --arg name "$name" --arg url "$starturl" \
-			'{name:$name, engine:"playwright", startUrl:$url, steps:[], asserts:[]}' > "$stub"
+		local env
+		env="$(default_environment "$starturl")"
+		jq -n --arg name "$name" --arg url "$starturl" --arg env "$env" \
+			'{name:$name, engine:"playwright", environment:$env, riskClass:"read", startUrl:$url, steps:[], asserts:[]}' > "$stub"
 		echo "[probe] flow stub -> $stub"
 	fi
 }

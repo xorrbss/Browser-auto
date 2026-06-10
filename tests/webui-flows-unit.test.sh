@@ -47,6 +47,8 @@ cat > "$FLOW" <<JSON
 {
   "name": "$FLOW_NAME",
   "engine": "playwright",
+  "environment": "staging",
+  "riskClass": "read",
   "startUrl": "https://example.test/tickets",
   "steps": [
     {
@@ -66,6 +68,8 @@ cat > "$MISSING_FLOW" <<JSON
 {
   "name": "$MISSING_NAME",
   "engine": "playwright",
+  "environment": "staging",
+  "riskClass": "read",
   "startUrl": "https://example.test/tickets",
   "steps": [
     { "kind": "find", "by": "label", "value": "Ticket", "action": "fill", "text": "{{input_1}}" }
@@ -82,7 +86,7 @@ cat > "$ART_OLD/report.json" <<JSON
 JSON
 cat > "$ART_NEW/report.json" <<JSON
 [
-  { "name": "$MISSING_NAME", "status": "fail", "durationMs": 9, "reason": "locator timeout on Ticket" }
+  { "name": "$MISSING_NAME", "status": "fail", "durationMs": 9, "reason": "locator timeout on Ticket password=hunter2", "artifacts": "$DIR/artifacts/$RUN_NEW/$MISSING_NAME" }
 ]
 JSON
 
@@ -115,7 +119,8 @@ if (statusFlow.scenarioStatus.lastRun?.runId !== process.env.RUN_NEW) die(`expec
 if (statusFlow.scenarioStatus.lastRun.status !== 'fail') die('expected newest run status=fail');
 if (statusFlow.scenarioStatus.lastRun.runUrl !== `/api/runs/${process.env.RUN_NEW}`) die('expected safe runUrl link');
 if (statusFlow.scenarioStatus.lastRun.reportUrl !== `/artifacts/${process.env.RUN_NEW}/report.json`) die('expected safe reportUrl link');
-if (statusFlow.scenarioStatus.lastFailureReason !== 'locator timeout on Ticket') die(`expected explicit failure reason, got ${statusFlow.scenarioStatus.lastFailureReason}`);
+if (statusFlow.scenarioStatus.lastRun.artifactUrl !== `/artifacts/${process.env.RUN_NEW}/${process.env.MISSING_NAME}`) die(`expected safe per-test artifact link, got ${statusFlow.scenarioStatus.lastRun.artifactUrl}`);
+if (statusFlow.scenarioStatus.lastFailureReason !== 'locator timeout on Ticket password=[redacted]') die(`expected sanitized failure reason, got ${statusFlow.scenarioStatus.lastFailureReason}`);
 
 const listed = (await listFlows()).find((f) => f.name === process.env.MISSING_NAME);
 if (!listed) die('expected status flow in listFlows()');

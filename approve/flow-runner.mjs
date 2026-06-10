@@ -20,9 +20,15 @@ const FRAME_BY = new Set(['id', 'name', 'title', 'urlGlob', 'index']); // iframe
 const EFFECTFUL = new Set(['click', 'fill', 'type', 'select', 'check', 'uncheck']); // hover is non-effectful
 const OPEN_RECORD_SOURCE = new Set(['first', 'row_index']);
 const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
+const DEFAULT_STEP_TIMEOUT_MS = 20000;
+const MAX_STEP_TIMEOUT_MS = 10 * 60 * 1000;
 
 function isEffectfulStep(s) {
 	return (s && s.kind === 'find' && EFFECTFUL.has(s.action)) || (s && s.kind === 'open_record');
+}
+
+function stepTimeout(s) {
+	return Number.isInteger(s && s.timeoutMs) ? s.timeoutMs : DEFAULT_STEP_TIMEOUT_MS;
 }
 
 // validateSteps(steps): PURE structural validation of a flow.json step array (no browser). Fail-closed on any
@@ -33,6 +39,9 @@ export function validateSteps(steps) {
 		const s = steps[i];
 		if (!s || typeof s !== 'object') return { ok: false, reason: `step ${i}: not an object` };
 		if (s.needs_review) return { ok: false, reason: `step ${i}: needs_review (unresolved locator) — refuse` };
+		if (s.timeoutMs != null && !(Number.isInteger(s.timeoutMs) && s.timeoutMs > 0 && s.timeoutMs <= MAX_STEP_TIMEOUT_MS)) {
+			return { ok: false, reason: `step ${i}: timeoutMs must be an integer from 1 to ${MAX_STEP_TIMEOUT_MS}` };
+		}
 		if (s.kind === 'find') {
 			if (!FIND_BY.has(s.by)) return { ok: false, reason: `step ${i}: find.by "${s.by}" invalid` };
 			if (typeof s.value !== 'string' || !s.value) return { ok: false, reason: `step ${i}: find.value required` };
@@ -111,10 +120,11 @@ export function buildLocator(page, s) {
 // UNIQUE (count===1) — never act on first-of-many. resolveValue substitutes {{input_N}} tokens from the sidecar.
 async function runStep(page, s, opts) {
 	const { resolveValue = (x) => x, openRecord } = opts;
+	const timeout = stepTimeout(s);
 	if (s.kind === 'wait') {
-		if (s.until === 'url') return page.waitForURL(s.value, { timeout: 20000 });
-		if (s.until === 'text') return page.getByText(s.value, { exact: false }).first().waitFor({ timeout: 20000 });
-		return page.waitForLoadState('networkidle');
+		if (s.until === 'url') return page.waitForURL(s.value, { timeout });
+		if (s.until === 'text') return page.getByText(s.value, { exact: false }).first().waitFor({ timeout });
+		return page.waitForLoadState(s.value || 'networkidle', { timeout });
 	}
 	if (s.kind === 'press') return page.keyboard.press(s.value);
 	if (s.kind === 'scroll') {
@@ -131,13 +141,13 @@ async function runStep(page, s, opts) {
 	if (EFFECTFUL.has(s.action)) { const c = await loc.count(); if (c !== 1) throw new Error(`find ${s.by}:${s.value} matched ${c} elements (need exactly 1) — fail-closed`); }
 	const t = loc.first();
 	switch (s.action) {
-		case 'click': return t.click();
-		case 'fill': return t.fill(resolveValue(s.text != null ? s.text : ''));
-		case 'type': return t.pressSequentially(resolveValue(s.text != null ? s.text : ''));
-		case 'select': return t.selectOption(resolveValue(s.val != null ? s.val : s.text));
-		case 'check': return t.check();
-		case 'uncheck': return t.uncheck();
-		case 'hover': return t.hover();
+		case 'click': return t.click({ timeout });
+		case 'fill': return t.fill(resolveValue(s.text != null ? s.text : ''), { timeout });
+		case 'type': return t.pressSequentially(resolveValue(s.text != null ? s.text : ''), { timeout });
+		case 'select': return t.selectOption(resolveValue(s.val != null ? s.val : s.text), { timeout });
+		case 'check': return t.check({ timeout });
+		case 'uncheck': return t.uncheck({ timeout });
+		case 'hover': return t.hover({ timeout });
 		default: throw new Error(`unknown find.action ${s.action}`);
 	}
 }

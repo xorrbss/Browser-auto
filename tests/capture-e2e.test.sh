@@ -6,8 +6,8 @@
 #   flip + uncheck-stays-click residual); input coalescing + Enter flush order; key allowlist +
 #   modifier combos (printables excluded); contenteditable normalized capture; select single/multiple
 #   (multiple => insufficient); scroll coalescing + order; dom_settle swap marker; icon-button
-#   aria-label role primary; overLong (>80c) barred from primary => insufficient; full-doc + pushState
-#   navigate marks; per-case seq==buf.length health invariant.
+#   aria-label role primary; overLong (>80c) barred from primary => insufficient; upload/download
+#   actions fail closed; full-doc + pushState navigate marks; per-case seq==buf.length health invariant.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -61,6 +61,11 @@ const PAGES = {
 		<button id="ib" aria-label="Search" type="button"><svg width="16" height="16"><circle cx="8" cy="8" r="6"/></svg></button>`,
 	'/long': `<!doctype html><meta charset="utf-8">
 		<button id="lb" type="button">${'x'.repeat(90)}</button>`,
+	'/upload': `<!doctype html><meta charset="utf-8">
+		<label>Upload file <input id="file" type="file"></label>`,
+	'/download': `<!doctype html><meta charset="utf-8">
+		<a id="dl" download="report.txt" href="/download-file">Download report</a>`,
+	'/download-file': `plain report`,
 	'/nav1': `<!doctype html><meta charset="utf-8"><a id="go" href="/nav2">go to page 2</a>`,
 	'/nav2': `<!doctype html><meta charset="utf-8"><p>page 2</p>`,
 	'/spa': `<!doctype html><meta charset="utf-8">
@@ -277,7 +282,37 @@ await page.click('#lb');
 	ok(!!ev && Array.isArray(ev.candidates) && ev.candidates.length > 0, 'longtext: candidate ladder retained for review');
 }
 
-// 10) navigation marks: full-doc nav (prevUrl sentinel across documents) + SPA pushState.
+// 10) upload/download: schema has no faithful replay action, so capture records review-only
+//     events and build-flow emits needs_review with no runnable fallback.
+await openCase('/upload');
+const uploadPath = path.join(TMP, 'upload.txt');
+fs.writeFileSync(uploadPath, 'upload fixture\n');
+await page.setInputFiles('#file', uploadPath);
+{
+	const buf = await drain('upload');
+	const ev = byType(buf, 'input')[0];
+	ok(!!ev && ev.upload === true && ev.insufficient === true && ev.input_value === null, 'upload: file input marked insufficient with no captured path');
+	ok(!JSON.stringify(buf).includes(uploadPath), 'upload: local file path absent from capture buffer');
+	const built = buildFlowFromRecords('upload_flow', ORIGIN + '/upload', buf);
+	const step = built.flow.steps[0];
+	ok(step && step.needs_review === true, 'upload: built step is needs_review');
+	ok(step && step.by === undefined && step.value === undefined && step.text === undefined, 'upload: no runnable locator or fake fill token emitted');
+}
+await openCase('/download');
+const downloadPromise = page.waitForEvent('download', { timeout: 3000 }).catch(() => null);
+await page.click('#dl');
+await downloadPromise;
+{
+	const buf = await drain('download');
+	const ev = byType(buf, 'click')[0];
+	ok(!!ev && ev.download === true && ev.insufficient === true, 'download: download link marked insufficient');
+	const built = buildFlowFromRecords('download_flow', ORIGIN + '/download', buf);
+	const step = built.flow.steps[0];
+	ok(step && step.needs_review === true, 'download: built step is needs_review');
+	ok(step && step.by === undefined && step.value === undefined, 'download: no runnable click locator emitted');
+}
+
+// 11) navigation marks: full-doc nav (prevUrl sentinel across documents) + SPA pushState.
 await openCase('/nav1');
 await page.click('#go');
 await page.waitForURL('**/nav2');
@@ -294,7 +329,7 @@ await page.waitForTimeout(200);
 	ok(byType(buf, 'navigate').some((e) => e.is_navigation_boundary === true && String(e.from).includes('/spa')), 'pushstate: SPA route change recorded as a navigation boundary');
 }
 
-// 11) same-origin iframe: page.frames() sees the shared sessionStorage buffer twice; recorder drain
+// 12) same-origin iframe: page.frames() sees the shared sessionStorage buffer twice; recorder drain
 //     dedupes it, and build-flow emits a runnable iframe-scoped find step.
 await openCase('/iframe-same');
 await page.frameLocator('iframe#samePay').getByTestId('frame-pay').click();
@@ -313,7 +348,7 @@ await page.waitForTimeout(100);
 	ok(valid.status === 0, 'iframe-same: frame-scoped flow validates for replay');
 }
 
-// 12) cross-origin iframe: events are captured for review, but build-flow must fail closed by
+// 13) cross-origin iframe: events are captured for review, but build-flow must fail closed by
 //     emitting needs_review so validate/replay cannot go green unattended.
 await openCase('/iframe-xo');
 await page.frameLocator('iframe#xoPay').getByTestId('xo-pay').click();

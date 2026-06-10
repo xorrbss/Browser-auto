@@ -322,6 +322,7 @@
     return false;
   }
   function valueOf(el) {
+    if (fileInputType(el)) return null;
     if (sensitive(el)) return null;
     try { if ('value' in el) return String(el.value).slice(0, 200); } catch (e) {}
     // contenteditable has no .value, but the typed text lives in textContent. Without this it is
@@ -341,8 +342,9 @@
   function commitPend() {
     if (pendEl == null) return;
     var el = pendEl, val = pendVal; pendEl = null; pendVal = null;
-    var masked = sensitive(el);
-    emit('input', el, { input_value: masked ? null : val, masked: masked || undefined });
+    var upload = fileInputType(el);
+    var masked = !upload && sensitive(el);
+    emit('input', el, { input_value: (masked || upload) ? null : val, masked: masked || undefined, insufficient: upload || undefined, upload: upload || undefined });
   }
   document.addEventListener('input', function (e) {
     if (e.isComposing) return;                 // ignore mid-IME composition
@@ -457,6 +459,12 @@
     var t = (attr(el, 'type') || '').toLowerCase();
     return (t === 'checkbox' || t === 'radio') ? t : '';
   }
+  function fileInputType(el) {
+    return !!(el && el.tagName === 'INPUT' && (attr(el, 'type') || '').toLowerCase() === 'file');
+  }
+  function downloadLike(el) {
+    return !!(el && el.tagName === 'A' && el.hasAttribute('download'));
+  }
 
   // --- clicks (commit pending input first; label dedup; interactive ancestor) ---
   var lastLabelControl = null, lastLabelAt = 0;
@@ -468,6 +476,14 @@
     if (lastLabelControl === el && (now - lastLabelAt) < 700) { lastLabelAt = now; return; } // suppress label->control dup
     if (raw.tagName === 'LABEL' || (raw.closest && raw.closest('label'))) { lastLabelControl = el; lastLabelAt = now; }
     commitScroll();   // flush a pending scroll BEFORE this click so the buffer order matches the journey
+    if (fileInputType(el)) {
+      emit('click', el, { insufficient: true, upload: true });
+      return;
+    }
+    if (downloadLike(el)) {
+      emit('click', el, { insufficient: true, download: true });
+      return;
+    }
     // checkbox/radio: a bare click TOGGLES, so a differing initial state at replay silently lands the
     // WRONG final state (false-green). Record the absolute desired post-state and emit `check`, which
     // replay sets absolutely. el is read at the RECORDED click — for a label/ancestor click (raw!==el)

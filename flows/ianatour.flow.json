@@ -1,5 +1,7 @@
 {
   "name": "ianatour",
+  "environment": "live-readonly",
+  "riskClass": "read",
   "startUrl": "https://www.iana.org/domains",
   "steps": [
     { "kind": "find", "by": "role", "value": "link", "name": "Root Zone Management", "action": "click" },

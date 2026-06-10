@@ -68,12 +68,17 @@ async function parseRun(runId) {
 			status,
 			durationMs: Number(r?.durationMs) || 0,
 			failureReason: failureReasonFor(r, status),
+			artifactUrl: artifactUrlFor(r?.artifacts, runId),
 		};
 	});
 	const passed = tests.filter((t) => t.status === 'pass').length;
 	return {
 		runId,
 		startedAt: startedAtFromRunId(runId),
+		runUrl: `/api/runs/${runId}`,
+		reportUrl: `/artifacts/${runId}/report.json`,
+		junitUrl: `/artifacts/${runId}/report.junit.xml`,
+		resultsUrl: `/artifacts/${runId}/results.tsv`,
 		total: tests.length,
 		passed,
 		failed: tests.length - passed,
@@ -125,7 +130,15 @@ export async function getRun(runId) {
 }
 
 function cleanReason(value) {
-	const s = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+	let s = String(value == null ? '' : value)
+		.replace(/\x1b\[[0-9;]*m/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+	s = s
+		.replace(/\b(authorization|cookie|set-cookie)\s*:\s*[^,;\s]+/ig, '$1: [redacted]')
+		.replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/ig, '$1 [redacted]')
+		.replace(/\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|otp|code)\s*=\s*[^&\s]+/ig, '$1=[redacted]')
+		.replace(/(https?:\/\/[^\s?#]+)\?[^)\]\s]+/ig, '$1?[redacted]');
 	return s.length > 320 ? `${s.slice(0, 317)}...` : s;
 }
 
@@ -133,6 +146,17 @@ function failureReasonFor(row, status) {
 	const explicit = cleanReason(row?.failureReason || row?.reason || row?.error || row?.message);
 	if (explicit) return explicit;
 	return status === 'fail' ? 'Test failed; report.json does not include a failure message.' : '';
+}
+
+function artifactUrlFor(value, runId) {
+	if (typeof value !== 'string' || !value.trim()) return null;
+	const runDir = path.join(ARTIFACTS_DIR, runId);
+	const raw = value.trim();
+	const msys = process.platform === 'win32' ? /^\/([A-Za-z])\/(.*)$/.exec(raw.replace(/\\/g, '/')) : null;
+	const full = path.resolve(msys ? `${msys[1]}:/${msys[2]}` : raw);
+	const rel = path.relative(runDir, full);
+	if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+	return `/artifacts/${runId}/${rel.split(path.sep).map(encodeURIComponent).join('/')}`;
 }
 
 function publicTestResult(run, test) {
@@ -144,6 +168,9 @@ function publicTestResult(run, test) {
 		startedAt: run.startedAt,
 		runUrl: `/api/runs/${run.runId}`,
 		reportUrl: `/artifacts/${run.runId}/report.json`,
+		junitUrl: `/artifacts/${run.runId}/report.junit.xml`,
+		resultsUrl: `/artifacts/${run.runId}/results.tsv`,
+		artifactUrl: test.artifactUrl,
 		failureReason: test.status === 'fail' ? test.failureReason : '',
 	};
 }

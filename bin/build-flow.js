@@ -70,6 +70,24 @@ function ladderOf(rec) {
   // capture applied to the primary, so it never "repairs" to a non-unique (wrong-element) locator.
   return (rec.candidates || []).map((c) => { const o = { by: c.by, value: c.value }; if (c.name) o.name = c.name; if (c.count != null) o.count = c.count; return o; });
 }
+function sameLocator(a, b) {
+  return !!a && !!b && a.by === b.by && a.value === b.value && (a.name || '') === (b.name || '');
+}
+function overLongLocator(c) {
+  return ((c && c.value) || '').length > 80 || ((c && c.name) || '').length > 80;
+}
+function primaryReviewReason(rec) {
+  const p = rec && rec.primary;
+  if (!p) return 'no primary locator';
+  if (overLongLocator(p)) return 'primary locator text/name exceeds 80 characters';
+  const matches = (rec.candidates || []).filter((c) => sameLocator(c, p));
+  if (!matches.length) return 'primary locator is missing from the capture candidate ladder';
+  if (!matches.some((c) => Number(c.count) === 1)) {
+    const counts = matches.map((c) => (c.count == null ? 'missing' : String(c.count))).join('/');
+    return `primary locator was not capture-unique (count=${counts || 'missing'})`;
+  }
+  return '';
+}
 
 // frameLoc(frame_ref): the parent-visible iframe LOCATOR for a step recorded inside an iframe (id > name >
 // title > src-path > index — semantic, never @ref). A CROSS-ORIGIN frame (parent can't scope into it) or an
@@ -94,14 +112,19 @@ function frameLoc(fr) {
 function actionFind(rec, action, extra) {
   const p = rec.primary;
   const fl = frameLoc(rec.frame_ref);
-  if (!p || rec.insufficient || (fl && fl._unreplayable)) {
+  const reviewReason = primaryReviewReason(rec);
+  if (!p || rec.insufficient || reviewReason || (fl && fl._unreplayable)) {
     needsReview++;
     const step = { kind: 'find', needs_review: true, candidates: (rec.candidates || []).slice(0, Math.max(2, (rec.candidates || []).length)) };
     if (action) step.action = action;
     if (fl && !fl._unreplayable) step.frame = fl; // a resolvable frame on a (otherwise) needs_review step is still recorded
     steps.push(step);
     candidatesByStep[steps.length - 1] = ladderOf(rec);
-    const why = fl && fl._unreplayable ? ` [frame: ${fl._unreplayable}]` : '';
+    const reasons = [];
+    if (rec.insufficient) reasons.push('capture marked insufficient');
+    if (reviewReason && reviewReason !== 'no primary locator') reasons.push(reviewReason);
+    if (fl && fl._unreplayable) reasons.push(`frame: ${fl._unreplayable}`);
+    const why = reasons.length ? ` [${reasons.join('; ')}]` : '';
     warns.push(`needs_review step #${steps.length - 1} (${rec.action_type})${why}: ` +
       (rec.candidates || []).map((c) => `${c.by}:${c.value}${c.count != null ? '(' + c.count + ')' : ''}`).join(', '));
     return;
@@ -146,6 +169,15 @@ function maybeWait(toUrl) {
     warns.push(`navigation boundary to a volatile/root URL (${toUrl}) — emitted load wait fallback`);
   }
   lastUrl = toUrl;
+}
+
+function defaultEnvironmentFor(url) {
+	try {
+		const u = new URL(url);
+		if (['data:', 'file:', 'about:'].includes(u.protocol)) return 'local';
+		if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(u.hostname)) return 'local';
+	} catch {}
+	return 'staging';
 }
 
 for (let i = 0; i < records.length; i++) {
@@ -195,7 +227,10 @@ for (let i = 0; i < records.length; i++) {
     }
   }
   else if (t === 'input') {
-    if (rec.masked || rec.input_value == null) {
+    if (rec.upload) {
+      actionFind(rec, 'fill');
+      warns.push(`file upload input at record #${i} is not replayable as a fill; marked needs_review`);
+    } else if (rec.masked || rec.input_value == null) {
       maskedCount++;
       const { key } = token(null); // token reserved; value supplied by human in gitignored sidecar
       actionFind(rec, 'fill', { text: '{{' + key + '}}' });
@@ -237,7 +272,7 @@ const asserts = [];
 const finalGlob = urlGlob(lastUrl);
 if (finalGlob) asserts.push({ kind: 'url', value: finalGlob });
 
-const flow = { name, engine };
+const flow = { name, engine, environment: defaultEnvironmentFor(startUrl), riskClass: 'read' };
 if (app) flow.app = app;
 flow.startUrl = startUrl;
 flow.steps = steps;

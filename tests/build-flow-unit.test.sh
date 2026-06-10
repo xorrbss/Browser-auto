@@ -172,7 +172,27 @@ eq "$(jq -rc '.steps[1].frame|[.by,.value]' "$FLOW7")" '["index",0]' "iframe uns
 eq "$(jq -r '.steps[2].needs_review' "$FLOW7")" 'true' "iframe with no replay-safe identity -> needs_review"
 eq "$(jq -r '.steps[2]|has("frame")' "$FLOW7")" 'false' "unreplayable iframe step carries no invalid frame"
 
-# 18. scroll (#2): a valid page-scroll record -> {kind:scroll,dir,px}; malformed scrolls (bad dir /
+# 18. Drifted raw records must fail closed even if they carry a primary locator: ambiguous
+#     capture-time counts, overlong text/name, and file uploads all become needs_review.
+REC8="$TMP/records8.json"; FLOWS8="$TMP/flows8"; mkdir -p "$FLOWS8"
+LONG_TEXT="This button label is intentionally far beyond eighty characters and should not be auto accepted"
+cat > "$REC8" <<JSON
+[
+ {"seq":1,"action_type":"click","url_at_capture":"https://app.example.com/drift","primary":{"by":"text","value":"Edit"},"candidates":[{"by":"text","value":"Edit","count":3},{"by":"role","value":"button","name":"Edit","count":3}],"is_navigation_boundary":false},
+ {"seq":2,"action_type":"click","url_at_capture":"https://app.example.com/drift","primary":{"by":"text","value":"$LONG_TEXT"},"candidates":[{"by":"text","value":"$LONG_TEXT","count":1}],"is_navigation_boundary":false},
+ {"seq":3,"action_type":"input","url_at_capture":"https://app.example.com/drift","primary":{"by":"label","value":"Upload file"},"candidates":[{"by":"label","value":"Upload file","count":1}],"input_value":null,"upload":true,"insufficient":true,"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" driftflow "https://app.example.com/drift" "" "$REC8" "$FLOWS8" "$BF_ENGINE" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on the drift stream"
+FLOW8="$FLOWS8/driftflow.flow.json"
+eq "$(jq -r '[.steps[]|select(.needs_review==true)]|length' "$FLOW8")" '3' "drift: all unresolved cases become needs_review"
+eq "$(jq -r '.steps[0]|has("by") or has("value")' "$FLOW8")" 'false' "drift: ambiguous primary emits no runnable locator"
+eq "$(jq -r '.steps[1]|has("by") or has("value")' "$FLOW8")" 'false' "drift: overlong primary emits no runnable locator"
+eq "$(jq -r '.steps[2]|has("text") or has("val")' "$FLOW8")" 'false' "drift: upload emits no fake fill token"
+[ ! -e "$FLOWS8/driftflow.values.json" ] || fail "drift: upload must not create a values sidecar"
+
+# 19. scroll (#2): a valid page-scroll record -> {kind:scroll,dir,px}; malformed scrolls (bad dir /
 #     px<=0) are DROPPED; compile emits only the thin Playwright wrapper, and play-flow validates
 #     the scroll step directly.
 REC5="$TMP/records5.json"; FLOWS5="$TMP/flows5"; mkdir -p "$FLOWS5"

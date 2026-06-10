@@ -9,7 +9,10 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ( cd "$DIR" && node --input-type=module -e '
+import { createRequire } from "node:module";
 import { validateSteps, runSteps, irreversibleOptsFor } from "./approve/flow-runner.mjs";
+const require = createRequire(import.meta.url);
+const { validateFlowRunPolicy, classifyAuthChallenge } = require("./lib/flow-policy.js");
 const assert = (c, m) => { if (!c) { console.error("  ✗ flow-runner: " + m); process.exit(1); } };
 
 // --- validateSteps: fail-closed ---
@@ -40,6 +43,9 @@ assert(validateSteps([{ kind: "find", by: "label", value: "Name", action: "fill"
 assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "select" }]).ok === false, "select without val/text ⇒ refused");
 assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "select", val: "kr" }]).ok === true, "select WITH val ⇒ valid");
 
+assert(validateSteps([{ kind: "wait", until: "load", timeoutMs: 45000 }]).ok === true, "per-step timeoutMs validates");
+assert(validateSteps([{ kind: "wait", until: "load", timeoutMs: 0 }]).ok === false, "bad timeoutMs refused");
+
 // --- irreversibleOptsFor: derive the gate config from the flow (back-compat reversible:true by default) ---
 assert(irreversibleOptsFor({ steps: [{ kind: "find", by: "text", value: "x", action: "click" }] }).reversible === true, "effectful flow with NO irreversibleAt ⇒ reversible:true (back-compat)");
 assert(irreversibleOptsFor({ steps: [{ kind: "wait", until: "load", value: "networkidle" }] }).reversible === true, "non-effectful flow ⇒ reversible:true");
@@ -47,6 +53,26 @@ assert(irreversibleOptsFor({ steps: [{ kind: "wait", until: "load", value: "netw
   assert(g.reversible === false && g.irreversibleAt === 1, "flow declaring irreversibleAt + effectful ⇒ gated (reversible:false, irreversibleAt passed)"); }
 assert(irreversibleOptsFor({ reversible: true, irreversibleAt: 1, steps: [{ kind: "find", by: "text", value: "x", action: "click" }] }).reversible === true, "explicit reversible:true wins (opt-out)");
 assert(irreversibleOptsFor({ irreversibleAt: 0, steps: [{ kind: "wait", until: "load", value: "networkidle" }] }).reversible === true, "irreversibleAt but NO effectful step ⇒ stays reversible (nothing to gate)");
+
+// --- flow run policy metadata: explicit environment/risk, fail-closed gates for live/effectful/destructive ---
+const readFlow = { environment: "local", riskClass: "read", steps: [{ kind: "find", by: "text", value: "Open", action: "click" }] };
+assert(validateFlowRunPolicy(readFlow).ok === true, "flow policy: local/read accepted");
+assert(validateFlowRunPolicy({ riskClass: "read", steps: [] }).ok === false, "flow policy: missing environment refused");
+assert(validateFlowRunPolicy({ environment: "local", steps: [] }).ok === false, "flow policy: missing riskClass refused");
+assert(validateFlowRunPolicy({ environment: "live-readonly", riskClass: "effectful", steps: [] }).ok === false, "flow policy: live-readonly cannot be effectful");
+assert(validateFlowRunPolicy({ environment: "live-action", riskClass: "read", steps: [] }).ok === false, "flow policy: live-action cannot be read risk");
+assert(validateFlowRunPolicy({ environment: "staging", riskClass: "effectful", steps: [{ kind: "find", by: "text", value: "Submit", action: "click" }] }).ok === false, "flow policy: effectful without gate refused");
+assert(validateFlowRunPolicy({ environment: "staging", riskClass: "effectful", reversible: true, steps: [{ kind: "find", by: "text", value: "Draft", action: "click" }] }).ok === true, "flow policy: staging/effectful can declare reversible:true");
+assert(validateFlowRunPolicy({ environment: "staging", riskClass: "destructive", reversible: true, steps: [{ kind: "find", by: "text", value: "Delete", action: "click" }] }).ok === false, "flow policy: destructive cannot use reversible:true as its gate");
+assert(validateFlowRunPolicy({ environment: "live-action", riskClass: "effectful", irreversibleAt: 0, steps: [{ kind: "find", by: "text", value: "Confirm", action: "click" }] }).ok === true, "flow policy: live-action/effectful with irreversibleAt accepted");
+assert(validateFlowRunPolicy({ environment: "live-action", riskClass: "effectful", irreversibleAt: 0, steps: [{ kind: "wait", until: "load", value: "networkidle" }] }).ok === false, "flow policy: irreversibleAt must point at effectful step");
+assert(validateFlowRunPolicy({ environment: "local", riskClass: "read", steps: [{ kind: "find", by: "label", value: "OTP code", action: "fill", text: "{{input_1}}" }] }).ok === false, "flow policy: OTP replay refused even with a token");
+assert(validateFlowRunPolicy({ environment: "live-readonly", riskClass: "read", steps: [{ kind: "find", by: "role", value: "button", name: "Delete", action: "click" }] }).ok === false, "flow policy: destructive-looking live-readonly action refused");
+assert(validateFlowRunPolicy({ name: "danger", environment: "live-action", riskClass: "effectful", irreversibleAt: 0, steps: [{ kind: "find", by: "text", value: "Confirm", action: "click" }] }, { phase: "run", runMode: "local" }).ok === false, "flow policy: live-action blocked outside live-action run mode");
+assert(validateFlowRunPolicy({ name: "danger", environment: "live-action", riskClass: "effectful", irreversibleAt: 0, steps: [{ kind: "find", by: "text", value: "Confirm", action: "click" }] }, { phase: "run", runMode: "live-action", allowlist: "danger", liveActionApprove: "danger" }).ok === true, "flow policy: live-action requires mode + allowlist + approval");
+assert(classifyAuthChallenge({ url: "https://example.test/login", text: "Sign in" }).state === "login_redirect", "auth classifier: login redirect");
+assert(classifyAuthChallenge({ url: "https://example.test/app", text: "Enter OTP code" }).state === "otp_required", "auth classifier: OTP challenge");
+assert(classifyAuthChallenge({ url: "https://example.test/app", text: "Permission denied" }).state === "permission_denied", "auth classifier: permission denied");
 
 // --- mock page (records calls) ---
 function mockPage(calls, countVal = 1) {
@@ -64,7 +90,7 @@ function mockPage(calls, countVal = 1) {
     getByLabel: (v) => loc(), getByPlaceholder: (v) => { calls.push("ph:" + v); return loc(); },
     getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(),
     frameLocator: (sel) => { calls.push("frameLocator:" + sel); const scope = { getByRole: (r, o) => { calls.push("role:" + r + ":" + (o ? o.name : "")); return loc(); }, getByText: (v) => loc(), getByLabel: (v) => loc(), getByPlaceholder: (v) => loc(), getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(), nth: (i) => scope }; return scope; },
-    waitForURL: async (g) => calls.push("waitURL:" + g), waitForLoadState: async (s) => calls.push("waitLoad:" + s),
+    waitForURL: async (g, o = {}) => calls.push("waitURL:" + g + ":" + (o.timeout || "")), waitForLoadState: async (s, o = {}) => calls.push("waitLoad:" + s + ":" + (o.timeout || "")),
     keyboard: { press: async (k) => calls.push("press:" + k) }, mouse: { wheel: async (x, y) => calls.push("wheel:" + x + "," + y) },
   };
 }

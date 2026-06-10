@@ -46,24 +46,37 @@ for _t in "${TESTS[@]}"; do
 done
 TESTS=( ${_kept[@]+"${_kept[@]}"} )
 
-# Default suite policy: tests compiled from flows with an app require local
-# Playwright auth state, so keep them out of the portable CI gate unless the
-# operator explicitly asks for that test/glob or opts in to live-auth tests.
-if [ "$EXPLICIT_GLOB" -eq 0 ] && [ "${AQA_INCLUDE_LIVE_AUTH:-0}" != "1" ]; then
+# Default suite policy: keep the portable CI gate local-only. Tests compiled
+# from flows with an app require local Playwright auth state; flows labelled
+# staging/live-readonly/live-action are manual lanes unless explicitly selected
+# or opted in.
+if [ "$EXPLICIT_GLOB" -eq 0 ]; then
 	_kept=()
-	_skipped_live=()
+	_skipped_live_auth=()
+	_skipped_nonlocal=()
 	for _t in "${TESTS[@]}"; do
 		_name="$(basename "$_t" .test.sh)"
 		_flow="${PROBE_ROOT}/flows/${_name}.flow.json"
-		if [ -s "$_flow" ] && jq -e 'has("app") and (.app != null) and (.app != "")' "$_flow" >/dev/null 2>&1; then
-			_skipped_live+=("$_name")
-			continue
+		if [ -s "$_flow" ]; then
+			if [ "${AQA_INCLUDE_LIVE_AUTH:-0}" != "1" ] && jq -e 'has("app") and (.app != null) and (.app != "")' "$_flow" >/dev/null 2>&1; then
+				_skipped_live_auth+=("$_name")
+				continue
+			fi
+			_env="$(jq -r '.environment // "local"' "$_flow" 2>/dev/null || printf 'local')"
+			if [ "${AQA_INCLUDE_NONLOCAL:-0}" != "1" ] && [ "$_env" != "local" ]; then
+				_skipped_nonlocal+=("$_name($_env)")
+				continue
+			fi
 		fi
 		_kept+=("$_t")
 	done
-	if [ "${#_skipped_live[@]}" -gt 0 ]; then
-		printf '[run] skipped live-auth test(s) from default suite: %s\n' "${_skipped_live[*]}"
+	if [ "${#_skipped_live_auth[@]}" -gt 0 ]; then
+		printf '[run] skipped live-auth test(s) from default suite: %s\n' "${_skipped_live_auth[*]}"
 		echo "[run] set AQA_INCLUDE_LIVE_AUTH=1 or pass an explicit glob to include them."
+	fi
+	if [ "${#_skipped_nonlocal[@]}" -gt 0 ]; then
+		printf '[run] skipped non-local flow test(s) from default suite: %s\n' "${_skipped_nonlocal[*]}"
+		echo "[run] set AQA_INCLUDE_NONLOCAL=1 plus the needed run-mode/auth env, or pass an explicit glob."
 	fi
 	TESTS=( ${_kept[@]+"${_kept[@]}"} )
 fi

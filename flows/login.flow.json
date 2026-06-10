@@ -1,6 +1,8 @@
 {
   "name": "login",
   "engine": "playwright",
+  "environment": "local",
+  "riskClass": "read",
   "startUrl": "data:text/html,%3C!doctype%20html%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ELocal%20Login%20Smoke%3C%2Ftitle%3E%3Ch1%3EExample%20Domain%3C%2Fh1%3E%3Cbutton%20type%3D%22button%22%20onclick%3D%22history.pushState(%7B%7D%2C''%2C%20'%23%2Fhelp%2Fexample-domains')%3Bdocument.querySelector('%23status').textContent%3D'Example%20Domains%20Help'%22%3ELearn%20more%3C%2Fbutton%3E%3Cp%20id%3D%22status%22%3EReady%3C%2Fp%3E",
   "steps": [
     { "kind": "find", "by": "text", "value": "Learn more", "action": "click" },

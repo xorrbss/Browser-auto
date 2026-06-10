@@ -1,5 +1,7 @@
 {
   "name": "nav-roundtrip",
+  "environment": "live-readonly",
+  "riskClass": "read",
   "startUrl": "https://example.com",
   "steps": [
     { "kind": "find", "by": "text", "value": "Learn more",      "action": "click" },

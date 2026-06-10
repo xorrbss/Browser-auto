@@ -1,8 +1,11 @@
 {
   "name": "hiworks01",
   "engine": "agent-browser",
+  "environment": "live-action",
+  "riskClass": "destructive",
   "app": "4345",
   "startUrl": "https://approval.office.hiworks.com/ibizsoftware.net/approval/document/lists/W",
+  "irreversibleAt": 6,
   "steps": [
     {
       "kind": "find",

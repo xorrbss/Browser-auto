@@ -15,6 +15,8 @@ const MAX_JOBS = 50; // most-recent job records kept in memory
 // Generous default (the full suite is ~5 min); override with WEBUI_JOB_TIMEOUT_MS.
 const JOB_TIMEOUT_MS = Number(process.env.WEBUI_JOB_TIMEOUT_MS) || 20 * 60 * 1000;
 const JOB_KILL_GRACE_MS = Number(process.env.WEBUI_JOB_KILL_GRACE_MS) || 15000;
+const JOB_HEARTBEAT_STALE_MS = Number(process.env.WEBUI_JOB_HEARTBEAT_STALE_MS) || 60 * 1000;
+const JOB_SLOW_MS = Number(process.env.WEBUI_JOB_SLOW_MS) || 5 * 60 * 1000;
 
 let seq = 0;
 let tail = Promise.resolve(); // the serial chain
@@ -22,7 +24,120 @@ let runningId = null; // id of the job whose child is currently alive, or null
 const pending = []; // FIFO of queued (not-yet-running) job ids
 const jobs = new Map(); // id -> job record
 
+function durationMs(job, now = Date.now()) {
+	if (!job?.startedAt) return null;
+	return (job.endedAt || now) - job.startedAt;
+}
+
+function formatDurationMs(ms) {
+	return ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
+}
+
+function compactDiagnosticText(value) {
+	return String(value == null ? '' : value)
+		.replace(/\x1b\[[0-9;]*m/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+function sanitizeDiagnosticText(value, fallback = '') {
+	let s = compactDiagnosticText(value);
+	if (!s) s = fallback;
+	s = s
+		.replace(/\b(authorization|cookie|set-cookie)\s*:\s*[^,;\s]+/ig, '$1: [redacted]')
+		.replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/ig, '$1 [redacted]')
+		.replace(/\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|otp|code)\s*=\s*[^&\s]+/ig, '$1=[redacted]')
+		.replace(/(https?:\/\/[^\s?#]+)\?[^)\]\s]+/ig, '$1?[redacted]');
+	return s.length > 320 ? `${s.slice(0, 317)}...` : s;
+}
+
+function jobArtifactLinks(job) {
+	if (!job?.runId) return null;
+	return {
+		runId: job.runId,
+		runUrl: `/api/runs/${job.runId}`,
+		reportUrl: `/artifacts/${job.runId}/report.json`,
+		junitUrl: `/artifacts/${job.runId}/report.junit.xml`,
+		resultsUrl: `/artifacts/${job.runId}/results.tsv`,
+	};
+}
+
+function resultFailureReason(result) {
+	if (!result || typeof result !== 'object') return '';
+	const direct = result.error || result.reason || result.message || result.refused;
+	const status = String(result.status || '').toLowerCase();
+	if (direct && ['failed', 'fail', 'error', 'refused'].includes(status)) return direct;
+	if (Array.isArray(result.results)) {
+		const failed = result.results.find((r) => r && ['failed', 'fail', 'error'].includes(String(r.status || '').toLowerCase()));
+		if (failed) {
+			const prefix = failed.doc_id || failed.id || failed.key;
+			const reason = failed.error || failed.reason || failed.message || 'failed result';
+			return prefix ? `${prefix}: ${reason}` : reason;
+		}
+	}
+	return '';
+}
+
+function safeFailureReason(job) {
+	if (!job) return null;
+	let structured = resultFailureReason(job.result);
+	if (!structured && job.status === 'failed' && job.result && typeof job.result === 'object') {
+		structured = job.result.error || job.result.reason || job.result.message || job.result.refused || '';
+	}
+	const resultStatus = String(job.result?.status || '').toLowerCase();
+	if (structured && (job.status === 'failed' || ['failed', 'fail', 'error', 'refused'].includes(resultStatus))) {
+		return sanitizeDiagnosticText(structured, 'structured job failure');
+	}
+	if (job.timedOut) return `timeout after ${formatDurationMs(JOB_TIMEOUT_MS)}`;
+	if (job.exitCode != null && job.exitCode !== 0) return `exit code ${job.exitCode}`;
+	if (job.error) {
+		const text = String(job.error).toLowerCase();
+		if (text.includes('malformed structured job result')) return 'malformed structured job result';
+		return sanitizeDiagnosticText(job.error, 'job error');
+	}
+	return job.status === 'failed' ? 'failed' : null;
+}
+
+function heartbeatState(job, now = Date.now()) {
+	if (!job?.startedAt) return job?.status === 'queued' ? 'queued' : 'idle';
+	if (job.status !== 'running') return 'terminal';
+	const basis = job.lastOutputAt || job.startedAt;
+	return now - basis > JOB_HEARTBEAT_STALE_MS ? 'stale' : 'active';
+}
+
+function jobDiagnostics(job, now = Date.now()) {
+	const dur = durationMs(job, now);
+	const heartbeatAgeMs = job.startedAt ? now - (job.lastOutputAt || job.startedAt) : null;
+	const state = heartbeatState(job, now);
+	const slow = dur != null && dur > JOB_SLOW_MS;
+	const signals = [];
+	if (job.timedOut) signals.push('timeout');
+	if (job.cancelled || job.status === 'cancelled') signals.push('cancelled');
+	if (job.exitSignal) signals.push(`signal:${job.exitSignal}`);
+	if (state === 'stale') signals.push('stale-heartbeat');
+	if (slow) signals.push('slow');
+	if (job.error) signals.push(job.error === 'malformed structured job result' ? 'malformed-result' : 'job-error');
+	return {
+		failureReason: job.failureReason || safeFailureReason(job),
+		timeoutMs: JOB_TIMEOUT_MS,
+		killGraceMs: JOB_KILL_GRACE_MS,
+		heartbeatStaleMs: JOB_HEARTBEAT_STALE_MS,
+		slowMs: JOB_SLOW_MS,
+		lastLogAt: job.lastLogAt,
+		lastHeartbeatAt: job.lastOutputAt,
+		heartbeatAgeMs,
+		heartbeatState: state,
+		slow,
+		unstable: signals.length > 0,
+		signals,
+		artifacts: jobArtifactLinks(job),
+	};
+}
+
 function publicJob(job) {
+	const dur = durationMs(job);
+	const failureReason = job.failureReason || safeFailureReason(job);
+	const artifacts = jobArtifactLinks(job);
 	return {
 		id: job.id,
 		kind: job.kind,
@@ -35,11 +150,14 @@ function publicJob(job) {
 		enqueuedAt: job.enqueuedAt,
 		startedAt: job.startedAt,
 		endedAt: job.endedAt,
-		durationMs: job.startedAt && job.endedAt ? job.endedAt - job.startedAt : null,
+		durationMs: dur,
 		pid: job.pid,
 		runId: job.runId, // for kind:'run', filled from the [run] RUN_ID= line
+		artifacts,
 		result: job.result,
 		error: job.error,
+		failureReason,
+		diagnostics: jobDiagnostics(job),
 	};
 }
 
@@ -49,9 +167,12 @@ function writeSse(res, event, data) {
 	res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-function pushLine(job, line) {
+function pushLine(job, line, opts = {}) {
+	const now = Date.now();
 	job.log.push(line);
 	if (job.log.length > MAX_LOG) job.log.splice(0, job.log.length - MAX_LOG);
+	job.lastLogAt = now;
+	if (opts.childOutput) job.lastOutputAt = now;
 	// Opportunistically capture the RUN_ID run.sh prints, so the UI can deep-link the new run.
 	if (job.kind === 'run' && !job.runId) {
 		const m = /RUN_ID=(\d{8}-\d{6}-\d+)/.exec(line);
@@ -89,12 +210,12 @@ function wireStream(job, stream) {
 		buf += chunk;
 		let nl;
 		while ((nl = buf.indexOf('\n')) >= 0) {
-			pushLine(job, buf.slice(0, nl).replace(/\r$/, ''));
+			pushLine(job, buf.slice(0, nl).replace(/\r$/, ''), { childOutput: true });
 			buf = buf.slice(nl + 1);
 		}
 	});
 	stream.on('end', () => {
-		if (buf.length) pushLine(job, buf.replace(/\r$/, ''));
+		if (buf.length) pushLine(job, buf.replace(/\r$/, ''), { childOutput: true });
 		buf = '';
 	});
 }
@@ -116,6 +237,23 @@ function finishJob(job) {
 	prune();
 }
 
+function pushTerminalDiagnostics(job) {
+	const d = jobDiagnostics(job);
+	if (job.status !== 'failed' && job.status !== 'cancelled' && !d.slow && !d.unstable) return;
+	const fields = [
+		`status=${job.status}`,
+		`durationMs=${durationMs(job) ?? 0}`,
+		`reason=${JSON.stringify(d.failureReason || job.status)}`,
+		`heartbeat=${d.heartbeatState}`,
+		`heartbeatAgeMs=${d.heartbeatAgeMs ?? 0}`,
+	];
+	if (job.exitCode != null) fields.push(`exitCode=${job.exitCode}`);
+	if (job.exitSignal) fields.push(`signal=${job.exitSignal}`);
+	if (job.runId) fields.push(`runId=${job.runId}`, `report=${d.artifacts.reportUrl}`);
+	if (d.signals.length) fields.push(`signals=${d.signals.join(',')}`);
+	pushLine(job, `[webui] diagnostic: ${fields.join(' ')}`);
+}
+
 async function runJob(job) {
 	const i = pending.indexOf(job.id);
 	if (i >= 0) pending.splice(i, 1);
@@ -123,6 +261,8 @@ async function runJob(job) {
 	if (job.cancelled) {
 		job.status = 'cancelled';
 		job.endedAt = Date.now();
+		job.failureReason = safeFailureReason(job);
+		pushTerminalDiagnostics(job);
 		finishJob(job);
 		return;
 	}
@@ -149,10 +289,10 @@ async function runJob(job) {
 			// close after taskkill, force-resolve so the single browser slot cannot stay wedged.
 			timer = setTimeout(() => {
 				job.timedOut = true;
-				pushLine(job, `[webui] job exceeded ${Math.round(JOB_TIMEOUT_MS / 1000)}s timeout — killing process tree`);
+				pushLine(job, `[webui] job exceeded ${formatDurationMs(JOB_TIMEOUT_MS)} timeout — killing process tree`);
 				killTree(job.pid);
 				killGraceTimer = setTimeout(() => {
-					pushLine(job, `[webui] process did not report close after ${Math.round(JOB_KILL_GRACE_MS / 1000)}s — freeing queue slot`);
+					pushLine(job, `[webui] process did not report close after ${formatDurationMs(JOB_KILL_GRACE_MS)} — freeing queue slot`);
 					resolveOnce(-1);
 				}, JOB_KILL_GRACE_MS);
 			}, JOB_TIMEOUT_MS);
@@ -161,7 +301,10 @@ async function runJob(job) {
 				resolveOnce(-1);
 			});
 			// Resolve ONLY on 'close' (stdio fully drained + process exited) -> serialization.
-			child.on('close', (c) => resolveOnce(c));
+			child.on('close', (c, signal) => {
+				job.exitSignal = signal || null;
+				resolveOnce(c);
+			});
 		});
 		job.exitCode = code;
 		job.status = job.cancelled ? 'cancelled' : job.timedOut ? 'failed' : code === 0 ? 'done' : 'failed';
@@ -176,6 +319,8 @@ async function runJob(job) {
 		if (job.stopFile) { try { fs.rmSync(job.stopFile, { force: true }); } catch {} } // clear the stop signal
 		job.child = null;
 		job.endedAt = Date.now();
+		job.failureReason = safeFailureReason(job);
+		pushTerminalDiagnostics(job);
 		if (typeof job.onFinish === 'function') {
 			try { job.onFinish(publicJob(job)); }
 			catch (e) { pushLine(job, `[webui] onFinish error: ${(e && e.message) || e}`); }
@@ -200,15 +345,19 @@ export function enqueue({ kind, label, spawnFn, stopFile, meta, onFinish }) {
 		endedAt: null,
 		pid: null,
 		runId: null,
+		exitSignal: null,
 		child: null,
 		cancelled: false,
 		timedOut: false,
 		error: null,
+		failureReason: null,
 		result: null,
 		stopFile: stopFile || null,
 		onFinish: typeof onFinish === 'function' ? onFinish : null,
 		spawnFn,
 		log: [],
+		lastLogAt: null,
+		lastOutputAt: null,
 		subscribers: new Set(),
 	};
 	jobs.set(id, job);
@@ -231,12 +380,18 @@ export function jobResult(id) {
 		id: job.id,
 		status: job.status,
 		exitCode: job.exitCode,
+		cancelled: job.cancelled,
+		timedOut: job.timedOut,
+		runId: job.runId,
+		artifacts: jobArtifactLinks(job),
 		result: job.result,
 		error: job.error,
+		failureReason: job.failureReason || safeFailureReason(job),
+		diagnostics: jobDiagnostics(job),
 		meta: job.meta || {},
 		startedAt: job.startedAt,
 		endedAt: job.endedAt,
-		durationMs: job.startedAt && job.endedAt ? job.endedAt - job.startedAt : null,
+		durationMs: durationMs(job),
 	};
 }
 
@@ -307,23 +462,13 @@ export function subscribe(id, res) {
 	return true;
 }
 
-function safeFailureReason(job) {
-	if (!job) return null;
-	if (job.timedOut) return 'timeout';
-	if (job.exitCode != null && job.exitCode !== 0) return `exit code ${job.exitCode}`;
-	if (job.error) {
-		const text = String(job.error).toLowerCase();
-		if (text.includes('malformed structured job result')) return 'malformed structured job result';
-		return 'job error';
-	}
-	return job.status === 'failed' ? 'failed' : null;
-}
-
 function queueMetrics(recent) {
 	const all = [...jobs.values()];
 	const terminalWithDuration = all.filter((j) => j.startedAt && j.endedAt);
 	const totalDuration = terminalWithDuration.reduce((sum, j) => sum + (j.endedAt - j.startedAt), 0);
 	const lastFailed = [...all].reverse().find((j) => j.status === 'failed');
+	const now = Date.now();
+	const diagnostics = all.map((j) => jobDiagnostics(j, now));
 	return {
 		queued: pending.length,
 		running: runningId ? 1 : 0,
@@ -332,6 +477,9 @@ function queueMetrics(recent) {
 		lastFailureReason: safeFailureReason(lastFailed),
 		timeoutCount: all.filter((j) => j.timedOut).length,
 		cancelledCount: all.filter((j) => j.status === 'cancelled' || j.cancelled).length,
+		heartbeatStaleCount: diagnostics.filter((d) => d.heartbeatState === 'stale').length,
+		slowCount: diagnostics.filter((d) => d.slow).length,
+		unstableCount: diagnostics.filter((d) => d.unstable).length,
 	};
 }
 

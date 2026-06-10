@@ -24,6 +24,8 @@ cat > "$DIR/flows/$NAME.flow.json" <<JSON
 {
   "name": "$NAME",
   "engine": "playwright",
+  "environment": "local",
+  "riskClass": "read",
   "startUrl": "$URL",
   "steps": [
     { "kind": "find", "by": "label", "value": "Name", "action": "fill", "text": "{{input_1}}" },
@@ -61,6 +63,8 @@ cat > "$DIR/flows/$NAME4.flow.json" <<JSON
 {
   "name": "$NAME4",
   "engine": "playwright",
+  "environment": "local",
+  "riskClass": "read",
   "startUrl": "$URL",
   "steps": [
     { "kind": "find", "by": "label", "value": "Name", "action": "fill", "text": "{{input_1}}" },
@@ -87,6 +91,8 @@ cat > "$DIR/flows/$NAME2.flow.json" <<JSON
 {
   "name": "$NAME2",
   "engine": "playwright",
+  "environment": "local",
+  "riskClass": "read",
   "startUrl": "$URL",
   "steps": [
     { "kind": "find", "by": "label", "value": "Name", "action": "fill", "text": "{{input_1}}" },
@@ -119,6 +125,8 @@ cat > "$DIR/flows/$NAME3.flow.json" <<JSON
 {
   "name": "$NAME3",
   "engine": "playwright",
+  "environment": "live-action",
+  "riskClass": "effectful",
   "startUrl": "$URL",
   "irreversibleAt": 1,
   "steps": [

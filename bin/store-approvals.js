@@ -10,7 +10,7 @@
 // Each item: { doc_id (required), title?, drafter?, dept?, submitted_at?, amount?, raw_text?, summary? }.
 // On bad input it exits non-zero so the sync fails LOUD rather than silently storing nothing.
 
-const { openDb, closeDb, upsertApprovals, DEFAULT_DB_PATH } = require('../lib/db.js');
+const { openDb, closeDb, upsertApprovals } = require('../lib/db.js');
 
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -30,7 +30,7 @@ process.stdin.on('end', () => {
 	const db = openDb();
 	try {
 		const n = upsertApprovals(db, items);
-		console.log(`[store-approvals] stored ${n} 결재 item(s) -> ${DEFAULT_DB_PATH}`);
+		console.log(`[store-approvals] stored ${n} approval item(s)`);
 	} catch (e) {
 		console.error('store-approvals: ' + e.message);
 		process.exit(1);

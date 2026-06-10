@@ -291,6 +291,8 @@ try {
 	writeJson(`flows/${headerName}.flow.json`, {
 		name: headerName,
 		engine: 'playwright',
+		environment: 'local',
+		riskClass: 'read',
 		startUrl: `${fixture.origin}/headerless`,
 		steps: [
 			{ kind: 'open_record', source: 'row_index', recipe: recipeName, rowIndex: 1, field: 'subject' },
@@ -305,6 +307,8 @@ try {
 	writeJson(`flows/${failName}.flow.json`, {
 		name: failName,
 		engine: 'playwright',
+		environment: 'local',
+		riskClass: 'read',
 		startUrl: `${fixture.origin}/failure`,
 		steps: [{ kind: 'find', by: 'text', value: 'Missing Action', action: 'click' }],
 		asserts: [],

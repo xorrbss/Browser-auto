@@ -1,6 +1,8 @@
 {
   "name": "guest_samsungdisplay_com_argos_main_do",
   "engine": "playwright",
+  "environment": "live-action",
+  "riskClass": "effectful",
   "app": "guest_samsungdisplay_com",
   "startUrl": "https://guest.samsungdisplay.com/argos/main.do",
   "steps": [

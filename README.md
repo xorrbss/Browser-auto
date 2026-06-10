@@ -116,6 +116,27 @@ Those commands require a registered system, `recipes/<name>.json`, and
 `fixtures/auth/playwright/<name>.state.json`. Do not use live system success as a substitute for the
 external-dependency-free gate.
 
+## CI Lanes
+
+Keep CI and live-operator checks separate:
+
+- **CI / fixture lane:** run `node --check` and browser-free or localhost tests. This lane must not
+  require target-system auth, OTP, public network access, or live business data.
+- **Live-auth lane:** run explicitly on an operator host after `bash setup/auth.sh <app> ...` refreshes
+  `fixtures/auth/playwright/<app>.state.json`. Use `bash run.sh <name>` for named flows, or opt into
+  app-bound flows with `AQA_INCLUDE_LIVE_AUTH=1`.
+- **Non-local read lane:** flows with `environment:"staging"` or `environment:"live-readonly"` are skipped
+  by the default suite. Run them by explicit name or set `AQA_INCLUDE_NONLOCAL=1` with the matching
+  `AQA_RUN_MODE`.
+- **Live-action lane:** never runs unattended or in CI. Flows use `environment:"live-action"` and
+  `riskClass:"effectful"` or `"destructive"`, plus an `irreversibleAt` gate. `bin/play-flow.mjs` also
+  requires `AQA_RUN_MODE=live-action`, `AQA_LIVE_ALLOWLIST`, and `AQA_LIVE_ACTION_APPROVE`. Start from
+  sync/enrich records, run dry-run
+  first, require human confirmation, keep `--max` caps on live approve-like actions, and keep artifacts
+  local until reviewed.
+
+The operator runbook for this separation is `dev/active/live-readiness/RUNBOOK.md`.
+
 ## Flow Format
 
 New flows should declare Playwright explicitly:
@@ -124,6 +145,8 @@ New flows should declare Playwright explicitly:
 {
   "name": "checkout",
   "engine": "playwright",
+  "environment": "local",
+  "riskClass": "read",
   "app": "myapp",
   "startUrl": "https://app.example.com/cart",
   "steps": [],
@@ -174,6 +197,11 @@ node webui/server.js        # http://127.0.0.1:4310
 The webui is a thin local control plane over the same CLI tools. It can run tests, start headed auth,
 record flows, verify, compile, and browse artifacts. It has no built-in public auth; keep it on
 loopback or behind an authenticated tunnel/reverse proxy.
+
+The automation view surfaces scenario readiness from `/api/flows` and `artifacts/*/report.json`:
+auth/OTP renewal, policy block, live risk, timeout or last failure, disabled reason, and deep links to
+run/report/JUnit artifacts. These fields are operator UX only; compiled bash replay remains the
+deterministic pass/fail gate.
 
 ## Docker Recording Server
 

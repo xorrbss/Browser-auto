@@ -572,6 +572,150 @@ function scenarioReason(flow) {
 	return 'Ready to run';
 }
 
+function scenarioArtifactLinks(last) {
+	if (!last?.runId) return null;
+	const runId = String(last.runId);
+	const reportUrl = last.reportUrl || `/artifacts/${encodeURIComponent(runId)}/report.json`;
+	return el('span', { class: 'status-link-row' },
+		el('a', { href: last.runUrl || `/api/runs/${encodeURIComponent(runId)}`, target: '_blank', rel: 'noreferrer' }, 'run API'),
+		el('a', { href: reportUrl, target: '_blank', rel: 'noreferrer' }, 'report.json'),
+		el('a', { href: `/artifacts/${encodeURIComponent(runId)}/report.junit.xml`, target: '_blank', rel: 'noreferrer' }, 'junit.xml'),
+	);
+}
+
+function scenarioAuthRenewal(auth) {
+	if (!auth?.required) {
+		return {
+			label: 'not required',
+			kind: 'neutral',
+			detail: 'No app-bound Playwright auth state is required.',
+		};
+	}
+	if (auth.refreshNeeded || auth.stale) {
+		const days = Number.isFinite(auth.ageMs) ? `${Math.floor(auth.ageMs / 86400000)}d old` : 'age unknown';
+		return {
+			label: 'renew auth',
+			kind: 'warning',
+			detail: `state=${auth.state || 'stale-auth'}; ${days}; rerun headed login/OTP.`,
+		};
+	}
+	if (auth.ready) {
+		const signals = auth.otpMfa?.challengeSignals || 0;
+		return {
+			label: 'ready',
+			kind: 'success',
+			detail: `app=${auth.app || '-'}; MFA signals=${signals}; re-run headed login when SSO/OTP expires.`,
+		};
+	}
+	return {
+		label: 'renew auth',
+		kind: 'warning',
+		detail: auth.error || `Run headed login/OTP for app=${auth.app || '-'} before replay.`,
+	};
+}
+
+function scenarioLiveRisk(flow) {
+	const policy = flow?.scenarioStatus?.policy || flow?.policy || {};
+	if (policy.environment === 'live-action' || policy.riskClass === 'effectful' || policy.riskClass === 'destructive') {
+		return {
+			label: `${policy.environment || 'flow'} / ${policy.riskClass || 'risk'}`,
+			kind: 'warning',
+			detail: policy.gate ? `gate=${policy.gate}` : 'Live/effectful replay is blocked unless runner policy gates pass.',
+		};
+	}
+	if (policy.environment === 'live-readonly') {
+		return {
+			label: 'live-readonly',
+			kind: 'info',
+			detail: 'Manual lane; default CI skips non-local flow environments.',
+		};
+	}
+	const goal = automationForm().goal || state.automation.plan?.sourceText || '';
+	const plannedRisk = state.automation.plan?.riskClass || '';
+	const textRisk = /(approve|confirm|delete|submit|send|publish|live|irreversible)/i.test(goal) ? 'effectful' : '';
+	if (plannedRisk && plannedRisk !== 'read') {
+		return {
+			label: plannedRisk,
+			kind: 'warning',
+			detail: 'Effectful work requires dry-run evidence and explicit human confirmation.',
+		};
+	}
+	if (textRisk) {
+		return {
+			label: textRisk,
+			kind: 'warning',
+			detail: 'Goal text looks live/effectful; keep dry-run and confirmation gates on.',
+		};
+	}
+	if (flow?.app) {
+		return {
+			label: 'authenticated',
+			kind: 'info',
+			detail: 'Runs use cached browser state; review target side effects before live use.',
+		};
+	}
+	return {
+		label: 'read-only',
+		kind: 'success',
+		detail: 'No live/effectful intent detected from the current scenario goal.',
+	};
+}
+
+function scenarioPolicyBlock(flow, liveRisk) {
+	const status = flow?.scenarioStatus || {};
+	if (status.unrunnableReason) {
+		return { label: 'blocked', kind: 'warning', detail: status.unrunnableReason };
+	}
+	if (status.lastFailureReason) {
+		return { label: 'last failure', kind: 'danger', detail: status.lastFailureReason };
+	}
+	if (liveRisk?.kind === 'warning') {
+		return {
+			label: 'operator gate',
+			kind: 'warning',
+			detail: 'Policy keeps live/effectful actions behind dry-run plus human confirmation.',
+		};
+	}
+	return {
+		label: 'none',
+		kind: 'success',
+		detail: 'No WebUI policy block; deterministic CLI replay remains the pass/fail gate.',
+	};
+}
+
+function scenarioFailureStatus(status) {
+	const last = status?.lastRun || null;
+	const reason = status?.lastFailureReason || last?.failureReason || '';
+	if (reason) {
+		const timeout = /timeout/i.test(reason);
+		return {
+			label: timeout ? 'timeout' : 'failed',
+			kind: 'danger',
+			detail: reason,
+		};
+	}
+	if (last) {
+		return {
+			label: last.status === 'pass' ? 'none' : last.status,
+			kind: last.status === 'pass' ? 'success' : statusKind(last.status),
+			detail: `last run ${last.runId || ''}`.trim(),
+		};
+	}
+	return {
+		label: 'none',
+		kind: 'neutral',
+		detail: 'No completed run is recorded for this scenario.',
+	};
+}
+
+function scenarioDisabledReason(flow) {
+	const status = flow?.scenarioStatus || {};
+	const reason = status.unrunnableReason || flow?.runBlockedReason || '';
+	if (reason) return { label: 'disabled', kind: 'warning', detail: reason };
+	if (flow?.runnable === false) return { label: 'disabled', kind: 'warning', detail: 'Scenario is not runnable yet.' };
+	return { label: 'none', kind: 'success', detail: 'Run controls are enabled when the queue is idle.' };
+}
+
 function statusDetailNode(detail) {
 	if (!detail) return null;
 	return detail.nodeType ? detail : document.createTextNode(String(detail));
@@ -590,19 +734,27 @@ function renderScenarioStatus(flow) {
 	const status = flow?.scenarioStatus || {};
 	const missingValues = status.missingValues || flow?.missingValues || [];
 	const last = status.lastRun || null;
-	const lastLinks = last ? el('span', { class: 'status-link-row' },
-		el('a', { href: last.runUrl, target: '_blank', rel: 'noreferrer' }, last.runId),
-		el('a', { href: last.reportUrl, target: '_blank', rel: 'noreferrer' }, 'report.json'),
-	) : null;
 	const auth = status.auth || {};
 	const reasonKind = status.unrunnableReason ? 'warning' : status.lastFailureReason ? 'danger' : 'neutral';
 	const authKind = auth.required ? (auth.ready ? 'success' : 'warning') : 'neutral';
+	const authLabel = auth.required ? (auth.ready ? 'ready' : (auth.state || 'missing')) : 'not required';
+	const renewal = scenarioAuthRenewal(auth);
+	const liveRisk = scenarioLiveRisk(flow);
+	const policy = scenarioPolicyBlock(flow, liveRisk);
+	const failure = scenarioFailureStatus(status);
+	const disabled = scenarioDisabledReason(flow);
 	return el('div', { class: 'scenario-status-grid' },
 		scenarioStatusItem('needs_review', String(status.needsReview || 0), status.needsReview ? 'warning' : 'success'),
 		scenarioStatusItem('missing values', String(missingValues.length), missingValues.length ? 'warning' : 'success', missingValues.join(', ')),
 		scenarioStatusItem('compiled', flow.compiled ? 'fresh' : 'stale/missing', flow.compiled ? 'success' : 'warning'),
-		scenarioStatusItem('auth', auth.required ? (auth.ready ? 'ready' : 'missing') : 'not required', authKind, auth.app || ''),
-		scenarioStatusItem('last run', last ? last.status : 'never-run', last ? statusKind(last.status) : 'neutral', lastLinks),
+		scenarioStatusItem('auth', authLabel, authKind, auth.app || ''),
+		scenarioStatusItem('auth / OTP renewal', renewal.label, renewal.kind, renewal.detail),
+		scenarioStatusItem('policy block', policy.label, policy.kind, policy.detail),
+		scenarioStatusItem('live risk', liveRisk.label, liveRisk.kind, liveRisk.detail),
+		scenarioStatusItem('timeout / last failure', failure.label, failure.kind, failure.detail),
+		scenarioStatusItem('disabled reason', disabled.label, disabled.kind, disabled.detail),
+		scenarioStatusItem('last run', last ? last.status : 'never-run', last ? statusKind(last.status) : 'neutral', last?.runId || ''),
+		scenarioStatusItem('artifacts / deep links', last ? 'available' : 'none', last ? 'info' : 'neutral', scenarioArtifactLinks(last), true),
 		scenarioStatusItem(status.unrunnableReason ? 'unrunnable reason' : status.lastFailureReason ? 'last failure reason' : 'reason', el('strong', { class: `scenario-reason ${reasonKind}` }, scenarioReason(flow)), reasonKind, null, true),
 	);
 }
