@@ -135,6 +135,14 @@ Additional local external-runner execution on 2026-06-11 passed from a clean `or
 `bash tests/security-p0-gate.test.sh` also passed. This is local deterministic contract evidence only,
 not proof of a deployed production external runner or production audit webhook delivery.
 
+Additional local audit-webhook execution on 2026-06-11 passed from a clean `origin/master` worktree:
+an inline temp-DB smoke delivered one webhook-mode outbox row through a fake connector with
+`finalStatus: delivered`, `payloadBody: null`, `payloadRedacted: true`, and `rawLeak: false`; the
+focused audit outbox, scheduler, runner contract/API, durable job, release checklist, and
+`bash tests/security-p0-gate.test.sh` checks also passed. This is fake-connector contract evidence
+only, not proof of a deployed production webhook endpoint, production connector, or real secret broker
+delivery.
+
 The readiness matrix is intentionally conservative: current sections are still release-blocking because
 real IdP, KMS, noVNC, DNS-at-connection, runner deployment, webhook audit, export, and live-like
 acceptance remain external/operator-owned.
@@ -176,8 +184,9 @@ Closed or partially closed for pre-serverization:
 - P0-F: local WebUI jobs have persisted state, idempotent cancel, runner claim/heartbeat leases,
   redacted result/audit, retry-aware restart reconciliation, worker metadata, retention metadata,
   artifact hashes, local audit hash-chain verification, deterministic JSONL audit-sink validation, and
-  audit outbox metadata. Local external-runner execution was reconfirmed on 2026-06-11; production
-  runner identity/deployment and webhook audit delivery are still open.
+  audit outbox metadata. Local external-runner execution and fake-connector audit webhook delivery were
+  reconfirmed on 2026-06-11; production runner identity/deployment and webhook audit delivery are still
+  open.
 - P0-G: export/retention helpers block known secret paths, raw secret patterns, unknown scan/redaction
   status, cross-tenant reuse, missing policy approval, expired/invalid signed refs, legal holds, and
   tombstoned artifacts. A production export service and tenant deletion workflow are still open.

@@ -52,6 +52,26 @@ not evidence of a deployed production external runner topology or production aud
 | `bash tests/local-external-rehearsal-unit.test.sh` | PASS | Local external-mode rehearsal wrapper configuration checks remained green. |
 | `bash tests/security-p0-gate.test.sh` | PASS | Fixture-only P0 gate passed, including `local-external-runner-e2e` and runner contract/API/worker tests. |
 
+## Audit Webhook Local Execution
+
+Executed from a clean `origin/master` worktree on 2026-06-11 before this documentation update. Scope is
+local deterministic audit webhook contract evidence only: a temp SQLite outbox, webhook-mode sink
+metadata, tenant-scoped secret-reference metadata, fake connector delivery, hash-only envelope
+verification, scheduler behavior, retry/dead-letter classification, and fail-closed missing-connector
+coverage. This is not evidence of a deployed production webhook endpoint, production webhook connector,
+or real secret broker delivery.
+
+| Command | Result | Evidence |
+| --- | --- | --- |
+| inline Node audit webhook drain smoke (`AQA_DB_PATH=<temp> node -`) | PASS | `{"ok":true,"checked":1,"delivered":1,"failed":0,"deadLettered":0,"finalStatus":"delivered","connectorCalls":1,"connectorId":"local-fake-audit-webhook","envelopeKind":"webui-audit-outbox","payloadBody":null,"payloadRedacted":true,"targetHost":"audit.example.test","rawLeak":false}` |
+| `bash tests/audit-outbox-worker-unit.test.sh` | PASS | Audit outbox worker delivered due webhook rows through the connector interface and kept connector envelopes metadata-only. |
+| `bash tests/audit-outbox-scheduler-unit.test.sh` | PASS | Webhook-mode scheduler manual tick, single-flight behavior, missing-connector backoff, and scheduler backoff coverage remained green. |
+| `bash tests/runner-contract-unit.test.sh` | PASS | Runner-facing audit webhook delivery contract, retry/dead-letter behavior, and plaintext credential refusal remained green. |
+| `bash tests/jobs-durable-unit.test.sh` | PASS | Webhook sink preflight, pending outbox metadata, JSONL sink, and durable job audit behavior remained green. |
+| `bash tests/runner-api-unit.test.sh` | PASS | Runner API audit-adjacent contract coverage remained green. |
+| `bash tests/release-checklist-unit.test.sh` | PASS | Release checklist still reports production audit webhook delivery as external/operator-owned evidence. |
+| `bash tests/security-p0-gate.test.sh` | PASS | Fixture-only P0 gate passed, including audit outbox worker/scheduler and runner contract/API tests. |
+
 ## Release Checklist Decision
 
 `node bin/release-checklist.mjs --markdown --artifacts-dir artifacts` reports `Decision: No-Go`.
