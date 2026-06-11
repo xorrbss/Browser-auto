@@ -5,6 +5,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 PORT=$((6100 + RANDOM % 1000))
 SRV=""
+DEV_FLOW_NAME="_webui_dev_readonly_$$"
+DEV_FLOW="$DIR/flows/$DEV_FLOW_NAME.flow.json"
+DEV_TEST="$DIR/tests/$DEV_FLOW_NAME.test.sh"
 
 fail(){ echo "  webui-blocked-flow-route-unit: $1" >&2; exit 1; }
 
@@ -13,14 +16,35 @@ cleanup() {
 		kill "$SRV" 2>/dev/null || true
 		wait "$SRV" 2>/dev/null || true
 	fi
+	rm -f "$DEV_FLOW" "$DEV_TEST"
 	rm -rf "$TMP"
 }
 trap cleanup EXIT
+
+cat > "$DEV_FLOW" <<JSON
+{
+  "name": "$DEV_FLOW_NAME",
+  "engine": "playwright",
+  "environment": "live-readonly",
+  "riskClass": "read",
+  "startUrl": "https://example.com",
+  "steps": [
+    { "kind": "find", "by": "text", "value": "Example Domain", "action": "hover" }
+  ],
+  "asserts": []
+}
+JSON
+cat > "$DEV_TEST" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+touch "$DEV_TEST"
 
 node --check "$DIR/webui/blocked-flows.js" || fail "blocked-flows syntax failed"
 node --check "$DIR/webui/flows.js" || fail "flows syntax failed"
 node --check "$DIR/webui/readiness.js" || fail "readiness syntax failed"
 node --check "$DIR/webui/server.js" || fail "server syntax failed"
+node --check "$DIR/webui/jobs.js" || fail "jobs syntax failed"
 node --check "$DIR/webui/public/app.js" || fail "app syntax failed"
 node --check "$DIR/webui/public/ops-dashboard.js" || fail "ops-dashboard syntax failed"
 
@@ -66,7 +90,7 @@ NODE
 ( cd "$DIR" && exec env AQA_DB_PATH="$TMP/t.db" WEBUI_PORT="$PORT" WEBUI_KEEP_RUNS=999999 node webui/server.js >"$TMP/server.log" 2>&1 ) &
 SRV=$!
 
-PORT="$PORT" node --input-type=module - <<'NODE' || fail "server route contract failed"
+PORT="$PORT" DEV_FLOW_NAME="$DEV_FLOW_NAME" node --input-type=module - <<'NODE' || fail "server route contract failed"
 import assert from 'node:assert/strict';
 
 const base = `http://127.0.0.1:${process.env.PORT}`;
@@ -101,10 +125,60 @@ body = await r.json();
 const hiworks = body.flows.find((flow) => flow.name === 'hiworks01');
 assert.equal(hiworks?.blockedFlow?.status, 'blocked', 'flows route includes structured blockedFlow metadata');
 
+const resolverEvidence = JSON.stringify({
+	'example.com': {
+		addresses: ['93.184.216.34'],
+		connectionIps: ['93.184.216.34'],
+		resolvedAtMs: Date.now(),
+	},
+});
+r = await fetch(`${base}/api/dev-integration-readonly`, {
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	body: JSON.stringify({
+		name: process.env.DEV_FLOW_NAME,
+		validateOnly: true,
+		allowlist: 'https://example.com',
+		resolverEvidence,
+	}),
+});
+assert.equal(r.status, 202, 'development read-only route enqueues');
+body = await r.json();
+assert.equal(body.mode, 'development-integration-readonly', 'route reports development integration mode');
+assert.equal(body.approvalRequired, false, 'route does not require owner approval for dev read-only');
+assert.equal(body.evidencePackRequired, false, 'route does not require evidence pack for dev read-only');
+assert.equal(body.allowlist, 'https://example.com', 'route returns exact allowlist');
+assert.equal(body.job?.meta?.workflow, 'development-integration', 'job metadata marks development integration');
+assert.equal(body.job?.meta?.productionOpenApprovalRequired, false, 'job metadata keeps production approval separate');
+const jobId = body.job.id;
+let job = null;
+for (let i = 0; i < 80; i += 1) {
+	const jr = await fetch(`${base}/api/jobs/${jobId}`);
+	assert.equal(jr.status, 200, 'job status route returns 200');
+	job = await jr.json();
+	if (['done', 'failed', 'cancelled'].includes(job.status)) break;
+	await sleep(100);
+}
+assert.equal(job.status, 'done', `development read-only validate job should finish, got ${job.status}: ${job.failureReason || job.error || ''}`);
+
+r = await fetch(`${base}/api/dev-integration-readonly`, {
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	body: JSON.stringify({ name: process.env.DEV_FLOW_NAME, allowlist: 'https://example.com/path' }),
+});
+assert.equal(r.status, 400, 'development read-only route rejects path allowlist entries');
+
+r = await fetch(`${base}/api/dev-integration-readonly`, {
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	body: JSON.stringify({ name: 'hiworks01', allowlist: 'https://example.com' }),
+});
+assert.equal(r.status, 409, 'development read-only route refuses non-read/live-action flow');
+
 r = await fetch(`${base}/api/queue`);
 assert.equal(r.status, 200, 'queue route returns 200');
 body = await r.json();
-assert.equal(body.running, null, 'static metadata reads do not start a running job');
+assert(body.running === null || body.running.label.startsWith('dev-readonly'), 'only the requested development job may run');
 assert.equal(Array.isArray(body.pending) ? body.pending.length : 0, 0, 'static metadata reads do not enqueue jobs');
 NODE
 

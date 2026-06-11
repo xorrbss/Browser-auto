@@ -34,6 +34,8 @@ const JOB_JOURNAL = process.env.WEBUI_JOB_JOURNAL || path.join(PROBE_ROOT, 'data
 const TERMINAL_STATUSES = new Set(['done', 'failed', 'cancelled', 'interrupted']);
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const TEST_GLOB_RE = /^[A-Za-z0-9_*?-]+$/;
+const READONLY_RUN_MODES = new Set(['staging', 'live-readonly']);
+const COMMAND_ENV_KEYS = new Set(['AQA_RUN_MODE', 'AQA_TARGET_ALLOWLIST', 'AQA_EGRESS_RESOLVER_EVIDENCE', 'AQA_EGRESS_CONNECTION_IPS']);
 const RUN_ARTIFACTS = [
 	{ rel: 'report.json', kind: 'report', redaction: 'text-redacted-on-read' },
 	{ rel: 'report.junit.xml', kind: 'junit', redaction: 'text-redacted-on-read' },
@@ -263,33 +265,111 @@ function canAccessJob(job, context = null) {
 	return !tenantId || job.tenantId === tenantId;
 }
 
+function normalizeExactTargetAllowlist(value) {
+	const parts = String(value || '').split(',').map((part) => part.trim()).filter(Boolean);
+	if (!parts.length) throw new Error('AQA_TARGET_ALLOWLIST is required');
+	const origins = [];
+	for (const part of parts) {
+		if (part.includes('*')) throw new Error('AQA_TARGET_ALLOWLIST must use exact origins, not wildcards');
+		let url;
+		try {
+			url = new URL(part);
+		} catch {
+			throw new Error('AQA_TARGET_ALLOWLIST entries must be http(s) origins');
+		}
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('AQA_TARGET_ALLOWLIST entries must be http(s)');
+		if (url.username || url.password) throw new Error('AQA_TARGET_ALLOWLIST entries must not contain credentials');
+		if (url.pathname !== '/' || url.search || url.hash) throw new Error('AQA_TARGET_ALLOWLIST entries must be origins only');
+		origins.push(url.origin);
+	}
+	return [...new Set(origins)].join(',');
+}
+
+function normalizeJsonEnv(value, label) {
+	const text = String(value || '').trim();
+	if (!text) return '';
+	if (text.length > 65536) throw new Error(`${label} is too large`);
+	let parsed;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		throw new Error(`${label} must be JSON`);
+	}
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`${label} must be a JSON object`);
+	return JSON.stringify(parsed);
+}
+
+function devReadonlyFlowArg(args, allowlist) {
+	if (!allowlist) return '';
+	if (args.length === 1 && NAME_RE.test(args[0])) return args[0];
+	if (args.length === 2 && args[0] === '--validate-only' && NAME_RE.test(args[1])) return args[1];
+	if (args.length === 3 && args[0] === '--allowlist' && normalizeExactTargetAllowlist(args[1]) === allowlist && NAME_RE.test(args[2])) return args[2];
+	if (args.length === 4 && args[0] === '--validate-only' && args[1] === '--allowlist' && normalizeExactTargetAllowlist(args[2]) === allowlist && NAME_RE.test(args[3])) return args[3];
+	return '';
+}
+
+function normalizeCommandEnv(value) {
+	if (value == null) return {};
+	if (typeof value !== 'object' || Array.isArray(value)) throw new Error('commandSpec.env must be an object');
+	const out = {};
+	for (const [key, raw] of Object.entries(value)) {
+		if (raw == null || raw === '') continue;
+		if (!COMMAND_ENV_KEYS.has(key)) throw new Error(`commandSpec.env key "${key}" is not WebUI-safe`);
+		if (key === 'AQA_RUN_MODE') {
+			const mode = String(raw).trim();
+			if (!READONLY_RUN_MODES.has(mode)) throw new Error('AQA_RUN_MODE must be staging or live-readonly');
+			out.AQA_RUN_MODE = mode;
+		}
+		if (key === 'AQA_TARGET_ALLOWLIST') {
+			out.AQA_TARGET_ALLOWLIST = normalizeExactTargetAllowlist(raw);
+		}
+		if (key === 'AQA_EGRESS_RESOLVER_EVIDENCE') {
+			out.AQA_EGRESS_RESOLVER_EVIDENCE = normalizeJsonEnv(raw, key);
+		}
+		if (key === 'AQA_EGRESS_CONNECTION_IPS') {
+			out.AQA_EGRESS_CONNECTION_IPS = normalizeJsonEnv(raw, key);
+		}
+	}
+	return out;
+}
+
 function validateCommandSpec(spec) {
 	if (!spec) return null;
 	if (typeof spec !== 'object' || Array.isArray(spec)) throw new Error('commandSpec must be an object');
 	const runner = String(spec.runner || '').trim();
 	const script = String(spec.script || '').trim().replace(/\\/g, '/');
 	const args = Array.isArray(spec.args) ? spec.args.map((a) => String(a)) : [];
-	const out = { schemaVersion: 1, runner, script, args };
+	const env = normalizeCommandEnv(spec.env);
+	const hasEnv = Object.keys(env).length > 0;
+	const out = { schemaVersion: 1, runner, script, args, ...(hasEnv ? { env } : {}) };
 	if (runner === 'gitBash' && script === 'run.sh') {
-		if (args.length <= 1 && args.every((a) => TEST_GLOB_RE.test(a))) return out;
+		if (!hasEnv && args.length <= 1 && args.every((a) => TEST_GLOB_RE.test(a))) return out;
+	}
+	if (runner === 'gitBash' && script === 'bin/operator-staging-readonly.sh') {
+		const flowArg = args.length === 1 ? args[0] : args.length === 2 && args[0] === '--validate-only' ? args[1] : '';
+		if (flowArg && NAME_RE.test(flowArg) && READONLY_RUN_MODES.has(env.AQA_RUN_MODE) && env.AQA_TARGET_ALLOWLIST) return out;
+	}
+	if (runner === 'gitBash' && script === 'bin/dev-integration-readonly.sh') {
+		const flowArg = devReadonlyFlowArg(args, env.AQA_TARGET_ALLOWLIST);
+		if (flowArg && NAME_RE.test(flowArg) && env.AQA_TARGET_ALLOWLIST) return out;
 	}
 	if (runner === 'gitBash' && (script === 'bin/sync-system.sh' || script === 'bin/enrich-system.sh')) {
-		if (args.length === 2 && args[0] === '--system' && NAME_RE.test(args[1])) return out;
+		if (!hasEnv && args.length === 2 && args[0] === '--system' && NAME_RE.test(args[1])) return out;
 	}
 	if (runner === 'nodeLeaf' && script === 'bin/play-flow.mjs') {
 		const m = args.length === 3 && args[0] === '--flow' && args[2] === '--verify'
 			? /^flows\/([A-Za-z0-9_-]+)\.flow\.json$/.exec(args[1])
 			: null;
-		if (m) return out;
+		if (!hasEnv && m) return out;
 	}
 	if (runner === 'nodeLeaf' && script === 'bin/pw-rpa.mjs') {
-		if (args.length === 3 && ['analyze', 'sync', 'enrich'].includes(args[0]) && args[1] === '--system' && NAME_RE.test(args[2])) return out;
+		if (!hasEnv && args.length === 3 && ['analyze', 'sync', 'enrich'].includes(args[0]) && args[1] === '--system' && NAME_RE.test(args[2])) return out;
 	}
 	throw new Error('commandSpec is not WebUI-safe for durable resume');
 }
 
-function spawnEnv(identity = {}) {
-	const env = {};
+function spawnEnv(identity = {}, extraEnv = {}) {
+	const env = { ...(extraEnv || {}) };
 	if (identity.tenantId) {
 		env.AQA_TENANT_ID = identity.tenantId;
 		env.WEBUI_TENANT_ID = identity.tenantId;
@@ -304,7 +384,7 @@ function spawnEnv(identity = {}) {
 function spawnFromCommandSpec(spec, identity = {}) {
 	const safe = validateCommandSpec(spec);
 	if (!safe) return null;
-	return () => safe.runner === 'gitBash' ? gitBash(safe.script, safe.args, spawnEnv(identity)) : nodeLeaf(safe.script, safe.args, spawnEnv(identity));
+	return () => safe.runner === 'gitBash' ? gitBash(safe.script, safe.args, spawnEnv(identity, safe.env)) : nodeLeaf(safe.script, safe.args, spawnEnv(identity, safe.env));
 }
 
 function defaultNonResumableReason(kind) {

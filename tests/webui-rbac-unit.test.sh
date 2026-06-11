@@ -99,6 +99,7 @@ assert.deepEqual(requiredPermissionsForRoute('HEAD', '/api/release-checklist'), 
 assert.deepEqual(requiredPermissionsForRoute('DELETE', '/artifacts/run/report.json'), ['live-action'], 'artifact delete is owner gated');
 
 assert.deepEqual(requiredPermissionsForPost('/api/run'), ['run'], 'suite run requires run permission');
+assert.deepEqual(requiredPermissionsForPost('/api/dev-integration-readonly'), ['run'], 'development read-only integration requires run permission');
 assert.deepEqual(requiredPermissionsForPost('/api/session/logout'), ['read'], 'logout is authenticated self-service');
 assert.deepEqual(requiredPermissionsForPost('/api/tenant/users'), ['live-action'], 'tenant user management is owner gated');
 assert.deepEqual(requiredPermissionsForPost('/api/record'), ['record'], 'record requires record permission');
@@ -117,6 +118,8 @@ assert.deepEqual(requiredPermissionsForPost('/api/retention/delete'), ['live-act
 
 assert.equal(authorizeWebuiPost('/api/run', {}, { AQA_WEBUI_ROLE: 'viewer' }).ok, false, 'viewer cannot start runs');
 assert.equal(authorizeWebuiPost('/api/run', {}, { AQA_WEBUI_ROLE: 'operator' }).ok, true, 'operator can start runs');
+assert.equal(authorizeWebuiPost('/api/dev-integration-readonly', {}, { AQA_WEBUI_ROLE: 'operator' }).ok, true, 'operator can start development read-only integration');
+assert.equal(authorizeWebuiPost('/api/dev-integration-readonly', {}, { AQA_WEBUI_ROLE: 'viewer' }).ok, false, 'viewer cannot start development read-only integration');
 assert.equal(authorizeWebuiPost('/api/approve/run', { dryRun: true }, { AQA_WEBUI_ROLE: 'operator' }).ok, true, 'operator can dry-run approve');
 assert.equal(authorizeWebuiPost('/api/approve/run', { dryRun: false }, { AQA_WEBUI_ROLE: 'operator' }).ok, false, 'operator cannot live approve');
 assert.equal(authorizeWebuiPost('/api/approve/run', { dryRun: false }, { AQA_WEBUI_ROLE: 'owner' }).ok, true, 'owner can live approve');
@@ -159,6 +162,7 @@ const routeMatrix = [
 	['GET', '/api/approve/audit', {}, { viewer: false, operator: true, owner: true, admin: true }, 'audit detail'],
 	['GET', '/api/admin/routes', {}, { viewer: false, operator: true, owner: true, admin: true }, 'admin detail'],
 	['POST', '/api/run', {}, { viewer: false, operator: true, owner: true, admin: true }, 'run enqueue'],
+	['POST', '/api/dev-integration-readonly', {}, { viewer: false, operator: true, owner: true, admin: true }, 'development read-only integration'],
 	['POST', '/api/jobs/job1/cancel', {}, { viewer: false, operator: true, owner: true, admin: true }, 'job cancel'],
 	['POST', '/api/auth', {}, { viewer: false, operator: true, owner: true, admin: true }, 'auth setup'],
 	['POST', '/api/record', {}, { viewer: false, operator: true, owner: true, admin: true }, 'record'],

@@ -45,7 +45,8 @@ bash setup/auth.sh myapp https://app.example.com/login '**/dashboard'
 
 Complete the login by hand in the browser window. The script saves
 `fixtures/auth/playwright/myapp.state.json` (gitignored). Future Playwright flows with
-`"app": "myapp"` replay unattended from that cached state.
+`"app": "myapp"` can run from that cached state when an operator explicitly invokes them, without
+repeating SSO/OTP in the replay path.
 
 In external/encrypted mode (`WEBUI_EXTERNAL_MODE=1`, `AQA_EXTERNAL_MODE=1`, or
 `WEBUI_SECRET_STORE_BACKEND=encrypted-local`), `setup/auth.sh` refuses local plaintext auth state unless
@@ -86,6 +87,34 @@ node bin/play-flow.mjs --flow flows/checkout.flow.json
 
 Compiled Playwright tests are small bash wrappers around `node bin/play-flow.mjs --flow ...`, preserving
 the "one bash file = one user journey" contract.
+
+## Read-Only Development Integration
+
+For trying many business systems during development, a read-only operator-triggered run does not
+require a per-system owner approval packet, approval ticket, stop contact, or formal evidence pack.
+Use `validate-only`, an exact `AQA_TARGET_ALLOWLIST`, and a local operator-owned auth state or secret
+ref when the flow declares an `app`.
+
+Keep only the lightweight development record: `commit`, `command`, `run_mode`, `allowlist`, `result`,
+`RUN_ID`, `artifact_paths`, `issues_found`, and `next_action`. Promotion to production-open,
+unattended/scheduled operation, external-runner execution, or approve/reject/write behavior still
+requires owner approval and the heavier evidence pack.
+
+Use the development wrapper for this loop:
+
+```bash
+bash bin/dev-integration-readonly.sh --validate-only <flow-name>
+bash bin/dev-integration-readonly.sh --allowlist https://host[:port][,...] <flow-name>
+```
+
+If `--allowlist` is omitted, the wrapper derives the exact origin from `startUrl`. Add a comma-separated
+exact-origin allowlist only when the read-only flow is expected to navigate across known product
+origins. The wrapper prints `RUN_ID`, the effective allowlist, and
+`artifacts/<RUN_ID>/dev-integration-readonly.json`.
+
+The Hiworks approval/evidence documents under `dev/active/productization/` are production-open
+templates, not development integration gates. The current Hiworks read-only lane remains a
+development integration PASS.
 
 ## RPA Validation Without External Dependencies
 
@@ -150,8 +179,11 @@ Keep CI and live-operator checks separate:
 - **Non-local read lane:** run only by explicit operator action for `environment:"staging"` or
   `environment:"live-readonly"` flows, with the matching `AQA_RUN_MODE` and `AQA_TARGET_ALLOWLIST`
   origin(s). Agents may prepare or validate the flow, but a human operator chooses when it touches a
-  real target. Use `bash bin/operator-staging-readonly.sh <name>` so CI, wrong run modes, missing
-  allowlists, live-action env, and destructive-looking read steps fail closed before replay.
+  real target. For read-only development integration, use
+  `bash bin/dev-integration-readonly.sh [--validate-only] <name>`; it keeps exact allowlists and
+  lightweight run records without owner approval packets. For staging/production read-only acceptance,
+  use `bash bin/operator-staging-readonly.sh <name>` so CI, wrong run modes, missing allowlists,
+  live-action env, and destructive-looking read steps fail closed before replay.
 - **Live-auth lane:** run explicitly on an operator host after `bash setup/auth.sh <app> ...` refreshes
   the local pilot auth file or configured auth-state secret ref. Use `bash run.sh <name>` for named
   flows, or opt into app-bound flows with `AQA_INCLUDE_LIVE_AUTH=1`.
@@ -174,7 +206,7 @@ The operator runbook for this separation is `dev/active/live-readiness/RUNBOOK.m
 
 Local RBAC is route-enforced for the WebUI control plane: **viewer** reads redacted status and reports,
 **operator** runs fixture/local jobs and supervised non-local/live-auth checks, and **owner**/**admin**
-approve target systems, live-action scope, rollback ownership, artifact release, and role changes.
+approve production target systems, live-action scope, rollback ownership, artifact release, and role changes.
 Sensitive metadata GET/HEAD routes for secret migration, tenant deletion, release checklist handoff,
 audit detail, and admin/auth detail require operator, owner, or admin. Agents must not perform SSO/OTP
 login, use or copy live auth state, approve effectful/destructive work, choose live targets, bypass

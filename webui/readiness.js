@@ -44,7 +44,7 @@ const P0_EVIDENCE_COMMANDS = Object.freeze({
 	}),
 	'P0-H': Object.freeze({
 		contractOnly: 'bash tests/security-p0-gate.test.sh',
-		externalBlocked: 'operator-approved staging/live acceptance evidence',
+		externalBlocked: 'production-open acceptance evidence',
 	}),
 });
 const P0_MATRIX_OVERLAY = Object.freeze({
@@ -93,8 +93,8 @@ const P0_MATRIX_OVERLAY = Object.freeze({
 	'P0-H': Object.freeze({
 		status: 'contract-only',
 		implemented: Object.freeze(['fixture-only security-p0-gate wrapper', 'local negative coverage for current contracts']),
-		contractOnly: Object.freeze(['machine-readable readiness matrix', 'release checklist skeleton', 'CI lane separation metadata']),
-		externalBlocked: Object.freeze(['operator-approved staging/live acceptance environments', 'operator-approved non-local/live-readonly acceptance']),
+		contractOnly: Object.freeze(['machine-readable readiness matrix', 'release checklist skeleton', 'CI lane separation metadata', 'development integration read-only lane metadata']),
+		externalBlocked: Object.freeze(['production-open staging/live acceptance environments', 'unattended/scheduled/external-runner acceptance']),
 	}),
 });
 const CI_LANES = Object.freeze([
@@ -126,24 +126,43 @@ const CI_LANES = Object.freeze([
 		liveActionAllowed: false,
 	}),
 	Object.freeze({
+		id: 'dev-integration-readonly',
+		label: 'Development Integration Readonly Lane',
+		command: 'bash bin/dev-integration-readonly.sh --allowlist https://host <flow>',
+		ciAllowed: false,
+		ciBlockedReason: 'developer-selected read-only integration may contact non-local systems; run manually with an exact target allowlist',
+		liveAuthAllowed: true,
+		nonLocalAllowed: true,
+		liveActionAllowed: false,
+		developmentIntegrationAllowed: true,
+		approvalRequired: false,
+		evidencePackRequired: false,
+	}),
+	Object.freeze({
 		id: 'operator-only',
 		label: 'Operator-Only Live/Non-Local Lane',
 		command: 'operator-approved named flow only',
 		ciAllowed: false,
-		ciBlockedReason: 'requires operator-owned auth/target allowlist and may contact non-local systems',
+		ciBlockedReason: 'production open, unattended/scheduled, external runner, or live-action paths require operator/owner approval',
 		liveAuthAllowed: true,
 		nonLocalAllowed: true,
 		liveActionAllowed: false,
+		developmentIntegrationAllowed: false,
+		approvalRequired: true,
+		evidencePackRequired: true,
 	}),
 	Object.freeze({
 		id: 'staging-readonly',
 		label: 'Operator Staging Readonly Lane',
 		command: 'AQA_RUN_MODE=staging AQA_TARGET_ALLOWLIST=https://host bash bin/operator-staging-readonly.sh <flow>',
 		ciAllowed: false,
-		ciBlockedReason: 'requires operator-selected staging/live-readonly target allowlist and may contact non-local systems',
+		ciBlockedReason: 'production staging readiness remains operator-owned; development read-only uses dev-integration-readonly',
 		liveAuthAllowed: true,
 		nonLocalAllowed: true,
 		liveActionAllowed: false,
+		developmentIntegrationAllowed: false,
+		approvalRequired: true,
+		evidencePackRequired: true,
 	}),
 ]);
 
@@ -281,6 +300,7 @@ export function buildReleaseChecklist(matrix = [], { sections = [], blockedFlows
 		...(entry.missingEvidence?.externalBlocked || []),
 	]);
 	const operatorOnlyLane = CI_LANES.find((lane) => lane.id === 'operator-only');
+	const developmentIntegrationLanes = CI_LANES.filter((lane) => lane.developmentIntegrationAllowed).map((lane) => lane.id);
 	const blockedFlowEntries = Array.isArray(blockedFlows?.flows) ? blockedFlows.flows : [];
 	const blockedFlowNames = blockedFlowEntries.filter((flow) => flow.status === 'blocked').map((flow) => flow.name);
 	const operatorOnlyFlowNames = blockedFlowEntries.filter((flow) => flow.status === 'operator-only').map((flow) => flow.name);
@@ -298,6 +318,8 @@ export function buildReleaseChecklist(matrix = [], { sections = [], blockedFlows
 			reason: lane.ciBlockedReason || 'operator-only',
 		})),
 		operatorOnlyLaneBlockedInCi: !!operatorOnlyLane && !operatorOnlyLane.ciAllowed,
+		developmentIntegrationLanes,
+		developmentIntegrationApprovalRequired: false,
 		openSections,
 		contractOnly,
 		externalBlocked,

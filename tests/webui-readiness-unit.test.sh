@@ -39,7 +39,10 @@ assert(r.releaseChecklist.missingEvidence.some((item) => item.category === 'exte
 assert(r.releaseChecklist.missingEvidenceByCategory.externalBlocked.length > 0, 'release checklist groups external evidence gaps');
 assert(Array.isArray(r.ciLanes) && r.ciLanes.some((lane) => lane.id === 'security-p0-gate' && lane.ciAllowed), 'CI lanes include security gate');
 assert(r.ciLanes.some((lane) => lane.id === 'operator-only' && lane.ciAllowed === false), 'operator-only lane is explicitly not CI allowed');
+assert(r.ciLanes.some((lane) => lane.id === 'dev-integration-readonly' && lane.ciAllowed === false && lane.nonLocalAllowed === true && lane.approvalRequired === false && lane.evidencePackRequired === false), 'development read-only integration lane is manual but does not require owner approval/evidence pack');
 assert(r.ciLanes.some((lane) => lane.id === 'staging-readonly' && lane.ciAllowed === false && lane.nonLocalAllowed === true), 'staging-readonly lane is operator-only and non-local');
+assert(r.releaseChecklist.developmentIntegrationLanes.includes('dev-integration-readonly'), 'release helper separates development integration lanes');
+assert(r.releaseChecklist.developmentIntegrationApprovalRequired === false, 'development integration approval packet is not required');
 assert(r.releaseChecklist.ciBlockedLanes.some((lane) => lane.id === 'staging-readonly'), 'release checklist blocks staging-readonly from CI');
 assert(r.blockedFlows?.generator === 'blocked-flow-report/v1', 'readiness embeds blocked-flow report metadata');
 assert(r.blockedFlows.staticAnalysisOnly === true, 'blocked-flow readiness metadata is static-analysis-only');

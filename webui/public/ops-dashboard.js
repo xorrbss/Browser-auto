@@ -47,6 +47,13 @@ function joinCounts(counts) {
 	return parts.length ? parts.join(', ') : '-';
 }
 
+function laneMode(lane = {}) {
+	if (lane.developmentIntegrationAllowed) return lane.approvalRequired === false ? 'dev-readonly' : 'dev-review';
+	if (lane.liveActionAllowed) return 'production-approval';
+	if (lane.liveAuthAllowed || lane.nonLocalAllowed) return lane.approvalRequired === false ? 'manual-readonly' : 'operator-approval';
+	return 'fixture-only';
+}
+
 export function buildOpsDashboardModel({ readiness = null, queue = null, auditSummary = null, rbac = null } = {}) {
 	const matrix = Array.isArray(readiness?.matrix) ? readiness.matrix : [];
 	const lanes = Array.isArray(readiness?.ciLanes) ? readiness.ciLanes : [];
@@ -87,15 +94,16 @@ export function buildOpsDashboardModel({ readiness = null, queue = null, auditSu
 	const laneRows = lanes.map((lane) => ({
 		lane: redactOpsText(lane.id),
 		ci: lane.ciAllowed ? 'allowed' : 'blocked',
-		live: lane.liveActionAllowed || lane.liveAuthAllowed || lane.nonLocalAllowed ? 'operator-only' : 'fixture-only',
+		live: laneMode(lane),
 		command: redactOpsText(lane.command),
 	}));
+	const devLaneCount = lanes.filter((lane) => lane.developmentIntegrationAllowed && lane.approvalRequired === false).length;
 	return {
 		tiles: [
 			{ label: 'Release Decision', value: redactOpsText(readiness?.decision || 'No-Go'), detail: redactOpsText(checklist.generator || 'readiness API') },
 			{ label: 'P0 Matrix', value: joinCounts(countByStatus(matrix)), detail: `${matrix.length} section(s)` },
-			{ label: 'Flow Static Analysis', value: `${blockedFlowReport.totals?.blocked || 0}/${blockedFlowReport.totals?.total || 0} blocked`, detail: `${blockedFlowReport.totals?.operatorOnly || 0} operator-only; ${blockedFlowReport.staticAnalysisOnly ? 'no replay' : 'unknown mode'}` },
-			{ label: 'CI Lanes', value: `${lanes.filter((lane) => lane.ciAllowed).length}/${lanes.length || 0} allowed`, detail: checklist.operatorOnlyLaneBlockedInCi ? 'operator-only blocked in CI' : 'review required' },
+			{ label: 'Flow Static Analysis', value: `${blockedFlowReport.totals?.blocked || 0}/${blockedFlowReport.totals?.total || 0} blocked`, detail: `${blockedFlowReport.totals?.operatorOnly || 0} manual/dev gated; ${blockedFlowReport.staticAnalysisOnly ? 'no replay' : 'unknown mode'}` },
+			{ label: 'CI Lanes', value: `${lanes.filter((lane) => lane.ciAllowed).length}/${lanes.length || 0} allowed`, detail: devLaneCount ? `${devLaneCount} dev-readonly lane(s); production approval separate` : checklist.operatorOnlyLaneBlockedInCi ? 'operator-only blocked in CI' : 'review required' },
 			{ label: 'Queue', value: `${metrics.running || 0} running / ${metrics.queued || 0} queued`, detail: metrics.lastFailureReason ? redactOpsText(metrics.lastFailureReason) : 'no failure signal' },
 			{ label: 'Audit', value: auditSummary?.latestAt ? 'events present' : 'no recent events', detail: redactOpsText(auditSummary?.latestAt || 'metadata only') },
 			{ label: 'Actor', value: redactOpsText(rbac?.actorId || 'local-operator'), detail: redactOpsText(rbac?.role || 'unknown role') },

@@ -385,6 +385,14 @@
 								</div>
 								<div class="notice neutral">프리플라이트는 CLI 게이트(`bash lib/preflight.sh`)이며 아직 웹 경로가 없습니다.</div>
 								<pre id="run-log" class="joblog" hidden></pre>
+								<div class="notice success">Development read-only integration uses exact target allowlists and does not require owner approval or an evidence pack. Production open, unattended, external runner, and write-action paths still require their separate gates.</div>
+								<div class="form-grid">
+									<label class="input-wrap"><span>Flow</span><input id="dev-flow-name" autocomplete="off" spellcheck="false" placeholder="flow name" /></label>
+									<label class="input-wrap"><span>Exact target allowlist</span><input id="dev-target-allowlist" autocomplete="off" spellcheck="false" placeholder="https://host" /></label>
+									<label class="input-wrap"><span>Validate only</span><input id="dev-validate-only" type="checkbox" checked /></label>
+									<div class="button-row align-end"><button id="dev-run-readonly" class="btn primary" type="button">Run dev read-only</button></div>
+								</div>
+								<pre id="dev-run-log" class="joblog" hidden></pre>
 							</div>
 						</section>
 						<section class="panel">

@@ -33,14 +33,25 @@ Do not use it for:
 - `environment:"live-action"` flows or any flow with `irreversibleAt`.
 - Locator repair that requires write actions or unauthorized target access.
 
-The required wrapper is:
+The development integration wrapper is:
+
+```bash
+bash bin/dev-integration-readonly.sh [--validate-only] [--allowlist https://host[:port][,...]] <flow-name>
+```
+
+It records `RUN_ID`, the exact allowlist, stdout/stderr, and the lightweight JSON run note under
+`artifacts/<RUN_ID>/` without requiring an owner approval packet or formal evidence pack.
+
+The staging/production read-only acceptance wrapper is:
 
 ```bash
 bash bin/operator-staging-readonly.sh [--validate-only] <flow-name>
 ```
 
-The wrapper refuses CI, wrong run modes, missing target allowlists, live-action env vars,
-non-read risk classes, irreversible gates, and destructive-looking read-only steps before replay.
+Both wrappers refuse CI, wrong run modes, live-action env vars, non-read risk classes,
+irreversible gates, and destructive-looking read-only steps before replay. The acceptance wrapper also
+requires the operator to provide `AQA_TARGET_ALLOWLIST`; the development wrapper derives the start
+origin when an exact allowlist is not supplied.
 
 ## Fixture Gates First
 
@@ -63,13 +74,15 @@ accepted the journey.
 
 For fast multi-system development, record only:
 
-- Flow name and flow file: `flows/<name>.flow.json`.
-- Compiled wrapper: `tests/<name>.test.sh`.
-- Intended environment: `staging` or `live-readonly`.
-- Human tester/operator account or auth-state alias, without exposing secret material.
-- Exact target allowlist and fresh resolver/connection-IP evidence for every non-local origin the flow
-  can open.
-- `RUN_ID`, pass/fail result, and artifact paths.
+- `commit`
+- `command`
+- `run_mode`
+- `allowlist`
+- `result`
+- `RUN_ID`
+- `artifact_paths`
+- `issues_found`
+- `next_action`
 
 Do not create per-system owner approval packets during development integration. Use
 `RPA-DEVELOPMENT-INTEGRATION-POLICY.md` as the governing policy.
@@ -108,7 +121,7 @@ Set only the read-only lane variables for this lane:
 | `AQA_TARGET_ALLOWLIST` | yes | Comma-separated exact origins, `https://host[:port]`; no path, query, credentials, or broad wildcard. |
 | `AQA_EGRESS_RESOLVER_EVIDENCE` | yes for non-local targets | Host-keyed JSON from the approved resolver, including resolved addresses and freshness metadata. |
 | `AQA_EGRESS_CONNECTION_IPS` | when not embedded in resolver evidence | Host-keyed JSON of connection IPs observed or approved for the target host. |
-| `AQA_EGRESS_PROFILE` | only for approved on-prem targets | Use `on-prem` only when the target owner has approved intranet/RFC1918 egress. |
+| `AQA_EGRESS_PROFILE` | only for authorized on-prem targets | Use `on-prem` only when the tester/operator has authority for the intranet/RFC1918 target; production open also needs target-owner approval. |
 
 Recommended strictness for acceptance:
 
@@ -127,9 +140,10 @@ Do not set live-action variables in this lane:
 
 ## Target Evidence
 
-For development integration, `AQA_TARGET_ALLOWLIST` must match the exact origins being tested. Include
-additional origins only when the flow is expected to navigate, redirect, or load required same-product
-support assets there.
+For development integration, `bin/dev-integration-readonly.sh` derives the start URL origin when no
+allowlist is supplied. If supplied, `AQA_TARGET_ALLOWLIST` or `--allowlist` must contain only exact
+origins being tested. Include additional origins only when the flow is expected to navigate, redirect,
+or load required same-product support assets there.
 
 For production open, `AQA_TARGET_ALLOWLIST` must match the exact origin set approved for that
 operational lane.
@@ -156,8 +170,8 @@ If connection IPs are supplied separately, use:
 }
 ```
 
-For development integration, keep the non-secret command environment and `RUN_ID`; do not create a
-formal owner evidence pack. For production open, attach the evidence JSON used for the run, the command
+For development integration, keep only the lightweight run record named above; do not create a formal
+owner evidence pack. For production open, attach the evidence JSON used for the run, the command
 environment, and the target-owner approval. If evidence is stale, missing, mismatched, or points to a
 blocked metadata/private endpoint under the wrong profile, the acceptance attempt fails closed.
 
@@ -165,7 +179,7 @@ blocked metadata/private endpoint under the wrong profile, the acceptance attemp
 
 If the flow declares `app`, the operator must own the session and refresh it when the metadata says
 missing or stale, when the run reaches login/MFA, when the account or tenant changes, or when the
-target owner requests rotation:
+production owner requests rotation:
 
 ```bash
 bash setup/auth.sh <app> <login-url> '<success-url>'
@@ -245,9 +259,15 @@ weakening this lane.
 
 For development integration, keep lightweight technical evidence without exposing secrets:
 
-- Flow name, command, commit hash, `RUN_ID`, result, and artifact paths.
-- Exact target allowlist and run mode.
-- Redacted failure reason and next engineering action.
+- `commit`
+- `command`
+- `run_mode`
+- `allowlist`
+- `result`
+- `RUN_ID`
+- `artifact_paths`
+- `issues_found`
+- `next_action`
 
 For production open, attach enough evidence for release review to replay the decision without exposing
 secrets:
@@ -292,12 +312,15 @@ Treat the acceptance attempt as failed or blocked if any are true:
   live-action env vars, non-read risk class, destructive-looking step, or irreversible gate.
 - Resolver evidence is missing, stale, mismatched with connection IPs, or incomplete for an origin the
   flow reaches.
-- The target redirects or navigates outside the approved allowlist.
+- The target redirects or navigates outside the exact allowlist.
 - The run reaches login, SSO, OTP, MFA, account recovery, a wrong tenant, or a wrong account.
 - The compiled journey exits nonzero, times out, fails an assertion, or produces missing/incomplete
   artifacts.
 - Any evidence requires exposing auth state, values files, credentials, or unredacted target data.
-- An operator or owner cannot identify the target approval, account, run time, artifacts, or stop path.
+- For development integration, the lightweight run record cannot identify the command, run mode,
+  allowlist, result, `RUN_ID`, artifacts, issue, or next action.
+- For production open, an operator or owner cannot identify the target approval, account, run time,
+  artifacts, or stop path.
 
 When a failure occurs, keep the artifacts local, record the refusal/failure reason, repair in the
 authoring path, and rerun fixture gates before requesting another operator acceptance attempt.

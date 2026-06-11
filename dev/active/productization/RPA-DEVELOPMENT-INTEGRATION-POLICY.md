@@ -53,12 +53,9 @@ Allowed when all are true:
 - sensitive values stay in gitignored auth/values files or secret refs
 - artifacts do not include cookies, tokens, OTPs, raw local storage, or business payload screenshots
 
-Record only a lightweight run note:
+Record only this lightweight run note:
 
 ```text
-system:
-flow:
-purpose:
 commit:
 command:
 run_mode:
@@ -85,8 +82,9 @@ broker/KMS, audit webhook, external runner, rollback/stop contact, and support b
 For each new system, do this:
 
 1. Create or capture a small read-only flow.
-2. Run `validate-only`.
-3. Run one operator-triggered replay if the flow is read-only.
+2. Run `bash bin/dev-integration-readonly.sh --validate-only <flow-name>`.
+3. Run one operator-triggered replay if the flow is read-only:
+   `bash bin/dev-integration-readonly.sh --allowlist https://host[:port][,...] <flow-name>`.
 4. Save the artifact path and `RUN_ID`.
 5. Fix locators, auth freshness, iframe handling, pagination, or recipe extraction.
 6. Move to the next system.
@@ -109,13 +107,15 @@ Stop and reclassify out of development integration if the test needs:
 
 Keep enough evidence to make engineering progress:
 
-- flow file and compiled wrapper
-- command used
-- commit hash
+- `commit`
+- `command`
+- `run_mode`
+- `allowlist`
+- `result`
 - `RUN_ID`
-- pass/fail result
-- redacted failure reason
-- locator/recipe/auth issues found
+- `artifact_paths`
+- `issues_found`
+- `next_action`
 
 The artifact directories and deterministic test output are the primary development record.
 

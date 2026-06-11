@@ -59,6 +59,7 @@ TESTS=(
 	"webui-release-checklist-unit"
 	"ci-lanes-unit"
 	"staging-readonly-lane-unit"
+	"dev-integration-readonly-lane-unit"
 )
 
 echo "  security-p0-gate: running fixture-only P0 security checks"

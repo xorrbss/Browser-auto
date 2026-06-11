@@ -52,8 +52,8 @@ save, delete, upload, download, submit, or other write action was executed.
 
 ## Clean Revalidation Evidence
 
-The lane was revalidated from a separate clean `origin/master` checkout after the owner approval packet
-was pushed:
+The lane was revalidated from a separate clean `origin/master` checkout after the production-open
+template packet was pushed. That packet is not a prerequisite for development integration:
 
 ```text
 clean_checkout=C:\project\Browser-auto-clean-hiworks-20260611-163142

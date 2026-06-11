@@ -49,6 +49,7 @@ const runtimePolicy = (host, extra = {}) => ({
 });
 
 assert.equal(runtimeEvidenceRequiredForUrl('https://strict.example.test/app', runtimePolicy('strict.example.test')), true, 'public runtime URLs require deterministic runtime evidence');
+assert.equal(runtimeEvidenceRequiredForUrl('https://strict.example.test/app', runtimePolicy('strict.example.test', { requireRuntimeEvidence: false })), false, 'explicit runtime evidence opt-out is honored only when passed');
 assert.equal(runtimeEvidenceRequiredForUrl('http://127.0.0.1:43210/fixture', { profile: 'local', phase: 'run' }), false, 'local fixture runtime URLs do not require resolver evidence');
 
 let strictResult = validateRuntimeUrlEgress('https://strict.example.test/app', {
@@ -61,6 +62,11 @@ strictResult = validateRuntimeUrlEgress('http://127.0.0.1:43210/fixture', {
 	policyOptions: { profile: 'local', phase: 'run', enforceAllowlist: true },
 });
 assert.equal(strictResult.ok, true, 'local fixture runtime remains allowed without resolver evidence');
+
+strictResult = validateRuntimeUrlEgress('https://dev-readonly.example.test/app', {
+	policyOptions: runtimePolicy('dev-readonly.example.test', { requireRuntimeEvidence: false }),
+});
+assert.equal(strictResult.ok, true, 'explicit runtime evidence opt-out keeps exact allowlist enforcement but removes evidence requirement');
 
 const noConnectionResolver = createFakeResolver({
 	'strict.example.test': { A: ['93.184.216.34'], ttlSeconds: 60 },

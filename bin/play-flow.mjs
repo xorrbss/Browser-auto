@@ -14,6 +14,7 @@ const {
 	validateFlowRunPolicy,
 	classifyAuthChallenge,
 	failureSuggestion,
+	isDestructiveStep,
 	sanitizeUrl,
 } = require('../lib/flow-policy.js');
 const {
@@ -113,8 +114,20 @@ function egressOptions(phase) {
 	};
 }
 
+function devReadonlySkipsRuntimeEvidence(flow) {
+	if (process.env.AQA_DEV_INTEGRATION_READONLY !== '1') return false;
+	const environment = String(flow?.environment || '');
+	if (!['local', 'staging', 'live-readonly'].includes(environment)) return false;
+	if (flow?.riskClass !== 'read') return false;
+	if (flow?.irreversibleAt != null) return false;
+	const steps = Array.isArray(flow?.steps) ? flow.steps : [];
+	return !steps.some(isDestructiveStep);
+}
+
 function createRuntimeFlowEgressChecker(flow, phase) {
-	const base = createFlowEgressChecker(flow, egressOptions(phase));
+	const opts = egressOptions(phase);
+	if (devReadonlySkipsRuntimeEvidence(flow)) opts.requireRuntimeEvidence = false;
+	const base = createFlowEgressChecker(flow, opts);
 	return createRuntimeEgressChecker({ policyOptions: base.context });
 }
 

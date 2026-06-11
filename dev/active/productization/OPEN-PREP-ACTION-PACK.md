@@ -7,6 +7,8 @@ operator-approved staging or live-readonly opening.
 
 This pack is the working "what do we do next" sheet. It does not replace `P0-SERVICE-OPEN.md`,
 `OPERATOR-HANDOFF-PACK.md`, `PRODUCTION-CONFIG-TEMPLATES.md`, or `STAGING-ACCEPTANCE-LANE.md`.
+It is for staging/production opening decisions, not a prerequisite for read-only development
+integration.
 
 ## Current Decision
 
@@ -20,6 +22,9 @@ The safe opening path is:
 2. Keep live-action, destructive, and unattended approval flows out of scope.
 3. Attach evidence for IdP, KMS/secret broker, noVNC, egress, external runner, audit webhook, and
    staging acceptance before asking for a broader external-service Go decision.
+
+Before this opening path, engineers may continue read-only development integration under
+`RPA-DEVELOPMENT-INTEGRATION-POLICY.md` without owner approval packets or formal evidence packs.
 
 ## Recommended First Opening Scope
 
@@ -45,7 +50,7 @@ Why:
 - `guest_samsungdisplay_com_argos_main_do` and `hiworks01` still have `needs_review` and live-action
   gates. They should not be part of the first opening.
 
-## What The Owner Must Provide
+## What The Production Owner Must Provide
 
 The owner/operator should fill this section. Do not put real secret values here.
 
@@ -137,9 +142,16 @@ Expected result:
 - Release checklist remains No-Go.
 - Blocked-flow report shows read-only operator-only flows plus blocked live-action flows.
 
+Read-only development integration can also continue before a production owner replies when a human
+tester/operator has legitimate access, the allowlist is exact, and the only retained record is
+`commit`, `command`, `run_mode`, `allowlist`, `result`, `RUN_ID`, `artifact_paths`, `issues_found`, and
+`next_action`.
+
 ## What The Operator Runs After Inputs Exist
 
-Use the exact flow name and target origin approved by the owner.
+For production opening, use the exact flow name and target origin approved by the owner. For read-only
+development integration, use the exact flow name and operator-selected exact allowlist under
+`RPA-DEVELOPMENT-INTEGRATION-POLICY.md`.
 
 Validate the static flow inventory:
 
@@ -180,7 +192,7 @@ AQA_EGRESS_REQUIRE_CONNECTION_IP_EVIDENCE=1 \
 bash bin/operator-staging-readonly.sh <flow-name>
 ```
 
-## Evidence To Attach
+## Production Evidence To Attach
 
 Attach redacted evidence only:
 
@@ -195,6 +207,9 @@ Attach redacted evidence only:
 - External runner identity/preflight output with token refs only.
 - Audit webhook outbox delivery evidence with hash-only/redacted payloads.
 - Staging/live-readonly acceptance artifacts for each approved flow.
+
+For read-only development integration, do not attach this production evidence pack. Keep only the
+lightweight development record and local artifacts.
 
 ## Immediate Owner Questions
 
@@ -219,7 +234,8 @@ Stop the opening attempt if any of these are true:
   `needs_review`, irreversible gates, dry-run evidence, and owner approval.
 - Any secret value, cookie, OTP seed, auth-state JSON, `.values.json`, bearer token, or raw business
   payload is required for evidence.
-- The target allowlist is broad, missing, or includes redirects not approved by the owner.
+- The target allowlist is broad, missing, or includes redirects outside the exact development allowlist
+  or the owner-approved production-open set.
 - Resolver or connection-IP evidence is missing or stale.
 - noVNC is exposed without `NOVNC_DISABLE=1` or an authenticated TLS tenant-session proxy.
 - The audit webhook uses plaintext token env vars instead of `*_TOKEN_REF`.

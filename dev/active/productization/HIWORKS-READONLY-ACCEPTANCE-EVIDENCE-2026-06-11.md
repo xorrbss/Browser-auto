@@ -4,8 +4,9 @@ Status: passed local operator acceptance
 Date: 2026-06-11
 Scope: `approval_office_hiworks_com_ibizsoftware_net_approval`
 
-This evidence covers only the Hiworks `live-readonly` operator lane. It does not approve unattended
-operation, live approval/reject actions, write flows, or broader production access.
+This evidence covers only the Hiworks `live-readonly` operator lane. It records a read-only
+development integration pass and does not approve unattended operation, live approval/reject actions,
+write flows, or broader production access.
 
 ## Result
 
@@ -90,13 +91,13 @@ Do not attach or commit:
 - screenshots that expose business payloads
 - raw resolver evidence unless owner-approved and redacted
 
-Acceptable evidence:
+Production-open acceptable evidence:
 
 - this summary
 - `artifacts/20260611-153636-1422/report.json`
 - `artifacts/20260611-153636-1422/report.junit.xml`
 - redacted command transcript
-- operator identity, run window, target owner approval ticket, and stop contact
+- operator identity, run window, target owner approval ticket, and stop contact for production open
 
 ## Production Promotion Approval
 

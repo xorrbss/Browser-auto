@@ -893,7 +893,7 @@ function scenarioLiveRisk(flow) {
 		return {
 			label: 'live-readonly',
 			kind: 'info',
-			detail: 'Manual lane; default CI skips non-local flow environments.',
+			detail: 'Development read-only integration can run with an exact target allowlist; production open remains separate.',
 		};
 	}
 	const goal = automationForm().goal || state.automation.plan?.sourceText || '';
@@ -997,7 +997,7 @@ function scenarioStaticAnalysis(flow) {
 	return {
 		label: analysis.status || 'unknown',
 		kind: analysis.status === 'blocked' ? 'danger' : analysis.status === 'operator-only' ? 'warning' : 'success',
-		detail: `${blocking} block / ${operatorOnly} operator-only; ${codes}`,
+		detail: `${blocking} block / ${operatorOnly} manual/dev gate; ${codes}`,
 	};
 }
 
@@ -2492,6 +2492,40 @@ async function runSuite() {
 	}
 }
 
+async function runDevIntegrationReadonly() {
+	if (!requireAccess('run', 'development read-only integration')) return;
+	const flowName = ($('#dev-flow-name')?.value || state.automation.flow?.name || '').trim();
+	const allowlist = ($('#dev-target-allowlist')?.value || '').trim();
+	const validateOnly = $('#dev-validate-only')?.checked !== false;
+	const log = $('#dev-run-log');
+	if (log) {
+		log.hidden = false;
+		log.textContent = 'dev read-only integration request...\n';
+	}
+	if (!FLOW_NAME_RE.test(flowName)) {
+		if (log) log.textContent += 'refused: enter a valid flow name ([A-Za-z0-9_-])\n';
+		return;
+	}
+	try {
+		const data = await postJson('/api/dev-integration-readonly', { name: flowName, allowlist, validateOnly });
+		if (log) {
+			log.textContent += `mode=${data.mode || 'development-integration-readonly'} run_mode=${data.run_mode || '-'} allowlist=${data.allowlist || '-'}\n`;
+			log.textContent += `approvalRequired=${data.approvalRequired === true} evidencePackRequired=${data.evidencePackRequired === true}\n`;
+		}
+		if (data.job) {
+			state.activeRunJob = data.job.id;
+			streamJob(data.job.id, log || document.createElement('pre'), () => {
+				state.activeRunJob = null;
+				Promise.allSettled([loadQueue(), loadDiagnostics(), loadAutomationFlow(flowName)]).then(renderAll);
+			});
+			await loadQueue();
+			renderAll();
+		}
+	} catch (e) {
+		if (log) log.textContent += `refused: ${e.message}\n`;
+	}
+}
+
 function renderDiagnosticsLinks() {
 	const box = $('#workspace-links');
 	if (!box) return;
@@ -2503,6 +2537,7 @@ function renderDiagnosticsLinks() {
 		['실행 API', '/api/runs', '과거 실행 리포트'],
 		['플로우 API', '/api/flows', '녹화된 선언적 플로우'],
 		['Blocked Flow API', '/api/flows/blocked-report', 'Static analysis only: committed flow JSON, no replay'],
+		['Dev Readonly API', '/api/dev-integration-readonly', 'POST only: exact-allowlist development read-only replay'],
 		['P0 Readiness API', '/api/readiness', '문서 체크리스트 기반 No-Go 상태'],
 		['RBAC API', state.rbac?.endpoint || '/api/rbac', '현재 actor, role, permission 상태'],
 	];
@@ -2520,6 +2555,11 @@ function renderDiagnostics() {
 		runBtn.disabled = !runAccess.allowed;
 		runBtn.title = accessTitle(runAccess);
 	}
+	const devBtn = $('#dev-run-readonly');
+	if (devBtn) {
+		devBtn.disabled = !runAccess.allowed;
+		devBtn.title = accessTitle(runAccess, 'Runs staging/live-readonly read flows with exact AQA_TARGET_ALLOWLIST; no owner approval/evidence pack for development.');
+	}
 	const qm = state.queue?.metrics || {};
 	const auditSummary = state.auditSummary || {};
 	const queueSignalState = qm.lastFailureReason
@@ -2535,6 +2575,7 @@ function renderDiagnostics() {
 		{ area: '인증 상태', count: state.auth.length, state: state.auth.length ? state.auth.join(', ') : '없음', endpoint: '/api/auth' },
 		{ area: '권한', count: state.rbac?.available ? permissionSummary().split(',').filter(Boolean).length : '-', state: state.rbac?.available ? `${state.rbac.actorId} / ${state.rbac.role || 'unknown'}` : 'API 대기', endpoint: state.rbac?.endpoint || '/api/rbac' },
 		{ area: 'P0 readiness', count: state.readiness?.open ?? '-', state: state.readiness?.decision || 'No-Go', endpoint: '/api/readiness' },
+		{ area: 'Development read-only integration', count: '-', state: 'exact allowlist / no owner approval packet', endpoint: 'POST /api/dev-integration-readonly' },
 		{ area: '프리플라이트', count: '-', state: 'CLI 전용', endpoint: 'bash lib/preflight.sh' },
 		{ area: '전체 스위트', count: '-', state: 'POST /api/run 로 실행 가능', endpoint: 'bash run.sh' },
 	];
@@ -2687,6 +2728,7 @@ function bindEvents() {
 	$('#approval-state-refresh').addEventListener('click', renderApprovalState);
 	$('#approval-stop').addEventListener('click', requestKillSwitch);
 	$('#run-suite').addEventListener('click', runSuite);
+	$('#dev-run-readonly')?.addEventListener('click', runDevIntegrationReadonly);
 	$('#diagnostics-refresh').addEventListener('click', loadDiagnostics);
 }
 

@@ -12,6 +12,7 @@
 //   GET /artifacts/<path>      -> static file under artifacts/ (HTTP Range supported)
 // Routes (P1 — run trigger via the single-slot serial queue, jobs.js + spawn.js):
 //   POST /api/run              -> enqueue `run.sh [glob]`; { job } (202)
+//   POST /api/dev-integration-readonly -> enqueue exact-allowlist read-only non-local replay
 //   GET  /api/queue            -> { busy, running, pending[], recent[] }  (serialization proof)
 //   GET  /api/jobs/:id         -> job status | 404
 //   GET  /api/jobs/:id/stream  -> SSE live log (replay buffer + live lines + end)
@@ -308,6 +309,49 @@ function requirePlaywrightEngine(value, label) {
 	return 'playwright';
 }
 
+function normalizeExactTargetAllowlist(value, fallback = '') {
+	const raw = String(value || fallback || '').trim();
+	const entries = raw.split(',').map((entry) => entry.trim()).filter(Boolean);
+	if (!entries.length) throw new Error('target allowlist is required');
+	const origins = [];
+	for (const entry of entries) {
+		if (entry.includes('*')) throw new Error('target allowlist must use exact origins, not wildcards');
+		let url;
+		try {
+			url = new URL(entry);
+		} catch {
+			throw new Error('target allowlist entries must be http(s) URLs');
+		}
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('target allowlist entries must be http(s)');
+		if (url.username || url.password) throw new Error('target allowlist entries must not contain credentials');
+		if (url.pathname !== '/' || url.search || url.hash) throw new Error('target allowlist entries must be origins only');
+		origins.push(url.origin);
+	}
+	return [...new Set(origins)].join(',');
+}
+
+function normalizeJsonEnvValue(value, label) {
+	const raw = String(value || '').trim();
+	if (!raw) return '';
+	if (raw.length > 65536) throw new Error(`${label} is too large`);
+	let parsed;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		throw new Error(`${label} must be JSON`);
+	}
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`${label} must be a JSON object`);
+	return JSON.stringify(parsed);
+}
+
+function startUrlOrigin(value) {
+	try {
+		const url = new URL(String(value || ''));
+		if (url.protocol === 'http:' || url.protocol === 'https:') return url.origin;
+	} catch {}
+	return '';
+}
+
 function systemAuthSpawn(_engine, app, loginUrl, successUrl) {
 	return gitBash('setup/auth.sh', [app, loginUrl, successUrl]);
 }
@@ -575,6 +619,72 @@ const server = http.createServer(async (req, res) => {
 					recordCommandGateRefusal(p, res.statusCode === 401 ? 'session_missing' : 'origin_or_referer_required', { httpStatus: res.statusCode });
 				}
 				return;
+			}
+
+			if (p === '/api/dev-integration-readonly') {
+				const name = String(bodyJson.name || bodyJson.flow || '').trim();
+				if (!validName(name)) return sendJson(res, 400, { error: 'invalid flow name (use [A-Za-z0-9_-])' });
+				const flow = await getFlow(name);
+				if (!flow) return sendJson(res, 400, { error: 'no such flow' });
+				const environment = String(flow.environment || '').trim();
+				const riskClass = String(flow.riskClass || '').trim();
+				if (!['staging', 'live-readonly'].includes(environment)) {
+					return sendJson(res, 409, { error: 'development read-only integration requires flow.environment staging or live-readonly' });
+				}
+				if (riskClass !== 'read') return sendJson(res, 409, { error: 'development read-only integration requires riskClass read' });
+				if (!flow.runnable) {
+					return sendJson(res, 409, {
+						error: flow.runBlockedReason || 'flow is not ready for deterministic replay',
+						state: flow.scenarioStatus?.state || 'not-ready',
+					});
+				}
+				const requestedMode = String(bodyJson.runMode || bodyJson.run_mode || environment).trim();
+				if (requestedMode !== environment) return sendJson(res, 400, { error: `runMode must match flow.environment ${environment}` });
+				let allowlist;
+				try {
+					allowlist = normalizeExactTargetAllowlist(bodyJson.allowlist || bodyJson.targetAllowlist, startUrlOrigin(flow.startUrl));
+				} catch (e) {
+					return sendJson(res, 400, { error: e.message });
+				}
+				const validateOnly = bodyJson.validateOnly === true || bodyJson.validate_only === true;
+				const args = validateOnly ? ['--validate-only', '--allowlist', allowlist, name] : ['--allowlist', allowlist, name];
+				const env = { AQA_TARGET_ALLOWLIST: allowlist };
+				try {
+					const resolverEvidence = normalizeJsonEnvValue(bodyJson.resolverEvidence || bodyJson.resolver_evidence || '', 'resolverEvidence');
+					const connectionIps = normalizeJsonEnvValue(bodyJson.connectionIps || bodyJson.connection_ips || '', 'connectionIps');
+					if (resolverEvidence) env.AQA_EGRESS_RESOLVER_EVIDENCE = resolverEvidence;
+					if (connectionIps) env.AQA_EGRESS_CONNECTION_IPS = connectionIps;
+				} catch (e) {
+					return sendJson(res, 400, { error: e.message });
+				}
+				const label = `dev-readonly ${validateOnly ? 'validate' : 'run'} ${name}`;
+				const job = requestScopedEnqueue({
+					kind: 'run',
+					label,
+					commandSpec: { runner: 'gitBash', script: 'bin/dev-integration-readonly.sh', args, env },
+					spawnFn: () => requestGitBash('bin/dev-integration-readonly.sh', args, env),
+					meta: {
+						workflow: 'development-integration',
+						run_mode: requestedMode,
+						allowlist,
+						result: 'pending',
+						next_action: validateOnly ? 'run replay after validate-only passes' : 'review RUN_ID artifacts and issues_found',
+						flow: name,
+						system: flow.app || null,
+						riskClass,
+						productionOpenApprovalRequired: false,
+						evidencePackRequired: false,
+						retention: 'ephemeral-debug',
+					},
+				});
+				return sendJson(res, 202, {
+					job,
+					mode: 'development-integration-readonly',
+					run_mode: requestedMode,
+					allowlist,
+					approvalRequired: false,
+					evidencePackRequired: false,
+				});
 			}
 
 			if (p === '/api/record') {

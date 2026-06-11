@@ -15,10 +15,10 @@ blocks service open.
   staging/live-readonly opening scope and collecting non-secret deployment metadata.
 - `HIWORKS-STAGING-READONLY-ENV-PACK.md` gives the first real Hiworks read-only acceptance env and
   command template for `approval_office_hiworks_com_ibizsoftware_net_approval`.
-- `HIWORKS-READONLY-OWNER-APPROVAL-REQUEST-2026-06-11.md` is the owner decision packet for limited
-  opening of the named Hiworks read-only operator lane.
-- `HIWORKS-READONLY-ACCEPTANCE-EVIDENCE-2026-06-11.md` records the local operator acceptance evidence
-  for `RUN_ID=20260611-153636-1422`.
+- `HIWORKS-READONLY-OWNER-APPROVAL-REQUEST-2026-06-11.md` is a production-open owner decision
+  template for limited opening of the named Hiworks read-only operator lane, not a development gate.
+- `HIWORKS-READONLY-ACCEPTANCE-EVIDENCE-2026-06-11.md` records the local read-only development
+  integration result for `RUN_ID=20260611-153636-1422`.
 - `HIWORKS-SAMPLE-RUNBOOK.md` documents the local Hiworks fixture sample and its test commands.
 - `OPERATOR-HANDOFF-PACK.md` defines owner/operator evidence checklists for IdP, KMS/secret broker,
   noVNC, external runner, and audit webhook production handoff.
@@ -31,9 +31,10 @@ These documents prepare handoff and acceptance evidence; they do not change the 
 No-Go status.
 
 Development integration policy update: owner approval is not a blocker for testing many systems during
-product development. Keep lightweight technical run records (`commit`, `command`, `RUN_ID`, result,
-artifact paths, redacted issue notes). Reserve owner approval/evidence packs for production open,
-unattended/scheduled operation, external-runner deployment, or any write/live-action workflow.
+product development. Keep lightweight technical run records only: `commit`, `command`, `run_mode`,
+`allowlist`, `result`, `RUN_ID`, `artifact_paths`, `issues_found`, and `next_action`. Reserve owner
+approval/evidence packs for production open, unattended/scheduled operation, external-runner
+deployment, or any write/live-action workflow.
 
 ## Implemented In This Pass
 
@@ -255,12 +256,15 @@ Major blockers:
 
 ## Operator-Only Commands
 
-Run these only on an operator machine with approval from the target owner. For non-local flows, the
-operator must choose the exact target origin and set `AQA_TARGET_ALLOWLIST`; agents must not widen it.
+For read-only development integration, run these only on an operator machine where the human tester has
+legitimate target access. The operator must choose the exact target origin and set
+`AQA_TARGET_ALLOWLIST`; agents must not widen it. Target-owner approval is required before production
+open, unattended/external-runner operation, or any approve/reject/write lane.
 
 ```bash
 bash setup/auth.sh <app> <login-url> '<success-url>'
-node bin/play-flow.mjs --flow flows/<name>.flow.json --validate-only
+bash bin/dev-integration-readonly.sh --validate-only <name>
+bash bin/dev-integration-readonly.sh --allowlist https://host[:port][,...] <name>
 AQA_TARGET_ALLOWLIST=https://host[:port] bash bin/probe-record.sh verify flows/<name>.flow.json
 bash bin/probe-record.sh compile flows/<name>.flow.json
 AQA_RUN_MODE=staging AQA_TARGET_ALLOWLIST=https://host[:port] bash bin/operator-staging-readonly.sh <name>

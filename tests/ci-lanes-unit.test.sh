@@ -46,7 +46,7 @@ assert_refused() {
 	grep -q 'refused' "$TMPROOT/$label.err"
 }
 
-( cd "$DIR" && "$REAL_BASH" -n run.sh lib/preflight.sh bin/ci-security-p0.sh bin/ci-browser-fixture.sh bin/ci-slow-fixture.sh bin/ci-operator-only-guard.sh bin/operator-staging-readonly.sh )
+( cd "$DIR" && "$REAL_BASH" -n run.sh lib/preflight.sh bin/ci-security-p0.sh bin/ci-browser-fixture.sh bin/ci-slow-fixture.sh bin/ci-operator-only-guard.sh bin/operator-staging-readonly.sh bin/dev-integration-readonly.sh )
 
 : > "$LOG"
 PATH="$FAKE_BIN:$PATH" AQA_FAKE_BASH_LOG="$LOG" "$REAL_BASH" "$DIR/bin/ci-security-p0.sh"

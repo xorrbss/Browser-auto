@@ -261,6 +261,7 @@ function tenantDeletionAction(p, bodyJson = {}) {
 
 export function requiredPermissionsForPost(p, bodyJson = {}) {
 	if (p === '/api/run') return ['run'];
+	if (p === '/api/dev-integration-readonly') return ['run'];
 	if (/^\/api\/jobs\/[^/]+\/(?:cancel|stop)$/.test(p)) return ['run'];
 	if (p === '/api/session/logout') return ['read'];
 	if (/^\/api\/runner(?:\/|$)/.test(p)) return ['run'];

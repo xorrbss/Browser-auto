@@ -29,9 +29,11 @@ Because the committed flow declares `environment:"live-readonly"`, the operator 
 `AQA_RUN_MODE=live-readonly`. If an owner wants a true staging origin, capture or clone a separate flow
 whose `startUrl` and `environment` are explicitly staging.
 
-## Owner Inputs
+## Production Owner Inputs
 
-Fill this before any real-target run. Do not paste secret values.
+Fill this before production-open review. For read-only development integration, skip the owner approval
+fields and keep only the lightweight development record from `RPA-DEVELOPMENT-INTEGRATION-POLICY.md`.
+Do not paste secret values.
 
 ```yaml
 approval:
@@ -153,11 +155,13 @@ bash bin/operator-staging-readonly.sh --validate-only approval_office_hiworks_co
 ```
 
 This validates the live-readonly envelope without executing the compiled journey. If it refuses, do not
-weaken the gate. Fix the env, approval, resolver evidence, or flow metadata.
+weaken the gate. Fix the env, resolver evidence, or flow metadata; for production open, also fix the
+approval fields.
 
 ## Operator Replay
 
-Run only after validate-only passes and the target owner approves the window:
+For development integration, run only after validate-only passes and the operator has selected the
+exact allowlist and run window. For production open, the target owner must also approve the window:
 
 ```bash
 bash bin/operator-staging-readonly.sh approval_office_hiworks_com_ibizsoftware_net_approval
@@ -166,20 +170,21 @@ bash bin/operator-staging-readonly.sh approval_office_hiworks_com_ibizsoftware_n
 Stop immediately if the browser reaches login, MFA, OTP, account recovery, a wrong tenant, a wrong
 account, a write/approve action, or a target outside the allowlist.
 
-## Evidence To Attach
+## Records To Keep
 
-Attach redacted evidence only:
+Keep or attach redacted records only, depending on mode:
 
 - Commit hash and clean worktree status.
 - Local gate transcript: `security-p0-gate`, `run.sh`, and the flow `validate-only`.
 - Blocked-flow report showing this flow is operator-only and read-only.
-- For development integration: flow, command, commit, target origin set, `RUN_ID`, result, and artifact
-  paths.
+- For development integration: `commit`, `command`, `run_mode`, `allowlist`, `result`, `RUN_ID`,
+  `artifact_paths`, `issues_found`, and `next_action`.
 - For production open: owner approval ticket, target origin, run window, operator identity, and stop
   contact.
 - Auth freshness metadata for `app:r45`; never attach `fixtures/auth/playwright/r45.state.json`.
-- Exact env values except secret material; resolver and connection-IP evidence may be attached if
-  redacted and owner-approved.
+- Exact env values except secret material. For development integration, keep resolver and
+  connection-IP evidence local unless needed to debug; production-open attachment requires redaction and
+  owner approval.
 - `operator-staging-readonly.sh --validate-only` transcript.
 - Replay transcript and `artifacts/<RUN_ID>/report.json` / `report.junit.xml` metadata after review.
 

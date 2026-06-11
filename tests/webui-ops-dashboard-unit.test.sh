@@ -29,6 +29,7 @@ const model = buildOpsDashboardModel({
 		],
 		ciLanes: [
 			{ id: 'security-p0-gate', ciAllowed: true, liveActionAllowed: false, liveAuthAllowed: false, nonLocalAllowed: false, command: 'bash tests/security-p0-gate.test.sh' },
+			{ id: 'dev-integration-readonly', ciAllowed: false, liveActionAllowed: false, liveAuthAllowed: true, nonLocalAllowed: true, developmentIntegrationAllowed: true, approvalRequired: false, command: 'bash bin/dev-integration-readonly.sh --allowlist https://host flow' },
 			{ id: 'operator-only', ciAllowed: false, liveActionAllowed: true, liveAuthAllowed: true, nonLocalAllowed: true, command: 'operator-approved named flow only' },
 		],
 		releaseChecklist: {
@@ -53,14 +54,16 @@ const model = buildOpsDashboardModel({
 });
 
 assert.equal(model.p0Rows.length, 2, 'P0 matrix rows are present');
-assert.equal(model.laneRows.length, 2, 'CI lane rows are present');
+assert.equal(model.laneRows.length, 3, 'CI lane rows are present');
+assert(model.laneRows.some((row) => row.lane === 'dev-integration-readonly' && row.live === 'dev-readonly'), 'dev integration lane is not labeled operator-only');
 assert(model.blockerRows.some((row) => row.area === 'P0-A' && row.reason === 'contract-only'), 'blockers include contract-only P0 section');
 assert(model.blockerRows.some((row) => row.area === 'flow:checkout-secret' && /needs_review/.test(row.reason)), 'blockers include static blocked flows');
 assert(model.tiles.some((tile) => tile.label === 'Flow Static Analysis' && tile.detail.includes('no replay')), 'tiles expose no-replay flow analysis');
 const rendered = JSON.stringify(model);
 assert(!rendered.includes('queue_secret'), 'queue failure detail is redacted');
 assert(!rendered.includes('flow_secret'), 'flow blocker detail is summarized by code only');
-assert(rendered.includes('operator-only blocked in CI'), 'operator lane CI block is visible');
+assert(rendered.includes('dev-readonly lane'), 'development read-only lane is visible');
+assert(rendered.includes('production approval separate'), 'production approval is separated from dev integration');
 NODE
 
 echo "  webui-ops-dashboard-unit: all checks passed"
