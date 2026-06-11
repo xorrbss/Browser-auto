@@ -7,6 +7,18 @@ This status file summarizes the current productization pass. `P0-SERVICE-OPEN.md
 of truth for external-service acceptance; this file records what is implemented now and what still
 blocks service open.
 
+## Operator Handoff Pack
+
+- `OPERATOR-HANDOFF-PACK.md` defines owner/operator evidence checklists for IdP, KMS/secret broker,
+  noVNC, external runner, and audit webhook production handoff.
+- `PRODUCTION-CONFIG-TEMPLATES.md` provides ref-only connector/deployment templates for audit webhook,
+  external runner identity, KMS/secret broker, external-mode WebUI, and noVNC.
+- `STAGING-ACCEPTANCE-LANE.md` defines the operator-only staging/live-readonly lane and keeps it
+  separate from fixture CI gates.
+
+These documents prepare handoff and acceptance evidence; they do not change the external-service
+No-Go status.
+
 ## Implemented In This Pass
 
 - External mode gate: `WEBUI_EXTERNAL_MODE=1` now requires authenticated tenant context before any
