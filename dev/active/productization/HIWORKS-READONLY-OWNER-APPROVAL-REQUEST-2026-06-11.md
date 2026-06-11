@@ -1,6 +1,6 @@
 # Hiworks Read-Only Owner Approval Request
 
-Status: awaiting owner decision
+Status: ready for owner review; awaiting owner decision
 Date: 2026-06-11
 Requested scope: limited open for the Hiworks read-only operator lane
 
@@ -46,6 +46,8 @@ Not approved by this request:
 Technical acceptance already passed locally:
 
 ```text
+submission_commit=ad70af8 Submit Hiworks readonly evidence pack
+owner_approval_packet_commit=8b8deb5 Add Hiworks readonly owner approval request
 commit=d849140 Document Hiworks readonly acceptance
 RUN_ID=20260611-153636-1422
 result=PASS
@@ -55,10 +57,26 @@ report=artifacts/20260611-153636-1422/report.json
 junit=artifacts/20260611-153636-1422/report.junit.xml
 ```
 
+Clean revalidation also passed from a separate `origin/master` checkout:
+
+```text
+clean_commit=8b8deb510d166ac2b0a9318814597d19de0078fc
+clean_checkout=C:\project\Browser-auto-clean-hiworks-20260611-163142
+clean_git_status_short=(empty)
+RUN_ID=20260611-163741-963
+result=PASS
+summary=1/1 passed
+durationMs=6963
+report=C:\project\Browser-auto-clean-hiworks-20260611-163142\artifacts\20260611-163741-963\report.json
+junit=C:\project\Browser-auto-clean-hiworks-20260611-163142\artifacts\20260611-163741-963\report.junit.xml
+```
+
 Supporting documents:
 
 ```text
+dev/active/productization/HIWORKS-READONLY-EVIDENCE-SUBMISSION-2026-06-11.md
 dev/active/productization/HIWORKS-READONLY-ACCEPTANCE-EVIDENCE-2026-06-11.md
+dev/active/productization/HIWORKS-READONLY-CLEAN-REVALIDATION-2026-06-11.md
 dev/active/productization/HIWORKS-STAGING-READONLY-ENV-PACK.md
 auth-r45.cmd
 ```
@@ -93,18 +111,19 @@ approved manual flow.
 
 ## Operator Conditions
 
-Fill before approval:
+Use this pre-filled block. The `TBD` values must be supplied by the human owner/operator before the
+lane is called open:
 
 ```yaml
-target_owner:
-approval_ticket:
-operator_identity:
-operator_account:
-run_window:
-stop_contact:
+target_owner: TBD - Hiworks / ibizsoftware.net approval system owner
+approval_ticket: TBD - owner ticket or approval record id
+operator_identity: TBD - named human operator
+operator_account: TBD - approved Hiworks r45 account
+run_window: TBD - owner-approved KST run window
+stop_contact: TBD - person/channel to contact for immediate stop
 auth_state_ref: aqa-secret://tenant_a/auth-state/canonical:r45
-secret_owner:
-resolver_evidence_owner:
+secret_owner: TBD - owner of the r45 auth-state secret reference
+resolver_evidence_owner: TBD - owner/operator approving fresh DNS and connection-IP evidence
 ```
 
 Operator must run from Windows + Git Bash with:
@@ -142,15 +161,15 @@ Select one:
 Approval metadata:
 
 ```yaml
-owner_name:
-owner_role:
-approval_ticket:
-approved_run_window:
-approved_operator:
+owner_name: TBD
+owner_role: TBD
+approval_ticket: TBD
+approved_run_window: TBD
+approved_operator: TBD
 approved_origin_set_version: 2026-06-11-hiworks-readonly
-decision_timestamp:
-signature:
-conditions:
+decision_timestamp: TBD
+signature: TBD
+conditions: limited to the named Hiworks live-readonly operator lane; no unattended or write actions
 ```
 
 ## Evidence Attachment Rules
@@ -161,6 +180,7 @@ Attach only:
 - redacted command transcript
 - `artifacts/20260611-153636-1422/report.json`
 - `artifacts/20260611-153636-1422/report.junit.xml`
+- clean revalidation `report.json` and `report.junit.xml` for `RUN_ID=20260611-163741-963`
 - operator identity, run window, stop contact, and approval ticket
 
 Do not attach:
