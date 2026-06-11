@@ -13,7 +13,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { latestTestResultsByName } from './index.js';
 import { authReadinessForApp } from './auth.js';
-import { createSecretStore } from './secrets.js';
+import { createSecretStore, secretBackendSecureOnly, secretBackendPlaintextBlocked, secretBackendConfigBlockedReason } from './secrets.js';
 import { analyzeBlockedFlowForWebui } from './blocked-flows.js';
 
 const require = createRequire(import.meta.url);
@@ -46,19 +46,9 @@ function localValuesSecretMetadata(name) {
 	});
 }
 
-function useEncryptedBackendOnly() {
-	return secretStore.secureBackend && secretStore.configured && !secretStore.policy?.plaintextAllowed;
-}
-
-function plaintextBlocked() {
-	return secretStore.policy?.external && !secretStore.policy?.plaintextAllowed;
-}
-
-function secureBackendConfigBlockedReason() {
-	if (!secretStore.secureBackend || secretStore.policy?.configOk) return '';
-	const errors = Array.isArray(secretStore.policy?.configErrors) ? secretStore.policy.configErrors.filter(Boolean) : [];
-	return `secret backend configuration is not ready: ${errors.join('; ') || 'secure secret backend is unavailable'}`;
-}
+const useEncryptedBackendOnly = () => secretBackendSecureOnly(secretStore);
+const plaintextBlocked = () => secretBackendPlaintextBlocked(secretStore);
+const secureBackendConfigBlockedReason = () => secretBackendConfigBlockedReason(secretStore);
 
 async function encryptedValuesSecretMetadata(name) {
 	if (!secretStore.secureBackend) return null;
