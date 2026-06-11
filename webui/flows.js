@@ -522,7 +522,16 @@ export async function getFlow(name) {
 		needsReviewSteps: steps
 			.map((s, i) => ({ index: i, step: s }))
 			.filter((x) => x.step.needs_review === true)
-			.map((x) => ({ index: x.index, action: x.step.action || null, candidates: Array.isArray(x.step.candidates) ? x.step.candidates : [] })),
+			.map((x) => ({
+				index: x.index,
+				kind: x.step.kind || null,
+				action: x.step.action || null,
+				unsupported: x.step.unsupported || null,
+				reason: x.step.reason || '',
+				recordedDir: x.step.recordedDir || null,
+				recordedPx: Number.isFinite(Number(x.step.recordedPx)) ? Number(x.step.recordedPx) : null,
+				candidates: Array.isArray(x.step.candidates) ? x.step.candidates : [],
+			})),
 		inputTokens: tokens,
 		values: Object.fromEntries(tokens.map((t) => [t, ''])),
 		valueStatus: valueStatus(tokens, values),

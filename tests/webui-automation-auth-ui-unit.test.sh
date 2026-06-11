@@ -39,6 +39,11 @@ assert.match(appJs, /loggedIn \? '로그인 갱신'/, 'saved auth presents a ref
 assert.match(appJs, /저장된 로그인 있음/, 'saved auth badge is descriptive rather than a hard block');
 assert.match(authPw, /const initialUrl = page\.url\(\);/, 'auth driver records the initial login URL');
 assert.match(authPw, /currentUrl !== initialUrl && currentUrl\.includes\(successNeedle\)/, 'auth driver does not accept the initial login URL as success');
+assert.match(appJs, /function isClickedRecordReview\(item\)/, 'flow review UI distinguishes clicked-record reviews');
+assert.match(appJs, /item\?\.kind === 'find' && \(item\.action \|\| 'click'\) === 'click'/, 'clicked-row open button is only for find/click review steps');
+assert.match(appJs, /function isContainerScrollReview\(item\)/, 'flow review UI recognizes container-scroll review steps');
+assert.doesNotMatch(appJs, /omitAutomationContainerScrolls/, 'unsupported container-scroll review steps must not be silently omitted');
+assert.doesNotMatch(appJs, /omit-review-step/, 'WebUI must not expose a route that ignores needs_review steps');
 NODE
 
 echo "  webui-automation-auth-ui-unit: auth controls remain refreshable"

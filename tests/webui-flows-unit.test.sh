@@ -10,6 +10,7 @@ MISSING_NAME="_webui_missing_snapshot_unit_$$"
 FALLBACK_NAME="_webui_field_value_unit_$$"
 NO_FALLBACK_NAME="_webui_no_field_value_unit_$$"
 HEADERLESS_NAME="_webui_headerless_row_unit_$$"
+SCROLL_NAME="_webui_scroll_review_unit_$$"
 SECRET_NAME="_webui_secret_values_unit_$$"
 RECIPE_NAME="_webui_row_recipe_$$"
 HEADERLESS_RECIPE_NAME="_webui_headerless_recipe_$$"
@@ -20,6 +21,7 @@ MISSING_FLOW="$DIR/flows/${MISSING_NAME}.flow.json"
 FALLBACK_FLOW="$DIR/flows/${FALLBACK_NAME}.flow.json"
 NO_FALLBACK_FLOW="$DIR/flows/${NO_FALLBACK_NAME}.flow.json"
 HEADERLESS_FLOW="$DIR/flows/${HEADERLESS_NAME}.flow.json"
+SCROLL_FLOW="$DIR/flows/${SCROLL_NAME}.flow.json"
 SECRET_FLOW="$DIR/flows/${SECRET_NAME}.flow.json"
 SECRET_VALUES="$DIR/flows/${SECRET_NAME}.values.json"
 SNAP="$DIR/flows/${FLOW_NAME}.snapshot.txt"
@@ -28,7 +30,7 @@ RECIPE="$DIR/recipes/${RECIPE_NAME}.json"
 HEADERLESS_RECIPE="$DIR/recipes/${HEADERLESS_RECIPE_NAME}.json"
 ART_OLD="$DIR/artifacts/$RUN_OLD"
 ART_NEW="$DIR/artifacts/$RUN_NEW"
-trap 'rm -f "$FLOW" "$MISSING_FLOW" "$FALLBACK_FLOW" "$NO_FALLBACK_FLOW" "$HEADERLESS_FLOW" "$SECRET_FLOW" "$SECRET_VALUES" "$SNAP" "$HEADERLESS_SNAP" "$RECIPE" "$HEADERLESS_RECIPE"; rm -rf "$ART_OLD" "$ART_NEW"' EXIT
+trap 'rm -f "$FLOW" "$MISSING_FLOW" "$FALLBACK_FLOW" "$NO_FALLBACK_FLOW" "$HEADERLESS_FLOW" "$SCROLL_FLOW" "$SECRET_FLOW" "$SECRET_VALUES" "$SNAP" "$HEADERLESS_SNAP" "$RECIPE" "$HEADERLESS_RECIPE"; rm -rf "$ART_OLD" "$ART_NEW"' EXIT
 
 cat > "$RECIPE" <<'JSON'
 {
@@ -180,6 +182,38 @@ cat > "$HEADERLESS_FLOW" <<JSON
 }
 JSON
 
+cat > "$SCROLL_FLOW" <<JSON
+{
+  "name": "$SCROLL_NAME",
+  "engine": "playwright",
+  "environment": "staging",
+  "riskClass": "read",
+  "startUrl": "https://example.test/tickets",
+  "steps": [
+    {
+      "kind": "scroll",
+      "needs_review": true,
+      "unsupported": "container-scroll",
+      "reason": "scrollable container gestures require a stable container locator and are not replayable as page scroll",
+      "candidates": [],
+      "recordedDir": "down",
+      "recordedPx": 240
+    },
+    {
+      "kind": "scroll",
+      "needs_review": true,
+      "unsupported": "container-scroll",
+      "reason": "scrollable container gestures require a stable container locator and are not replayable as page scroll",
+      "candidates": [],
+      "recordedDir": "up",
+      "recordedPx": 120
+    },
+    { "kind": "wait", "until": "text", "value": "Done" }
+  ],
+  "asserts": []
+}
+JSON
+
 cat > "$SECRET_FLOW" <<JSON
 {
   "name": "$SECRET_NAME",
@@ -211,7 +245,7 @@ cat > "$ART_NEW/report.json" <<JSON
 ]
 JSON
 
-FLOW_NAME="$FLOW_NAME" MISSING_NAME="$MISSING_NAME" FALLBACK_NAME="$FALLBACK_NAME" NO_FALLBACK_NAME="$NO_FALLBACK_NAME" HEADERLESS_NAME="$HEADERLESS_NAME" SECRET_NAME="$SECRET_NAME" RECIPE_NAME="$RECIPE_NAME" HEADERLESS_RECIPE_NAME="$HEADERLESS_RECIPE_NAME" RUN_NEW="$RUN_NEW" node --input-type=module <<'NODE'
+FLOW_NAME="$FLOW_NAME" MISSING_NAME="$MISSING_NAME" FALLBACK_NAME="$FALLBACK_NAME" NO_FALLBACK_NAME="$NO_FALLBACK_NAME" HEADERLESS_NAME="$HEADERLESS_NAME" SCROLL_NAME="$SCROLL_NAME" SECRET_NAME="$SECRET_NAME" RECIPE_NAME="$RECIPE_NAME" HEADERLESS_RECIPE_NAME="$HEADERLESS_RECIPE_NAME" RUN_NEW="$RUN_NEW" node --input-type=module <<'NODE'
 import { readFile } from 'node:fs/promises';
 import { getFlow, listFlows, resolveClickedRecordStep } from './webui/flows.js';
 
@@ -244,6 +278,17 @@ if (!headerless.ok) die(`expected headerless columnIndexes resolve to pass, got:
 if (headerless.rowIndex !== 1) die(`expected headerless rowIndex=1, got ${headerless.rowIndex}`);
 const headerlessFlow = JSON.parse(await readFile(`flows/${process.env.HEADERLESS_NAME}.flow.json`, 'utf8'));
 if (headerlessFlow.steps[0].source !== 'row_index') die(`expected headerless source=row_index, got ${headerlessFlow.steps[0].source}`);
+
+let scrollFlow = await getFlow(process.env.SCROLL_NAME);
+const scrollReview = scrollFlow.needsReviewSteps[0];
+if (scrollReview.kind !== 'scroll') die(`expected scroll review kind, got ${scrollReview.kind}`);
+if (scrollReview.unsupported !== 'container-scroll') die(`expected container-scroll unsupported marker, got ${scrollReview.unsupported}`);
+if (scrollReview.action !== null) die(`expected scroll review action=null, got ${scrollReview.action}`);
+if (scrollReview.recordedDir !== 'down' || scrollReview.recordedPx !== 240) die('expected scroll review evidence metadata');
+const scrollAsRecord = await resolveClickedRecordStep(process.env.SCROLL_NAME, 0, process.env.RECIPE_NAME);
+if (scrollAsRecord.ok || !/only click steps/.test(scrollAsRecord.error || '')) die(`expected scroll open_record conversion to be refused, got ${JSON.stringify(scrollAsRecord)}`);
+scrollFlow = JSON.parse(await readFile(`flows/${process.env.SCROLL_NAME}.flow.json`, 'utf8'));
+if (scrollFlow.steps.length !== 3 || scrollFlow.steps[0].needs_review !== true) die('container-scroll review must remain fail-closed until re-recorded or manually authored');
 
 const statusFlow = await getFlow(process.env.MISSING_NAME);
 if (!statusFlow.missingValues.includes('input_1')) die('expected input_1 to be reported missing');

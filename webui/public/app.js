@@ -818,6 +818,14 @@ function flowStepSummary(s) {
 	return `${s.kind || '단계'}`;
 }
 
+function isClickedRecordReview(item) {
+	return item?.kind === 'find' && (item.action || 'click') === 'click';
+}
+
+function isContainerScrollReview(item) {
+	return item?.kind === 'scroll' && item.unsupported === 'container-scroll';
+}
+
 function flowReadyReason(flow) {
 	if (!flow) return '녹화된 플로우가 없습니다.';
 	if (flow.scenarioStatus?.unrunnableReason) return flow.scenarioStatus.unrunnableReason;
@@ -1263,13 +1271,15 @@ function renderAutomationFlow(flow) {
 	});
 	const reviewBlocks = flow.needsReviewSteps.map((item) => {
 		const actions = el('div', { class: 'candidate-list' });
-		if ((item.action || 'click') === 'click') {
+		if (isClickedRecordReview(item)) {
 			actions.append(el('button', {
 				class: 'candidate-button dynamic',
 				type: 'button',
 				...accessAttrs(recordAccess),
 				onclick: () => resolveAutomationClickedRecord(flow.name, item.index),
 			}, '클릭한 행 위치로 열기'));
+		} else if (isContainerScrollReview(item)) {
+			actions.append(el('span', { class: 'muted' }, `${item.reason || '컨테이너 스크롤은 아직 재현할 수 없습니다.'}${item.recordedDir ? ` (${item.recordedDir}${item.recordedPx ? ` ${item.recordedPx}px` : ''})` : ''}`));
 		}
 		for (const [ci, c] of (item.candidates || []).entries()) {
 			actions.append(el('button', {
@@ -1279,9 +1289,14 @@ function renderAutomationFlow(flow) {
 				onclick: () => resolveAutomationStep(flow.name, item.index, ci),
 			}, `이 후보 사용: ${c.by}: ${c.value}${c.name ? ` / ${c.name}` : ''}`));
 		}
+		if (!actions.childNodes.length) {
+			actions.append(el('span', { class: 'muted' }, item.reason || '자동 해결할 수 없는 검토 항목입니다.'));
+		}
 		return el('div', { class: 'review-block review-required' },
-			el('strong', {}, `${item.index + 1}단계 후보 선택 필요`),
-			el('span', { class: 'review-help' }, '목표 문장을 바꾸는 문제가 아니라, 녹화 중 실제로 누른 대상을 한 번 확정하는 단계입니다.'),
+			el('strong', {}, `${item.index + 1}단계 ${isContainerScrollReview(item) ? '스크롤 검토 필요' : '후보 선택 필요'}`),
+			el('span', { class: 'review-help' }, isContainerScrollReview(item)
+				? '스크롤 가능한 내부 영역 제스처는 재현 대상이 애매해서 자동 실행하지 않습니다. 단순 화면 이동이었다면 건너뛰고 검증하세요.'
+				: '목표 문장을 바꾸는 문제가 아니라, 녹화 중 실제로 누른 대상을 한 번 확정하는 단계입니다.'),
 			actions,
 		);
 	});
@@ -1562,11 +1577,14 @@ async function verifyAutomationFlow() {
 	if (!flow) return;
 	const log = $('#auto-run-log');
 	if (flow.needsReviewSteps?.length) {
-		setAutomationJobBadge('후보 선택 필요', 'warning');
-		log.textContent = `검증 전에 ${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요.\n녹화 결과 아래의 [이 후보 사용] 버튼을 누른 뒤 다시 검증하면 됩니다.\n`;
-		const firstCandidate = document.querySelector('.review-required .candidate-button');
-		firstCandidate?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-		firstCandidate?.focus();
+		const unsupported = flow.needsReviewSteps.filter(isContainerScrollReview);
+		setAutomationJobBadge(unsupported.length ? '재녹화 필요' : '후보 선택 필요', 'warning');
+		log.textContent = unsupported.length
+			? `검증 전에 지원되지 않는 컨테이너 스크롤 ${unsupported.length}개를 해결해야 합니다.\n해당 스크롤이 업무 동작에 필요하면 안정적인 방식으로 다시 녹화하거나 flow.json에 결정적 대체 단계를 수동 작성하세요.\n`
+			: `검증 전에 ${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요.\n녹화 결과 아래의 [이 후보 사용] 버튼을 누른 뒤 다시 검증하면 됩니다.\n`;
+		const firstAction = document.querySelector('.review-required .candidate-button') || document.querySelector('.review-required');
+		firstAction?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		firstAction?.focus?.();
 		renderAutomation();
 		return;
 	}
