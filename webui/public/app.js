@@ -1160,7 +1160,15 @@ function renderAutomation() {
 	const startBtn = $('#auto-start-record');
 	if (startBtn) {
 		startBtn.disabled = activeRecord || activeVerify || activeRun || busy || !form.recordUrl || !recordAccess.allowed;
-		startBtn.textContent = !recordAccess.allowed ? '권한 제한' : activeRecord ? (recordQueued ? '녹화 대기 중' : '녹화 중') : busy ? '작업 대기 중' : '녹화 시작';
+		startBtn.textContent = !recordAccess.allowed
+			? '권한 제한'
+			: activeRecord
+				? (recordQueued ? '녹화 대기 중' : '녹화 중')
+				: busy
+					? '작업 대기 중'
+					: !form.recordUrl
+						? 'URL 입력 필요'
+						: '녹화 시작';
 		startBtn.title = accessTitle(recordAccess, !form.recordUrl ? '로그인 이후 실제 업무 화면 URL을 입력하세요.' : !activeRecord && busy ? busyText : '');
 	}
 	const authBadge = $('#auto-auth-badge');
@@ -1213,7 +1221,7 @@ function renderAutomation() {
 	if (recordHint) {
 		recordHint.textContent = form.recordUrl
 			? '시나리오 이름과 로그인 연결은 자동으로 처리됩니다.'
-			: '로그인 이후 실제 업무 화면 URL만 입력하면 나머지는 자동으로 준비됩니다.';
+			: '녹화 URL이 비어 있어 녹화 시작이 꺼져 있습니다. 로그인 후 열린 실제 업무 화면 URL을 붙여넣으세요.';
 	}
 	const verifyBtn = $('#auto-verify');
 	if (verifyBtn) {

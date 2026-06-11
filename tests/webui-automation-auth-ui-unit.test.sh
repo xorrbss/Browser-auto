@@ -12,6 +12,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const appJs = fs.readFileSync('webui/public/app.js', 'utf8');
+const indexHtml = fs.readFileSync('webui/public/index.html', 'utf8');
+const appCss = fs.readFileSync('webui/public/app.css', 'utf8');
 const authPw = fs.readFileSync('approve/auth-pw.mjs', 'utf8');
 
 assert.match(appJs, /MANUAL_AUTH_SAVE_NEEDLE = '__AQA_MANUAL_AUTH_SAVE_ONLY__'/, 'login-url-only auth uses a manual-save sentinel');
@@ -54,6 +56,12 @@ assert.match(appJs, /runBtn\.title = accessTitle\(runAccess, flow && !flow\.comp
 assert.match(appJs, /컴파일 대기: \$\{reason\}/, 'programmatic compile attempts surface the blocked reason');
 assert.match(appJs, /\[실행 대기\]/, 'programmatic run attempts surface the blocked reason');
 assert.match(appJs, /log\.textContent = '컴파일 요청 중/, 'compile action writes to the execution log');
+assert.match(appJs, /startBtn\.disabled = activeRecord \|\| activeVerify \|\| activeRun \|\| busy \|\| !form\.recordUrl \|\| !recordAccess\.allowed;/, 'record start stays disabled until a real record URL is entered');
+assert.match(appJs, /!form\.recordUrl\s*\?\s*'URL 입력 필요'/, 'empty record URL changes the button label to an explicit blocked state');
+assert.match(appJs, /녹화 URL이 비어 있어 녹화 시작이 꺼져 있습니다/, 'record hint explains why recording is disabled');
+assert.doesNotMatch(indexHtml, /id="auto-record-url"[^>]*placeholder="https:\/\/app\.example\.com\/dashboard"/, 'record URL placeholder must not look like a filled real URL');
+assert.match(indexHtml, /id="auto-record-url"[^>]*placeholder="로그인 후 열린 실제 업무 화면 URL을 붙여넣으세요"/, 'record URL placeholder tells the operator to paste the post-login screen URL');
+assert.match(appCss, /\.btn:disabled,\s*\.btn\.primary:disabled,\s*\.btn\.danger:disabled\s*\{[\s\S]*background: var\(--surface-3\);/, 'disabled primary buttons render as neutral, not teal');
 NODE
 
 echo "  webui-automation-auth-ui-unit: auth controls remain refreshable"
