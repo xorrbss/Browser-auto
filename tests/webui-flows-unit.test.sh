@@ -108,7 +108,7 @@ cat > "$ART_OLD/report.json" <<JSON
 JSON
 cat > "$ART_NEW/report.json" <<JSON
 [
-  { "name": "$MISSING_NAME", "status": "fail", "durationMs": 9, "reason": "locator timeout on Ticket password=hunter2", "artifacts": "$DIR/artifacts/$RUN_NEW/$MISSING_NAME" }
+  { "name": "$MISSING_NAME", "status": "fail", "durationMs": 9, "reason": "locator timeout on Ticket password=hunter2", "artifacts": "artifacts/$RUN_NEW/$MISSING_NAME" }
 ]
 JSON
 
