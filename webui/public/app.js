@@ -615,7 +615,7 @@ function automationForm() {
 	const manualSuccessUrl = $('#auto-success-url')?.value.trim() || '';
 	const autoApp = appSuggestion({ recordUrl, loginUrl });
 	const matchedApp = matchedAuthApp({ recordUrl, loginUrl });
-	const app = manualApp || matchedApp || autoApp;
+	const app = manualApp || autoApp || matchedApp;
 	const autoName = flowNameSuggestion({ name: '', recordUrl, loginUrl, app });
 	const autoSuccessUrl = successNeedleSuggestion({ recordUrl, loginUrl });
 	return {
@@ -1126,15 +1126,15 @@ function renderAutomation() {
 	if (authBadge) {
 		setChildren(
 			authBadge,
-			loggedIn ? badge('로그인 등록됨', 'success') : badge('로그인 필요', 'warning'),
+			loggedIn ? badge('저장된 로그인 있음', 'success') : badge('로그인 필요', 'warning'),
 			form.app ? badge('자동 연결', 'neutral') : null,
 			!loggedIn && busy ? badge('작업 대기 중', 'info') : null,
 		);
 	}
 	const authBtn = $('#auto-auth');
 	if (authBtn) {
-		authBtn.disabled = loggedIn || busy || !form.app || !form.loginUrl || !form.successUrl || !authAccess.allowed;
-		authBtn.textContent = !authAccess.allowed ? '권한 제한' : loggedIn ? '로그인 등록됨' : busy ? '작업 대기 중' : '로그인 등록';
+		authBtn.disabled = busy || !form.app || !form.loginUrl || !form.successUrl || !authAccess.allowed;
+		authBtn.textContent = !authAccess.allowed ? '권한 제한' : loggedIn ? '로그인 갱신' : busy ? '작업 대기 중' : '로그인 등록';
 		// form.successUrl is derived from recordUrl||loginUrl, so it is empty only when the login URL
 		// itself is missing or malformed (a valid login URL always yields a host needle).
 		authBtn.title = accessTitle(authAccess, !form.loginUrl
@@ -1161,7 +1161,7 @@ function renderAutomation() {
 	const authHint = $('#auto-auth-hint');
 	if (authHint) {
 		authHint.textContent = loggedIn
-			? '이 사이트의 로그인 상태가 저장되어 있습니다.'
+			? '저장된 로그인이 있어도 [로그인 갱신]으로 새 창을 열어 다시 저장할 수 있습니다.'
 			: form.loginUrl
 				? '로그인 후 다른 화면으로 이동하면 자동 저장됩니다. 같은 화면에 머무르면 [로그인 완료·저장]을 누르세요.'
 				: '로그인 URL을 입력하면 로그인 등록을 시작할 수 있습니다.';
@@ -1172,10 +1172,6 @@ function renderAutomation() {
 			? '시나리오 이름과 로그인 연결은 자동으로 처리됩니다.'
 			: '로그인 이후 실제 업무 화면 URL만 입력하면 나머지는 자동으로 준비됩니다.';
 	}
-	['#auto-login-url', '#auto-success-url'].forEach((sel) => {
-		const node = $(sel);
-		if (node) node.disabled = loggedIn;
-	});
 	const verifyBtn = $('#auto-verify');
 	if (verifyBtn) {
 		const needsReview = !!(flow && flow.needsReviewSteps?.length);
@@ -1434,7 +1430,6 @@ async function runAutomationAuth() {
 	if (!requireAccess('auth', '로그인 등록')) return;
 	const form = automationForm();
 	if (!form.app) return alert('녹화 URL 또는 로그인 URL을 입력하면 앱 ID는 자동으로 생성됩니다.');
-	if (automationLoggedIn(form)) return alert(`${form.app} 로그인 상태가 이미 저장되어 있습니다.`);
 	if (!form.loginUrl) return alert('로그인 URL을 입력하세요.');
 	if (!form.successUrl) {
 		const log = $('#auto-record-log');

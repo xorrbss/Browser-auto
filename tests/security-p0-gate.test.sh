@@ -53,6 +53,7 @@ TESTS=(
 	"command-confirm-session-route-unit"
 	"webui-redact-unit"
 	"webui-flows-unit"
+	"webui-automation-auth-ui-unit"
 	"webui-readiness-unit"
 	"webui-ops-dashboard-unit"
 	"release-checklist-unit"
