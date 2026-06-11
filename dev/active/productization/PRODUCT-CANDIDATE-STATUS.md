@@ -13,6 +13,10 @@ blocks service open.
   staging/live-readonly opening scope and collecting non-secret deployment metadata.
 - `HIWORKS-STAGING-READONLY-ENV-PACK.md` gives the first real Hiworks read-only acceptance env and
   command template for `approval_office_hiworks_com_ibizsoftware_net_approval`.
+- `HIWORKS-READONLY-OWNER-APPROVAL-REQUEST-2026-06-11.md` is the owner decision packet for limited
+  opening of the named Hiworks read-only operator lane.
+- `HIWORKS-READONLY-ACCEPTANCE-EVIDENCE-2026-06-11.md` records the local operator acceptance evidence
+  for `RUN_ID=20260611-153636-1422`.
 - `HIWORKS-SAMPLE-RUNBOOK.md` documents the local Hiworks fixture sample and its test commands.
 - `OPERATOR-HANDOFF-PACK.md` defines owner/operator evidence checklists for IdP, KMS/secret broker,
   noVNC, external runner, and audit webhook production handoff.
@@ -166,6 +170,12 @@ focused audit outbox, scheduler, runner contract/API, durable job, release check
 only, not proof of a deployed production webhook endpoint, production connector, or real secret broker
 delivery.
 
+Additional Hiworks read-only operator acceptance on 2026-06-11 passed for
+`approval_office_hiworks_com_ibizsoftware_net_approval` at commit `d849140` with
+`RUN_ID=20260611-153636-1422`, `1/1 passed`, and `durationMs=5960`. This is limited read-only
+operator evidence only. Owner approval is still required for the expanded read-only origin set before
+the lane is called open.
+
 The readiness matrix is intentionally conservative: current sections are still release-blocking because
 real IdP, KMS, noVNC, DNS-at-connection, runner deployment, webhook audit, export, and live-like
 acceptance remain external/operator-owned.
@@ -177,7 +187,7 @@ acceptance remain external/operator-owned.
 | `login` | Runnable local data URL test | `local/read` data URL; safe for fixture lane. |
 | `nav-roundtrip` | Playwright, operator-only; replay PASS evidence | `live-readonly` non-local target `https://example.com`; recorded pass evidence exists in artifact run `20260610-125235-1542`. Future replay still requires operator-selected allowlist and must not run unattended. |
 | `ianatour` | Playwright, operator-only; replay PASS evidence | `live-readonly` non-local target `https://www.iana.org/domains`; recorded pass evidence exists in artifact run `20260610-125235-1542`. Future replay still requires operator-selected allowlist and must not run unattended. |
-| `approval_office_hiworks_com_ibizsoftware_net_approval` | Playwright, operator-only; validate-only PASS with explicit evidence | App-bound external business URL. Validate-only passes when supplied with `AQA_TARGET_ALLOWLIST=https://approval.office.hiworks.com` and fresh resolver evidence; actual replay remains operator handoff only and requires ready auth, owner-approved target, and allowlist. |
+| `approval_office_hiworks_com_ibizsoftware_net_approval` | Playwright, operator-only; read-only replay PASS, owner approval pending | App-bound external business URL. Local operator acceptance passed with `RUN_ID=20260611-153636-1422`; limited open still requires owner approval for the exact read-only origin set in `HIWORKS-READONLY-OWNER-APPROVAL-REQUEST-2026-06-11.md`. |
 | `guest_samsungdisplay_com_argos_main_do` | Blocked | `live-action` effectful flow with `needs_review` steps 3 and 4, no captured candidates, and no reviewed `irreversibleAt`; compile/replay are blocked until repair plus dry-run/owner gates. |
 | `hiworks01` | Blocked | Playwright-scoped destructive live-action with `needs_review` steps 0 and 2, candidate summaries in the blocked-flow report, and `irreversibleAt:6` warning; compile/replay are blocked until repair, dry-run evidence, and owner approval. |
 
