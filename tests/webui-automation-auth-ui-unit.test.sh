@@ -47,7 +47,7 @@ assert.match(appJs, /function isContainerScrollReview\(item\)/, 'flow review UI 
 assert.doesNotMatch(appJs, /omitAutomationContainerScrolls/, 'unsupported container-scroll review steps must not be silently omitted');
 assert.doesNotMatch(appJs, /omit-review-step/, 'WebUI must not expose a route that ignores needs_review steps');
 assert.match(appJs, /function automationBlockedReason\(flow\)/, 'automation UI has a visible blocked reason helper');
-assert.match(appJs, /페이지 휠 스크롤은 지원되지만, 내부 목록\/테이블 컨테이너 스크롤/, 'automation blocked reason distinguishes page wheel scroll from container scroll');
+assert.match(appJs, /새 녹화는 안정 locator 또는 휠 위치로 자동 재생/, 'automation blocked reason points old container-scroll recordings to the new fallback');
 assert.match(appJs, /function flowSummaryState\(flow\)/, 'flow summary uses a short status label helper');
 assert.match(appJs, /metric\('상태', flowSummaryState\(flow\), flowSummaryDetail\(flow\), \{ compact: true \}\)/, 'status metric always renders compact text');
 assert.match(appJs, /const compact = options\.compact === true \|\| text\.length > 24 \|\| \/\\s\/\.test\(text\) && text\.length > 16;/, 'long metric values are compacted defensively');

@@ -88,6 +88,25 @@ function primaryReviewReason(rec) {
   }
   return '';
 }
+function locatorReviewReason(locator, candidates, label) {
+  if (!locator) return `no ${label}`;
+  if (overLongLocator(locator)) return `${label} text/name exceeds 80 characters`;
+  const matches = (candidates || []).filter((c) => sameLocator(c, locator));
+  if (!matches.length) return `${label} is missing from the capture candidate ladder`;
+  if (!matches.some((c) => Number(c.count) === 1)) {
+    const counts = matches.map((c) => (c.count == null ? 'missing' : String(c.count))).join('/');
+    return `${label} was not capture-unique (count=${counts || 'missing'})`;
+  }
+  return '';
+}
+function wheelPoint(rec) {
+  const p = rec && rec.point;
+  if (!p || typeof p !== 'object') return null;
+  const x = Math.round(Number(p.x));
+  const y = Math.round(Number(p.y));
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 100000 || y > 100000) return null;
+  return { x, y };
+}
 
 // frameLoc(frame_ref): the parent-visible iframe LOCATOR for a step recorded inside an iframe (id > name >
 // title > src-path > index — semantic, never @ref). A CROSS-ORIGIN frame (parent can't scope into it) or an
@@ -145,12 +164,31 @@ function unsupportedReview(rec) {
     const px = Math.round(Number(rec.px));
     const fl = frameLoc(rec.frame_ref);
     const reviewReason = primaryReviewReason(rec);
-    if (['up', 'down', 'left', 'right'].includes(rec.dir) && Number.isFinite(px) && px > 0 && rec.primary && !reviewReason && !(fl && fl._unreplayable)) {
+    const validScroll = ['up', 'down', 'left', 'right'].includes(rec.dir) && Number.isFinite(px) && px > 0;
+    if (validScroll && rec.primary && !reviewReason && !(fl && fl._unreplayable)) {
       const p = rec.primary;
       const container = { by: p.by, value: p.value };
       if (p.name) container.name = p.name;
       const step = { kind: 'scroll', dir: rec.dir, px, container };
       if (fl) step.frame = fl;
+      steps.push(step);
+      candidatesByStep[steps.length - 1] = ladderOf(rec);
+      return;
+    }
+    const anchorReason = locatorReviewReason(rec.anchor, rec.anchorCandidates || [], 'scroll anchor');
+    if (validScroll && rec.anchor && !anchorReason && !(fl && fl._unreplayable)) {
+      const a = rec.anchor;
+      const anchor = { by: a.by, value: a.value };
+      if (a.name) anchor.name = a.name;
+      const step = { kind: 'scroll', dir: rec.dir, px, anchor };
+      if (fl) step.frame = fl;
+      steps.push(step);
+      candidatesByStep[steps.length - 1] = (rec.anchorCandidates || []).map((c) => { const o = { by: c.by, value: c.value }; if (c.name) o.name = c.name; if (c.count != null) o.count = c.count; return o; });
+      return;
+    }
+    const point = wheelPoint(rec);
+    if (validScroll && point && !fl) {
+      const step = { kind: 'scroll', dir: rec.dir, px, at: point };
       steps.push(step);
       candidatesByStep[steps.length - 1] = ladderOf(rec);
       return;

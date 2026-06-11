@@ -97,9 +97,14 @@ with headed `setup/auth.sh` instead.
   - `value`: URL glob/text/load state as appropriate.
   - `timeoutMs`: optional per-step timeout override, positive integer up to 600000.
 - `scroll`: page scroll captured as `{ "dir": "up|down|left|right", "px": 300 }`.
-  A scrollable container may include a semantic locator:
+  A scrollable container prefers a semantic container locator:
   `{ "dir": "up|down|left|right", "px": 300, "container": { "by": "testid", "value": "scrollbox" } }`.
-  `frame` is allowed only with `container` and follows the same same-origin iframe rules as `find`.
+  If the wrapper is unlabeled, it may use a unique semantic child anchor and scroll the nearest
+  scrollable ancestor:
+  `{ "dir": "up|down|left|right", "px": 300, "anchor": { "by": "role", "value": "table", "name": "Pending" } }`.
+  As a last-resort read-only gesture replay, recorder-captured viewport wheel coordinates may be
+  written as `{ "dir": "up|down|left|right", "px": 300, "at": { "x": 320, "y": 240 } }`.
+  `frame` is allowed only with `container` or `anchor` and follows the same same-origin iframe rules as `find`.
 - `press`: non-text keyboard action, such as `Enter`, `Escape`, `Tab`, or arrow keys.
 - `open_record`: recipe-driven dynamic row open for RPA/detail flows.
   - `source`: optional; `first`, `row_index`, or `field_value`.
@@ -128,7 +133,9 @@ Playwright steps, marked `needs_review`, or refused before a flow is produced.
 | Download link | `needs_review`; no runnable click fallback is emitted | Unsupported, fail-closed |
 | Page scroll | `{ "kind": "scroll", "dir": "...", "px": N }` | Supported |
 | Scrollable container gesture with a capture-unique semantic container locator | `{ "kind": "scroll", "dir": "...", "px": N, "container": { "by": "...", "value": "..." } }` | Supported; replay fails closed if the locator is not unique or the container does not move |
-| Scrollable container gesture without a stable container locator | `needs_review` with `unsupported:"container-scroll"` and recorded direction/px | Unsupported, fail-closed |
+| Scrollable container gesture with a capture-unique semantic child anchor, such as a named table/list/region | `{ "kind": "scroll", "dir": "...", "px": N, "anchor": { "by": "...", "value": "...", "name": "..." } }` | Supported; replay fails closed if the anchor is not unique or no scrollable ancestor moves |
+| Scrollable container gesture with only a recorder-captured viewport wheel point | `{ "kind": "scroll", "dir": "...", "px": N, "at": { "x": N, "y": N } }` | Supported as read-only wheel replay; later clicks still require deterministic locators |
+| Scrollable container gesture without locator, anchor, or wheel-point evidence | `needs_review` with `unsupported:"container-scroll"` and recorded direction/px | Unsupported, fail-closed |
 | `Enter`, `Escape`, `Tab`, arrow keys | `press` step | Supported with drift warnings for arrows |
 | `Ctrl`/`Meta`/`Alt` shortcuts such as `Control+s` | `press` step plus build warning | Partial; human must review app-specific effects |
 | Popup/new tab or top-level cross-origin recording boundary | Recorder refuses/fails loud | Unsupported, fail-closed |

@@ -259,4 +259,32 @@ eq "$(jq -r '.steps[0].needs_review // false' "$FLOW10")" 'false' "container-scr
 node "$DIR/bin/play-flow.mjs" --flow "$FLOW10" --validate-only >/dev/null 2>&1 \
 	|| fail "container-scroll: validate-only rejected scroll.container step"
 
+REC11="$TMP/records11.json"; FLOWS11="$TMP/flows11"; mkdir -p "$FLOWS11"
+cat > "$REC11" <<'JSON'
+[
+ {"seq":1,"action_type":"unsupported","capability":"container-scroll","reason":"scrollable container gestures require a stable container locator","dir":"down","px":240,"primary":null,"candidates":[],"anchor":{"by":"role","value":"table","name":"Pending documents"},"anchorCandidates":[{"by":"role","value":"table","name":"Pending documents","count":1}],"insufficient":true,"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" anchorscroll "http://127.0.0.1/editor" "" "$REC11" "$FLOWS11" "$BF_ENGINE" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on anchor-backed container scroll"
+FLOW11="$FLOWS11/anchorscroll.flow.json"
+eq "$(jq -rc '.steps[0]|[.kind,.dir,.px,.anchor.by,.anchor.value,.anchor.name]' "$FLOW11")" '["scroll","down",240,"role","table","Pending documents"]' "container-scroll: unique semantic anchor promotes to scroll.anchor"
+eq "$(jq -r '.steps[0].needs_review // false' "$FLOW11")" 'false' "container-scroll: anchor step is runnable"
+node "$DIR/bin/play-flow.mjs" --flow "$FLOW11" --validate-only >/dev/null 2>&1 \
+	|| fail "container-scroll: validate-only rejected scroll.anchor flow"
+
+REC12="$TMP/records12.json"; FLOWS12="$TMP/flows12"; mkdir -p "$FLOWS12"
+cat > "$REC12" <<'JSON'
+[
+ {"seq":1,"action_type":"unsupported","capability":"container-scroll","reason":"scrollable container gestures require a stable container locator","dir":"down","px":240,"point":{"x":320,"y":240},"primary":null,"candidates":[],"insufficient":true,"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" viewportscroll "http://127.0.0.1/editor" "" "$REC12" "$FLOWS12" "$BF_ENGINE" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on point-backed container scroll"
+FLOW12="$FLOWS12/viewportscroll.flow.json"
+eq "$(jq -rc '.steps[0]|[.kind,.dir,.px,.at.x,.at.y]' "$FLOW12")" '["scroll","down",240,320,240]' "container-scroll: wheel point promotes to scroll.at"
+eq "$(jq -r '.steps[0].needs_review // false' "$FLOW12")" 'false' "container-scroll: wheel point step is runnable"
+node "$DIR/bin/play-flow.mjs" --flow "$FLOW12" --validate-only >/dev/null 2>&1 \
+	|| fail "container-scroll: validate-only rejected scroll.at flow"
+
 echo "  ✓ build-flow-unit.test.sh passed"

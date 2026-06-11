@@ -46,10 +46,15 @@ assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "se
 assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "select", val: "kr" }]).ok === true, "select WITH val ⇒ valid");
 
 assert(validateSteps([{ kind: "scroll", dir: "down", px: 100 }]).ok === true, "page scroll validates");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, at: { x: 200, y: 300 } }]).ok === true, "viewport wheel scroll validates");
 assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, container: { by: "testid", value: "scrollbox" } }]).ok === true, "container scroll validates");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, anchor: { by: "role", value: "table", name: "Pending documents" } }]).ok === true, "anchor scroll validates");
 assert(validateSteps([{ kind: "scroll", dir: "sideways", px: 100, container: { by: "testid", value: "scrollbox" } }]).ok === false, "container scroll bad dir refused");
 assert(validateSteps([{ kind: "scroll", dir: "down", px: 0, container: { by: "testid", value: "scrollbox" } }]).ok === false, "container scroll bad px refused");
 assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, container: { by: "css", value: ".box" } }]).ok === false, "container scroll bad locator refused");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, anchor: { by: "css", value: ".box" } }]).ok === false, "anchor scroll bad locator refused");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, container: { by: "testid", value: "scrollbox" }, anchor: { by: "role", value: "table", name: "Pending documents" } }]).ok === false, "container and anchor are mutually exclusive");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, at: { x: -1, y: 300 } }]).ok === false, "viewport wheel bad point refused");
 assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, frame: { by: "id", value: "f" } }]).ok === false, "scroll frame without container refused");
 assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, unsupported: "container-scroll" }]).ok === false, "unsupported marker without needs_review refused");
 assert(validateSteps([{ kind: "wait", until: "load", timeoutMs: 45000 }]).ok === true, "per-step timeoutMs validates");
@@ -104,7 +109,7 @@ function mockPage(calls, countVal = 1) {
     getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(),
     frameLocator: (sel) => { calls.push("frameLocator:" + sel); const scope = { getByRole: (r, o) => { calls.push("role:" + r + ":" + (o ? o.name : "")); return loc(); }, getByText: (v) => loc(), getByLabel: (v) => loc(), getByPlaceholder: (v) => loc(), getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(), nth: (i) => scope }; return scope; },
     waitForURL: async (g, o = {}) => calls.push("waitURL:" + g + ":" + (o.timeout || "")), waitForLoadState: async (s, o = {}) => calls.push("waitLoad:" + s + ":" + (o.timeout || "")),
-    keyboard: { press: async (k) => calls.push("press:" + k) }, mouse: { wheel: async (x, y) => calls.push("wheel:" + x + "," + y) },
+    keyboard: { press: async (k) => calls.push("press:" + k) }, mouse: { move: async (x, y) => calls.push("move:" + x + "," + y), wheel: async (x, y) => calls.push("wheel:" + x + "," + y) },
   };
 }
 
@@ -159,6 +164,21 @@ function mockPage(calls, countVal = 1) {
   let threw = false;
   try { await runSteps(mockPage([], 2), [{ kind: "scroll", dir: "down", px: 120, container: { by: "testid", value: "scrollbox" } }], { dryRun: false, reversible: true }); } catch { threw = true; }
   assert(threw, "container scroll non-unique locator throws");
+}
+{
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "scroll", dir: "down", px: 120, anchor: { by: "role", value: "table", name: "Pending documents" } }], { dryRun: false, reversible: true });
+  assert(calls.includes("role:table:Pending documents") && calls.includes("evaluate:0,120"), "anchor scroll moved the nearest scrollable ancestor (got " + calls.join() + ")");
+}
+{
+  let threw = false;
+  try { await runSteps(mockPage([], 2), [{ kind: "scroll", dir: "down", px: 120, anchor: { by: "role", value: "table", name: "Pending documents" } }], { dryRun: false, reversible: true }); } catch { threw = true; }
+  assert(threw, "anchor scroll non-unique locator throws");
+}
+{
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "scroll", dir: "down", px: 120, at: { x: 200, y: 300 } }], { dryRun: false, reversible: true });
+  assert(calls.indexOf("move:200,300") >= 0 && calls.indexOf("wheel:0,120") > calls.indexOf("move:200,300"), "viewport wheel scroll moves to recorded point before wheel (got " + calls.join() + ")");
 }
 
 // --- open_record dispatches through the caller-provided Playwright recipe opener ---

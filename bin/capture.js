@@ -90,6 +90,10 @@
     var type = (attr(el, 'type') || '').toLowerCase();
     if (tag === 'a' && el.hasAttribute('href')) return 'link';
     if (tag === 'button') return 'button';
+    if (tag === 'table') return 'table';
+    if (tag === 'ul' || tag === 'ol') return 'list';
+    if (tag === 'nav') return 'navigation';
+    if (tag === 'main') return 'main';
     if (tag === 'select') return 'combobox';
     if (tag === 'textarea') return 'textbox';
     if (tag === 'summary') return 'button';
@@ -127,6 +131,9 @@
     }
     var al = attr(el, 'aria-label'); if (normalize(al)) return normalize(al);
     var lt = labelText(el); if (lt) return lt;
+    if ((el.tagName || '').toLowerCase() === 'table') {
+      try { if (el.caption && normalize(el.caption.textContent)) return normalize(el.caption.textContent); } catch (e) {}
+    }
     var role = roleOf(el);
     if (NAME_FROM_CONTENTS[role]) { var tc = normalize(el.textContent); if (tc) return tc; }
     var alt = attr(el, 'alt'); if (normalize(alt)) return normalize(alt);
@@ -308,6 +315,40 @@
     }
   }
 
+  function scrollAnchorPayload(scrollEl) {
+    var allowed = { table: 1, grid: 1, treegrid: 1, list: 1, listbox: 1, region: 1, navigation: 1, main: 1 };
+    var nodes = [];
+    function add(n) {
+      if (!n || n.nodeType !== 1 || !isVisible(n)) return;
+      if (nodes.indexOf(n) >= 0) return;
+      var role = roleOf(n);
+      if (allowed[role] && accName(n)) nodes.push(n);
+    }
+    try { add(scrollEl); } catch (e) {}
+    try {
+      var found = scrollEl.querySelectorAll('table,[role="table"],[role="grid"],[role="treegrid"],ul,ol,[role="list"],[role="listbox"],[role="region"],nav,[role="navigation"],main,[role="main"]');
+      for (var i = 0; i < found.length && nodes.length < 20; i++) add(found[i]);
+    } catch (e) {}
+    for (var j = 0; j < nodes.length; j++) {
+      try {
+        var cands = candidatesFor(nodes[j]);
+        for (var k = 0; k < cands.length; k++) { var r = countCandidate(cands[k], nodes[j]); cands[k].count = r.count; cands[k]._count = r.count; cands[k]._hit = r.matchesTarget; }
+        cands.sort(function (a, b) { return score(b) - score(a); });
+        for (var m = 0; m < cands.length; m++) {
+          var c = cands[m];
+          var roleOk = c.by === 'role' && c.name && allowed[c.value] && !looksAutoName(c.name);
+          var testidOk = c.by === 'testid';
+          if (c._count === 1 && c._hit && !overLong(c) && (roleOk || testidOk)) {
+            var primary = { by: c.by, value: c.value }; if (c.name) primary.name = c.name;
+            var top = cands.slice(0, Math.max(2, 0)).map(function (x) { var o = { by: x.by, value: x.value, count: x.count }; if (x.name) o.name = x.name; return o; });
+            return { primary: primary, candidates: top };
+          }
+        }
+      } catch (e2) {}
+    }
+    return { primary: null, candidates: [] };
+  }
+
   // --- build + push a locator-bearing record ---
   function emit(action_type, el, extra) {
     try {
@@ -431,6 +472,7 @@
   var scrollTimer = null, scrollBaseY = 0, scrollBaseX = 0, scrollPending = false;
   var containerScrollTimer = null, containerScrollPending = null;
   var containerScrollLast = (typeof WeakMap === 'function') ? new WeakMap() : null;
+  var lastWheelPoint = null;
   function _scrollY() { try { return Math.round(window.scrollY || window.pageYOffset || 0); } catch (e) { return 0; } }
   function _scrollX() { try { return Math.round(window.scrollX || window.pageXOffset || 0); } catch (e) { return 0; } }
   function _elScroll(el) { try { return { y: Math.round(el.scrollTop || 0), x: Math.round(el.scrollLeft || 0) }; } catch (e) { return { y: 0, x: 0 }; } }
@@ -453,14 +495,24 @@
       try { containerScrollLast.set(p.el, { y: p.lastY, x: p.lastX }); } catch (e) {}
     }
     var locator = locatorPayload(p.el);
+    var anchor = scrollAnchorPayload(p.el);
+    var point = null;
+    try {
+      if (lastWheelPoint && Date.now() - lastWheelPoint.t < 1500) {
+        point = { x: lastWheelPoint.x, y: lastWheelPoint.y };
+      }
+    } catch (e) { point = null; }
     record({
       action_type: 'unsupported',
       capability: 'container-scroll',
       reason: 'scrollable container gestures require a stable container locator and are not replayable as page scroll',
       dir: dp.dir,
       px: dp.px,
+      point: point || undefined,
       primary: locator.primary,
       candidates: locator.candidates,
+      anchor: anchor.primary || undefined,
+      anchorCandidates: anchor.candidates || undefined,
       insufficient: locator.insufficient,
       is_navigation_boundary: false
     });
@@ -498,6 +550,15 @@
     scrollPending = true;
     if (scrollTimer) clearTimeout(scrollTimer);
     scrollTimer = setTimeout(commitScroll, SCROLL_SETTLE_MS);
+  }, true);
+  window.addEventListener('wheel', function (e) {
+    try {
+      lastWheelPoint = {
+        x: Math.max(0, Math.round(e.clientX || 0)),
+        y: Math.max(0, Math.round(e.clientY || 0)),
+        t: Date.now()
+      };
+    } catch (err) {}
   }, true);
   // flushAll: commit a pending INPUT and then a pending scroll, in that order. Bound to the Enter key
   // and to teardown so a typed value is NEVER lost when the form submits / the context dies with no

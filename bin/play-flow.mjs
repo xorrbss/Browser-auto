@@ -80,7 +80,9 @@ function describeStep(s) {
 	if (s.kind === 'press') return `press ${s.value}`;
 	if (s.kind === 'scroll') {
 		const container = s.container ? ` container ${s.container.by}:${s.container.value}${s.container.name ? ` name="${s.container.name}"` : ''}` : '';
-		return `scroll ${s.dir} ${s.px}${container}`;
+		const anchor = s.anchor ? ` anchor ${s.anchor.by}:${s.anchor.value}${s.anchor.name ? ` name="${s.anchor.name}"` : ''}` : '';
+		const at = s.at ? ` at ${s.at.x},${s.at.y}` : '';
+		return `scroll ${s.dir} ${s.px}${container}${anchor}${at}`;
 	}
 	if (s.kind === 'open_record') return `open_record ${s.recipe || ''}`;
 	return String(s.kind || 'unknown');

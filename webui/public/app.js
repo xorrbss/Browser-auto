@@ -809,7 +809,7 @@ function flowStepSummary(s) {
 	}
 	if (s.kind === 'wait') return `대기: ${s.until || ''} ${s.value || ''}`.trim();
 	if (s.kind === 'press') return `키 입력: ${s.value || ''}`;
-	if (s.kind === 'scroll') return `스크롤: ${s.dir || 'down'} ${s.px || ''}`;
+	if (s.kind === 'scroll') return `스크롤: ${s.dir || 'down'} ${s.px || ''}${s.container ? ` / ${s.container.by}:${s.container.value}` : s.anchor ? ` / anchor ${s.anchor.by}:${s.anchor.value}` : s.at ? ` / wheel@${s.at.x},${s.at.y}` : ''}`;
 	if (s.kind === 'find') {
 		const locator = s.needs_review ? '검토 필요' : `${s.by || '?'}=${s.value || ''}${s.name ? ` / ${s.name}` : ''}`;
 		const value = s.text != null ? ` / ${s.text}` : s.val != null ? ` / ${s.val}` : '';
@@ -845,7 +845,7 @@ function unsupportedReviewCount(flow) {
 function automationBlockedReason(flow) {
 	if (!flow) return '녹화가 끝나면 검증/컴파일/실행할 수 있습니다.';
 	const unsupported = unsupportedReviewCount(flow);
-	if (unsupported) return `페이지 휠 스크롤은 지원되지만, 내부 목록/테이블 컨테이너 스크롤 ${unsupported}개는 아직 자동 재현할 수 없습니다. 스크롤 후 보이는 버튼이나 행을 직접 클릭해 다시 녹화하거나 flow.json에 안정적인 대체 단계를 작성하세요.`;
+	if (unsupported) return `내부 목록/테이블 스크롤 ${unsupported}개에 재생 증거가 부족합니다. 새 녹화는 안정 locator 또는 휠 위치로 자동 재생되며, 이 flow는 구버전 녹화라 다시 녹화가 필요합니다.`;
 	if (flow.needsReviewSteps?.length) return `${flow.needsReviewSteps.length}개 검토 항목을 먼저 해결해야 합니다.`;
 	if (flow.missingValues?.length) return `입력값 ${flow.missingValues.join(', ')}을 먼저 저장해야 합니다.`;
 	if (flow.valuesBlockedReason) return flow.valuesBlockedReason;
@@ -1335,7 +1335,7 @@ function renderAutomationFlow(flow) {
 				onclick: () => resolveAutomationClickedRecord(flow.name, item.index),
 			}, '클릭한 행 위치로 열기'));
 		} else if (isContainerScrollReview(item)) {
-			actions.append(el('span', { class: 'muted' }, `${item.reason || '내부 목록/테이블 컨테이너 스크롤은 아직 자동 재현할 수 없습니다. 페이지 전체 마우스 휠 스크롤은 지원됩니다.'}${item.recordedDir ? ` (${item.recordedDir}${item.recordedPx ? ` ${item.recordedPx}px` : ''})` : ''}`));
+			actions.append(el('span', { class: 'muted' }, `${item.reason || '구버전 녹화라 내부 스크롤을 재생할 locator/휠 위치 증거가 없습니다. 새로 녹화하면 내부 스크롤도 자동 재생 후보가 됩니다.'}${item.recordedDir ? ` (${item.recordedDir}${item.recordedPx ? ` ${item.recordedPx}px` : ''})` : ''}`));
 		}
 		for (const [ci, c] of (item.candidates || []).entries()) {
 			actions.append(el('button', {
@@ -1351,14 +1351,14 @@ function renderAutomationFlow(flow) {
 		return el('div', { class: 'review-block review-required' },
 			el('strong', {}, `${item.index + 1}단계 ${isContainerScrollReview(item) ? '스크롤 검토 필요' : '후보 선택 필요'}`),
 			el('span', { class: 'review-help' }, isContainerScrollReview(item)
-				? '스크롤 가능한 내부 영역 제스처는 재현 대상이 애매해서 자동 실행하지 않습니다. 단순 화면 이동이었다면 건너뛰고 검증하세요.'
+				? '이전 녹화에는 내부 스크롤 위치 증거가 없어 막혔습니다. 새 녹화에서는 안정 locator나 휠 위치로 재생합니다.'
 				: '목표 문장을 바꾸는 문제가 아니라, 녹화 중 실제로 누른 대상을 한 번 확정하는 단계입니다.'),
 			actions,
 		);
 	});
 	const reviewNotice = flow.needsReviewSteps.length
 		? warnBox(unsupportedReviewCount(flow)
-			? `${unsupportedReviewCount(flow)}개 내부 컨테이너 스크롤은 자동 재현할 수 없어 검증/컴파일이 막혀 있습니다. 페이지 전체 휠 스크롤은 지원됩니다. 내부 스크롤 뒤에 보이는 버튼이나 행을 직접 클릭해 다시 녹화하세요.`
+			? `${unsupportedReviewCount(flow)}개 내부 컨테이너 스크롤은 구버전 녹화라 재생 증거가 부족합니다. 새 녹화에서는 안정 locator나 휠 위치로 자동 재생합니다.`
 			: `${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요. 선택 후 검증 버튼이 켜집니다.`)
 		: null;
 	const blockedNotice = !flow.compilable && !flow.needsReviewSteps.length
@@ -1643,7 +1643,7 @@ async function verifyAutomationFlow() {
 		const unsupported = flow.needsReviewSteps.filter(isContainerScrollReview);
 		setAutomationJobBadge(unsupported.length ? '재녹화 필요' : '후보 선택 필요', 'warning');
 		log.textContent = unsupported.length
-			? `검증 전에 내부 컨테이너 스크롤 ${unsupported.length}개를 해결해야 합니다.\n페이지 전체 마우스 휠 스크롤은 지원됩니다. 내부 스크롤이 필요하면 스크롤 뒤에 보이는 버튼이나 행을 직접 클릭해 다시 녹화하거나 flow.json에 안정적인 대체 단계를 수동 작성하세요.\n`
+			? `검증 전에 내부 컨테이너 스크롤 ${unsupported.length}개를 해결해야 합니다.\n이 flow는 구버전 녹화라 스크롤 위치 증거가 없습니다. 새 녹화에서는 안정 locator나 휠 위치로 내부 스크롤을 자동 재생합니다.\n`
 			: `검증 전에 ${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요.\n녹화 결과 아래의 [이 후보 사용] 버튼을 누른 뒤 다시 검증하면 됩니다.\n`;
 		const firstAction = document.querySelector('.review-required .candidate-button') || document.querySelector('.review-required');
 		firstAction?.scrollIntoView({ block: 'center', behavior: 'smooth' });

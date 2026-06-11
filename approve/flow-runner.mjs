@@ -23,6 +23,18 @@ const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_STEP_TIMEOUT_MS = 20000;
 const MAX_STEP_TIMEOUT_MS = 10 * 60 * 1000;
 
+function validViewportPoint(p) {
+	return p && typeof p === 'object' &&
+		Number.isFinite(Number(p.x)) && Number(p.x) >= 0 && Number(p.x) <= 100000 &&
+		Number.isFinite(Number(p.y)) && Number(p.y) >= 0 && Number(p.y) <= 100000;
+}
+
+function validFindTarget(c) {
+	return c && typeof c === 'object' && FIND_BY.has(c.by) &&
+		typeof c.value === 'string' && c.value !== '' &&
+		(c.name == null || typeof c.name === 'string');
+}
+
 export function isEffectfulStep(s) {
 	return (s && s.kind === 'find' && EFFECTFUL.has(s.action)) || (s && s.kind === 'open_record');
 }
@@ -70,11 +82,20 @@ export function validateSteps(steps) {
 			if (!SCROLL_DIR.has(s.dir)) return { ok: false, reason: `step ${i}: scroll.dir "${s.dir}" invalid` };
 			const px = Number(s.px);
 			if (!(Number.isFinite(px) && px > 0)) return { ok: false, reason: `step ${i}: scroll.px must be a positive number` };
+			if (s.at !== undefined && !validViewportPoint(s.at)) return { ok: false, reason: `step ${i}: scroll.at invalid` };
+			if (s.container !== undefined && s.anchor !== undefined) return { ok: false, reason: `step ${i}: scroll.container and scroll.anchor are mutually exclusive` };
 			if (s.container !== undefined) {
 				const c = s.container;
-				if (!c || typeof c !== 'object' || !FIND_BY.has(c.by)) return { ok: false, reason: `step ${i}: scroll.container invalid` };
-				if (typeof c.value !== 'string' || !c.value) return { ok: false, reason: `step ${i}: scroll.container.value required` };
-				if (c.name != null && typeof c.name !== 'string') return { ok: false, reason: `step ${i}: scroll.container.name must be a string` };
+				if (!validFindTarget(c)) return { ok: false, reason: `step ${i}: scroll.container invalid` };
+				if (s.frame !== undefined) {
+					const f = s.frame;
+					if (!f || typeof f !== 'object' || !FRAME_BY.has(f.by) || f.value == null) return { ok: false, reason: `step ${i}: invalid frame locator` };
+					if (typeof f.value === 'string' && /["\\]/.test(f.value)) return { ok: false, reason: `step ${i}: frame value has unsafe chars` };
+					if (f.by === 'index' && !(Number.isInteger(f.value) && f.value >= 0)) return { ok: false, reason: `step ${i}: frame index must be a non-negative integer` };
+				}
+			} else if (s.anchor !== undefined) {
+				const a = s.anchor;
+				if (!validFindTarget(a)) return { ok: false, reason: `step ${i}: scroll.anchor invalid` };
 				if (s.frame !== undefined) {
 					const f = s.frame;
 					if (!f || typeof f !== 'object' || !FRAME_BY.has(f.by) || f.value == null) return { ok: false, reason: `step ${i}: invalid frame locator` };
@@ -82,7 +103,7 @@ export function validateSteps(steps) {
 					if (f.by === 'index' && !(Number.isInteger(f.value) && f.value >= 0)) return { ok: false, reason: `step ${i}: frame index must be a non-negative integer` };
 				}
 			} else if (s.frame !== undefined) {
-				return { ok: false, reason: `step ${i}: scroll.frame requires scroll.container` };
+				return { ok: false, reason: `step ${i}: scroll.frame requires scroll.container or scroll.anchor` };
 			}
 		} else if (s.kind === 'open_record') {
 			const source = s.source || 'first';
@@ -163,6 +184,34 @@ async function runStep(page, s, opts) {
 			if (!moved) throw new Error(`scroll.container ${s.container.by}:${s.container.value} did not move`);
 			return;
 		}
+		if (s.anchor) {
+			const loc = buildLocator(page, { ...s.anchor, frame: s.frame });
+			const c = await loc.count();
+			if (c !== 1) throw new Error(`scroll.anchor ${s.anchor.by}:${s.anchor.value} matched ${c} elements (need exactly 1) fail-closed`);
+			const moved = await loc.first().evaluate((anchor, delta) => {
+				function scrollable(el) {
+					if (!el || el.nodeType !== 1) return false;
+					const cs = window.getComputedStyle(el);
+					const oy = cs.overflowY || '';
+					const ox = cs.overflowX || '';
+					return ((/(auto|scroll|overlay)/.test(oy) && el.scrollHeight > el.clientHeight) ||
+						(/(auto|scroll|overlay)/.test(ox) && el.scrollWidth > el.clientWidth));
+				}
+				let el = anchor;
+				while (el && el !== document.documentElement && !scrollable(el)) el = el.parentElement;
+				if (!el || el === document.documentElement) return false;
+				const beforeX = Math.round(el.scrollLeft || 0);
+				const beforeY = Math.round(el.scrollTop || 0);
+				el.scrollLeft = beforeX + delta.dx;
+				el.scrollTop = beforeY + delta.dy;
+				const afterX = Math.round(el.scrollLeft || 0);
+				const afterY = Math.round(el.scrollTop || 0);
+				return Math.abs(afterX - beforeX) > 0 || Math.abs(afterY - beforeY) > 0;
+			}, { dx: d[0], dy: d[1] });
+			if (!moved) throw new Error(`scroll.anchor ${s.anchor.by}:${s.anchor.value} did not move a scrollable ancestor`);
+			return;
+		}
+		if (s.at) await page.mouse.move(Math.round(Number(s.at.x)), Math.round(Number(s.at.y)));
 		return page.mouse.wheel(d[0], d[1]);
 	}
 	if (s.kind === 'open_record') {

@@ -54,6 +54,16 @@ const PAGES = {
 			<div style="height:900px">Scrollable container content</div>
 		</div>
 		<button id="after" type="button">After container scroll</button>`,
+	'/container-scroll-anchor': `<!doctype html><meta charset="utf-8">
+		<div id="box" style="height:120px;overflow:auto;border:1px solid #999">
+			<table><caption>Pending documents</caption><tbody>${'<tr><td>row</td></tr>'.repeat(80)}</tbody></table>
+		</div>
+		<button id="after" type="button">After anchor scroll</button>`,
+	'/container-scroll-point': `<!doctype html><meta charset="utf-8">
+		<section id="plainBox" style="height:120px;overflow:auto;border:1px solid #999">
+			<div style="height:900px"><span>Plain internal rows</span></div>
+		</section>
+		<button id="after" type="button">After point scroll</button>`,
 	'/swap': `<!doctype html><meta charset="utf-8">
 		<button id="swap" type="button">Swap</button><div id="box"><p>old</p></div>
 		<script>document.getElementById('swap').onclick = () => {
@@ -285,7 +295,52 @@ await page.click('#after');
 	ok(valid.status === 0, 'container-scroll: validate-only accepts scroll.container flow');
 }
 
-// 8) dom_settle: a click that swaps a large subtree WITHOUT a URL change records a settle marker.
+// 8) container scroll with a semantic child anchor: if the scroll wrapper itself has no stable
+//    locator, replay can find a unique table/list/region inside it and move the nearest scrollable ancestor.
+await openCase('/container-scroll-anchor');
+await page.locator('#box').hover();
+await page.mouse.wheel(0, 320);
+await page.waitForTimeout(500);
+await page.click('#after');
+{
+	const buf = await drain('container-scroll-anchor');
+	const unsupported = byType(buf, 'unsupported');
+	ok(unsupported.length === 1, `container-scroll-anchor: one unsupported record (got ${unsupported.length})`);
+	const ev = unsupported[0];
+	ok(!!ev && ev.capability === 'container-scroll' && !ev.primary, 'container-scroll-anchor: no direct container primary retained');
+	ok(!!ev && ev.anchor && ev.anchor.by === 'role' && ev.anchor.value === 'table' && ev.anchor.name === 'Pending documents', 'container-scroll-anchor: semantic table anchor retained');
+	const built = buildFlowFromRecords('container_scroll_anchor_flow', ORIGIN + '/container-scroll-anchor', buf);
+	const step = built.flow.steps.find((s) => s.kind === 'scroll' && s.anchor);
+	ok(step && step.needs_review !== true, 'container-scroll-anchor: built step is runnable');
+	ok(step && step.dir === 'down' && step.px > 0 && step.anchor.by === 'role' && step.anchor.value === 'table' && step.anchor.name === 'Pending documents', 'container-scroll-anchor: built scroll.anchor retains anchor and scroll evidence');
+	const valid = spawnSync(process.execPath, ['bin/play-flow.mjs', '--flow', built.flowPath, '--validate-only'], { cwd: ROOT, encoding: 'utf8' });
+	ok(valid.status === 0, 'container-scroll-anchor: validate-only accepts scroll.anchor flow');
+}
+
+// 9) container scroll with no semantic locator: keep the gesture replayable by recording the wheel
+//    viewport point. This is non-effectful; later clicks still use fail-closed semantic locators.
+await openCase('/container-scroll-point');
+const plainBox = await page.locator('#plainBox').boundingBox();
+await page.mouse.move(plainBox.x + plainBox.width / 2, plainBox.y + plainBox.height / 2);
+await page.mouse.wheel(0, 320);
+await page.waitForTimeout(500);
+await page.click('#after');
+{
+	const buf = await drain('container-scroll-point');
+	const unsupported = byType(buf, 'unsupported');
+	ok(unsupported.length === 1, `container-scroll-point: one unsupported record (got ${unsupported.length})`);
+	const ev = unsupported[0];
+	ok(!!ev && ev.capability === 'container-scroll' && !ev.primary, 'container-scroll-point: no semantic primary retained');
+	ok(!!ev && ev.point && Number.isFinite(ev.point.x) && Number.isFinite(ev.point.y), 'container-scroll-point: wheel point retained');
+	const built = buildFlowFromRecords('container_scroll_point_flow', ORIGIN + '/container-scroll-point', buf);
+	const step = built.flow.steps.find((s) => s.kind === 'scroll' && s.at);
+	ok(step && step.needs_review !== true, 'container-scroll-point: built step is runnable');
+	ok(step && step.dir === 'down' && step.px > 0 && Number.isFinite(step.at.x) && Number.isFinite(step.at.y), 'container-scroll-point: built scroll.at retains point and scroll evidence');
+	const valid = spawnSync(process.execPath, ['bin/play-flow.mjs', '--flow', built.flowPath, '--validate-only'], { cwd: ROOT, encoding: 'utf8' });
+	ok(valid.status === 0, 'container-scroll-point: validate-only accepts scroll.at flow');
+}
+
+// 10) dom_settle: a click that swaps a large subtree WITHOUT a URL change records a settle marker.
 await openCase('/swap');
 await page.click('#swap');
 await page.waitForTimeout(700);
