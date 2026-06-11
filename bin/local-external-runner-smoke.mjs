@@ -187,6 +187,25 @@ function insertSmokeJob(env) {
 	}
 }
 
+function isBusyDbError(error) {
+	return /locked|busy/i.test(String((error && error.message) || error));
+}
+
+async function insertSmokeJobEventually(env) {
+	const started = Date.now();
+	let lastError = null;
+	while (Date.now() - started < 10000) {
+		try {
+			return insertSmokeJob(env);
+		} catch (e) {
+			lastError = e;
+			if (!isBusyDbError(e)) throw e;
+			await sleep(100);
+		}
+	}
+	throw lastError || new Error('timed out inserting smoke job');
+}
+
 function readSmokeJob(env) {
 	process.env.AQA_DB_PATH = env.AQA_DB_PATH;
 	const dbm = require('../lib/db.js');
@@ -206,7 +225,7 @@ async function readSmokeJobEventually(env) {
 			return readSmokeJob(env);
 		} catch (e) {
 			lastError = e;
-			if (!/locked|busy/i.test(String((e && e.message) || e))) throw e;
+			if (!isBusyDbError(e)) throw e;
 			await sleep(100);
 		}
 	}
@@ -238,7 +257,7 @@ async function main() {
 		});
 		if (unauthRunner.status !== 401) throw new Error(`unauthenticated runner API returned ${unauthRunner.status}`);
 
-		insertSmokeJob(env);
+		await insertSmokeJobEventually(env);
 
 		worker = spawn(process.execPath, [
 			'bin/runner-worker.mjs',
