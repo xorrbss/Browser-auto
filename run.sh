@@ -21,7 +21,8 @@ export RUN_ID
 RUN_DIR="${PROBE_ROOT}/artifacts/${RUN_ID}"
 mkdir -p "$RUN_DIR"
 
-source "${PROBE_ROOT}/lib/preflight.sh"
+AQA_PREFLIGHT_MANUAL=1 source "${PROBE_ROOT}/lib/preflight.sh"
+preflight_run_suite
 source "${PROBE_ROOT}/lib/report.sh"
 
 REPORT_TSV="${RUN_DIR}/results.tsv"
@@ -54,22 +55,33 @@ if [ "$EXPLICIT_GLOB" -eq 0 ]; then
 	_kept=()
 	_skipped_live_auth=()
 	_skipped_nonlocal=()
+	_skipped_unreadable=()
 	for _t in "${TESTS[@]}"; do
 		_name="$(basename "$_t" .test.sh)"
 		_flow="${PROBE_ROOT}/flows/${_name}.flow.json"
 		if [ -s "$_flow" ]; then
-			if [ "${AQA_INCLUDE_LIVE_AUTH:-0}" != "1" ] && jq -e 'has("app") and (.app != null) and (.app != "")' "$_flow" >/dev/null 2>&1; then
+			if ! _meta="$(jq -r '[ (.app // ""), (.environment // "local"), (.riskClass // "read") ] | @tsv' "$_flow" 2>/dev/null)"; then
+				_skipped_unreadable+=("$_name")
+				continue
+			fi
+			IFS=$'\t' read -r _app _env _risk <<EOF
+$_meta
+EOF
+			if ! preflight_is_truthy "${AQA_INCLUDE_LIVE_AUTH:-}" && [ -n "$_app" ]; then
 				_skipped_live_auth+=("$_name")
 				continue
 			fi
-			_env="$(jq -r '.environment // "local"' "$_flow" 2>/dev/null || printf 'local')"
-			if [ "${AQA_INCLUDE_NONLOCAL:-0}" != "1" ] && [ "$_env" != "local" ]; then
+			if ! preflight_is_truthy "${AQA_INCLUDE_NONLOCAL:-}" && [ "$_env" != "local" ]; then
 				_skipped_nonlocal+=("$_name($_env)")
 				continue
 			fi
 		fi
 		_kept+=("$_t")
 	done
+	if [ "${#_skipped_unreadable[@]}" -gt 0 ]; then
+		printf '[run] skipped flow test(s) with unreadable metadata from default suite: %s\n' "${_skipped_unreadable[*]}"
+		echo "[run] pass an explicit glob to run them and surface the flow error."
+	fi
 	if [ "${#_skipped_live_auth[@]}" -gt 0 ]; then
 		printf '[run] skipped live-auth test(s) from default suite: %s\n' "${_skipped_live_auth[*]}"
 		echo "[run] set AQA_INCLUDE_LIVE_AUTH=1 or pass an explicit glob to include them."

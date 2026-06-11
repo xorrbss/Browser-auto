@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail-loud scope guards of bin/pw-record.mjs (parity with the deleted agent-browser capture watcher):
+# Fail-loud scope guards of bin/pw-record.mjs:
 #   1) a popup/new tab during recording  -> FATAL, no flow written
 #   2) a mid-recording top-level cross-origin navigation -> FATAL, no flow written
 # Both used to be silently-dropped events (fail-open) after the Playwright migration. Runs the real

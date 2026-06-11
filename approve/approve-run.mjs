@@ -19,7 +19,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { parseKRW, pagerDecision, matchesFormType, norm, amountVerdict, completionVerdict, resolveAction } from './guards.mjs';
+import { parseKRW, pagerDecision, matchesFormType, norm, amountVerdict, completionVerdict, resolveAction, actionSuccessStatus } from './guards.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -50,7 +50,9 @@ if (live && process.env.AQA_SCHEDULED_NO_LIVE) { console.error('REFUSED: live ap
 const recipe = JSON.parse(fs.readFileSync(recipePath, 'utf8'));
 // Resolve the action block (recipe.actions.<action> | legacy approve); fail-closed on missing/disabled (Step B).
 const _av = resolveAction(recipe, action); if (!_av.ok) { console.error(`REFUSED: ${_av.reason}`); process.exit(2); }
+if (_av.catalog && _av.catalog.executor !== 'approve-modal-v1') { console.error(`REFUSED: action "${action}" uses ${_av.catalog.executor}; approve-run.mjs only executes captured decision-modal actions today`); process.exit(2); }
 const ap = _av.action;
+const successStatus = actionSuccessStatus(action, ap);
 const urlGlobRe = (recipe.detail && recipe.detail.urlGlob) ? new RegExp(recipe.detail.urlGlob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*')) : /\/view\//;
 let targets = JSON.parse(fs.readFileSync(targetsFile, 'utf8'));
 try { fs.rmSync(targetsFile, { force: true }); } catch {} // single-use: consume the (possibly-sensitive) targets file
@@ -72,19 +74,19 @@ const audit = (doc_id, stage, detail) => {
 	const fd = fs.openSync(auditPath, 'a'); try { fs.writeSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 };
 const log = (...a) => console.error('[approve]', ...a);
-// markApprovedInDb(docId): bookkeeping sync of a POSITIVELY-verified approval into the local store, so
-// the 결재 dashboard reflects reality — an approved doc leaves 대기, so no future list sync ever refreshes
+// markActionInDb(docId, status): bookkeeping sync of a POSITIVELY-verified catalog action into the local store, so
+// the dashboard reflects reality — a completed doc leaves 대기, so no future list sync ever refreshes
 // its row and it would sit as 'fetched' forever. The append-only audit JSONL stays the source of truth;
 // this is FAIL-SOFT (a DB hiccup never alters the run's outcome or exit code) and only runs after the
 // completion verify ('confirmed' / 'reconciled-approved'), never on dry/skip/uncertain.
 const requireCjs = createRequire(import.meta.url);
-function markApprovedInDb(docId) {
+function markActionInDb(docId, status) {
 	try {
 		const dbm = requireCjs('../lib/db.js');
 		const db = dbm.openDb();
 		try {
-			db.prepare("UPDATE approvals SET status='approved' WHERE doc_id = ?").run(String(docId));
-			if (recipe.app) db.prepare("UPDATE records SET status='approved' WHERE system = ? AND key = ?").run(String(recipe.app), String(docId));
+			db.prepare('UPDATE approvals SET status = ? WHERE doc_id = ?').run(String(status), String(docId));
+			if (recipe.app) db.prepare('UPDATE records SET status = ? WHERE system = ? AND key = ?').run(String(status), String(recipe.app), String(docId));
 		} finally { dbm.closeDb(db); }
 	} catch (e) { log(`status-sync skipped for ${docId} (${e && e.message || e})`); }
 }
@@ -95,6 +97,7 @@ const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' })
 const results = [];
 let batchForm = null;      // the form-type heading shared by this batch — a later differing one is refused (red-team C-RECIPE-MISPIN-NO-FORMTYPE)
 let approvedCount = 0;     // CONFIRMED approvals (for the report)
+let completedCount = 0;    // CONFIRMED non-approve catalog action commits
 let clicksIssued = 0;      // irreversible 확인 commits ISSUED — the --max cap binds THIS (red-team CAP-COUNTS):
                            // a committed-but-uncertain doc must still consume budget, else clicks can exceed --max.
 // channel default = system Chrome; AQA_PW_CHANNEL overrides (e.g. the Docker image's bundled chromium).
@@ -222,7 +225,7 @@ try {
 				const info = clicked[d]; let stamped = null;
 				if (info && info.url) { try { await page.goto(info.url, { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(2000); stamped = (await datedCells(info.day)) > 0; } catch { stamped = null; } }
 				if (stamped === false) { audit(d, 'reconcile-uncertain', `left 대기 but no ${info.day} 승인 stamp — possibly 회수/반려 (manual check)`); log(`  RECONCILE ${d}: UNCERTAIN (departed, no stamp)`); }
-				else { audit(d, 'reconciled-approved', `left 대기${stamped ? ` + ${info.day} 승인 stamp` : ''} — 확인 committed before the crash`); markApprovedInDb(d); log(`  RECONCILE ${d}: APPROVED (left 대기${stamped ? ' + stamp' : ''})`); }
+				else { audit(d, 'reconciled-approved', `left 대기${stamped ? ` + ${info.day} completion stamp` : ''} — 확인 committed before the crash`); markActionInDb(d, successStatus); log(`  RECONCILE ${d}: ${successStatus.toUpperCase()} (left 대기${stamped ? ' + stamp' : ''})`); }
 			} catch (e) { audit(d, 'reconcile-error', String(e && e.message || e)); log(`  RECONCILE ${d}: error ${e && e.message}`); }
 		}
 	};
@@ -304,7 +307,7 @@ try {
 			const after = await countDoc(docId);
 			const cv = completionVerdict(stamped, after.total);
 			if (!cv.ok) throw new Error(cv.reason);
-			r.status = 'approved'; r.actor = actor; r.reason = `승인 stamp ${TODAY}${actor ? ` (${actor})` : ''} + left 대기`; approvedCount++; audit(docId, 'confirmed', `stamp ${TODAY}${actor ? ` | actor: ${actor}` : ''} + left 대기`); markApprovedInDb(docId);
+			r.status = successStatus; r.actor = actor; r.reason = `completion marker ${TODAY}${actor ? ` (${actor})` : ''} + left inbox`; if (successStatus === 'approved') approvedCount++; else completedCount++; audit(docId, 'confirmed', `status ${successStatus}; marker ${TODAY}${actor ? ` | actor: ${actor}` : ''} + left inbox`); markActionInDb(docId, successStatus);
 		} catch (e) {
 			if (r.status !== 'skipped' && r.status !== 'dry-ok') r.status = 'failed';
 			r.reason = String(e && e.message || e); audit(docId, r.status === 'skipped' ? 'skipped' : 'failed', r.reason); log(`${docId}: ${r.status} — ${r.reason}`);
@@ -312,7 +315,7 @@ try {
 		results.push(r);
 	}
 } finally { await browser.close(); }
-const summary = { live, dry, total: targets.length, approved: approvedCount, results };
+const summary = { action, live, dry, total: targets.length, approved: approvedCount, completed: approvedCount + completedCount, results };
 // AQA_JOB_RESULT= sentinel: the webui job machinery (webui/jobs.js) treats this prefix as the
 // AUTHORITATIVE structured result, so no other log line can clobber it before the gate reads it.
 console.log('AQA_JOB_RESULT=' + JSON.stringify(summary));

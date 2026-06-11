@@ -16,11 +16,10 @@ assert.equal(e.normalizeEngine(undefined), 'playwright', 'missing engine default
 assert.equal(e.normalizeEngine(''), 'playwright', 'empty engine defaults to playwright');
 assert.equal(e.DEFAULT_FLOW_ENGINE, 'playwright', 'missing flow.engine defaults to playwright');
 assert.equal(e.normalizeEngine('playwright'), 'playwright', 'playwright accepted');
-assert.throws(() => e.normalizeEngine('agent-browser'), /legacy engine "agent-browser" is no longer supported/, 'legacy engine rejected with migration hint');
 assert.throws(() => e.normalizeEngine('selenium'), /invalid engine/, 'invalid engine rejected');
 assert.equal(e.flowEngine({ name: 'old' }), 'playwright', 'old flow without engine is playwright');
 assert.equal(e.flowEngine({ engine: 'playwright' }), 'playwright', 'flow engine read');
-assert.throws(() => e.assertFlowEngine({ engine: 'agent-browser' }, 'playwright'), /legacy engine "agent-browser" is no longer supported/, 'legacy flow fails closed');
+assert.throws(() => e.assertFlowEngine({ engine: 'selenium' }, 'playwright'), /invalid engine/, 'unsupported flow engine fails closed');
 
 const h = dbm.openDb();
 dbm.registerSystem(h, { name: 'legacy', target_url: 'https://example.test/list' });

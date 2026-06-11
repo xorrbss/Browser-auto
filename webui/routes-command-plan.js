@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 import { classifyIntent, runQuery, runRecordsQuery } from './agent.js';
 import { PROBE_ROOT } from './spawn.js';
 import { listUrlFor, titlesFor } from './routes-approve.js';
-import { resolveAction } from '../approve/guards.mjs';
+import { actionSuccessStatus, resolveAction } from '../approve/guards.mjs';
 import { redactObject } from './redact.js';
 
 const require = createRequire(import.meta.url);
@@ -397,12 +397,18 @@ function storeJobCompletion(planId, stage, job, binding = {}) {
 		});
 		return;
 	}
-	// A LIVE run is 'succeeded' ONLY if it actually approved >=1 target and nothing failed. All-skipped
-	// (every guard tripped) or a kill-switch abort (one skipped result, then the leaf breaks) approves
+	// A LIVE run is 'succeeded' ONLY if it actually completed >=1 target and nothing failed. All-skipped
+	// (every guard tripped) or a kill-switch abort (one skipped result, then the leaf breaks) completes
 	// NOTHING and must be recorded as failed — otherwise the audit trail reports a no-op/abort as success.
 	const results = job.status === 'done' && job.result && Array.isArray(job.result.results) ? job.result.results : null;
-	const approvedN = results ? results.filter((r) => r.status === 'approved').length : 0;
-	const ok = !!(results && results.length > 0 && approvedN > 0 && results.every((r) => r.status === 'approved' || r.status === 'skipped'));
+	let expectedStatus = 'approved';
+	try {
+		const info = row && row.system && row.action ? actionInfo(row.system, row.action) : null;
+		if (info && info.ok) expectedStatus = actionSuccessStatus(row.action, info.actionBlock);
+	} catch {}
+	const okStatuses = new Set(['approved', 'completed', expectedStatus]);
+	const completedN = results ? results.filter((r) => okStatuses.has(r.status)).length : 0;
+	const ok = !!(results && results.length > 0 && completedN > 0 && results.every((r) => okStatuses.has(r.status) || r.status === 'skipped'));
 	const safeResult = redactObject(job.result);
 	dbCall((db) => {
 		dbm.updateCommandPlan(db, planId, { status: ok ? 'succeeded' : 'failed', job_id: job.id });
@@ -411,7 +417,7 @@ function storeJobCompletion(planId, stage, job, binding = {}) {
 			actor: ACTOR,
 			type: 'live_completed',
 			status: ok ? 'succeeded' : 'failed',
-			reason: ok ? null : (results && results.length > 0 && approvedN === 0 && results.every((r) => r.status === 'skipped') ? 'live_no_approval' : 'live_failed'),
+			reason: ok ? null : (results && results.length > 0 && completedN === 0 && results.every((r) => r.status === 'skipped') ? 'live_no_completion' : 'live_failed'),
 			job_id: job.id,
 			plan_hash: row.planHash,
 			target_set_hash: row.targetSetHash,

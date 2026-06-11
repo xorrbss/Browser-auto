@@ -55,19 +55,19 @@ Code gate:
 - [ ] Core unit/smoke tests pass from Git Bash.
 - [ ] Any new flow with `needs_review` fails compile until reviewed.
 - [ ] Any new Playwright flow declares `engine: "playwright"`.
-- [ ] Any legacy `engine: "agent-browser"` flow is either migrated or explicitly listed as out-of-scope debt.
+- [ ] Any non-Playwright flow is converted or explicitly kept out of the compiled gate.
 
 Current migration debt and fixture policy:
 
 - `flows/approval_office_hiworks_com_ibizsoftware_net_approval.flow.json` is migrated to
   `engine: "playwright"` and passes `node bin/play-flow.mjs --flow ... --validate-only`; keep it out
   of `run.sh` until the Playwright auth fixture is refreshed on the target operator host.
-- `flows/hiworks01.flow.json` stays explicit legacy debt until a human refreshes Playwright auth,
-  resolves every `needs_review` locator, and re-validates/compiles it. Do not add a compiled test
-  wrapper for it while it declares `engine: "agent-browser"` or has unresolved review steps.
+- `flows/hiworks01.flow.json` stays blocked until a human refreshes Playwright auth, resolves every
+  `needs_review` locator, and re-validates/compiles it. Do not add a compiled test wrapper while it
+  has unresolved review steps.
 - `flows/guest_samsungdisplay_com_argos_main_do.flow.json` is Playwright-scoped but not runnable while
   its iframe steps remain `needs_review`; keep it out of the run gate until those locators are reviewed.
-- Auth state, `.values.json`, DB files, artifacts, screenshots, and videos remain local fixtures only.
+- Auth state, `.values.json`, DB files, artifacts, screenshots, and videos remain local-only artifacts.
   Do not commit or expose them; use committed flows and recipes as the only reviewable source.
 
 RPA gate:
@@ -126,7 +126,7 @@ bash bin/probe-record.sh compile flows/<flow-name>.flow.json
 bash run.sh <flow-name>
 ```
 
-Legacy migration sequence:
+Flow cleanup sequence:
 
 ```bash
 # Edit the flow to set "engine": "playwright", then refresh Playwright auth.
@@ -254,7 +254,7 @@ Acceptance:
 
 P1:
 
-- Implement Playwright `open_record` or document it as legacy-only.
+- Implement Playwright `open_record` or document it as unsupported.
 - Add iframe/cross-origin recorder regression coverage for Playwright.
 - Make approval extraction duplicate-key handling fail closed.
 - Make pagination settle failures fail the sync or mark it incomplete, not partially green.

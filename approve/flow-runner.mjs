@@ -23,7 +23,7 @@ const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_STEP_TIMEOUT_MS = 20000;
 const MAX_STEP_TIMEOUT_MS = 10 * 60 * 1000;
 
-function isEffectfulStep(s) {
+export function isEffectfulStep(s) {
 	return (s && s.kind === 'find' && EFFECTFUL.has(s.action)) || (s && s.kind === 'open_record');
 }
 
@@ -165,6 +165,50 @@ export function irreversibleOptsFor(flow) {
 	if (flow && flow.reversible === true) return { reversible: true };
 	if (flow && Number.isInteger(flow.irreversibleAt) && hasEffectful) return { reversible: false, irreversibleAt: flow.irreversibleAt };
 	return { reversible: true };
+}
+
+const SAFE_FLOW_REF = /^flows\/[A-Za-z0-9_-]+\.flow\.json$/;
+
+// normalizeActionSteps(block): schema helper for recipe.actions.<name>.steps. Inline arrays can be
+// executed by runActionBlock; {from:"flows/<name>.flow.json"} is a safe committed flow reference that
+// a caller may load explicitly. Arbitrary paths are refused so an action recipe cannot escape flows/.
+export function normalizeActionSteps(block) {
+	const raw = block && block.steps;
+	if (Array.isArray(raw)) return { ok: true, source: 'inline', steps: raw };
+	const from = typeof raw === 'string' ? raw : raw && typeof raw === 'object' ? raw.from : '';
+	if (typeof from === 'string' && from.trim()) {
+		const ref = from.trim().replace(/\\/g, '/');
+		if (!SAFE_FLOW_REF.test(ref)) return { ok: false, reason: 'steps.from must be flows/<name>.flow.json' };
+		return { ok: true, source: 'flow-ref', from: ref, steps: null };
+	}
+	return { ok: false, reason: 'steps must be an inline array or {from:"flows/<name>.flow.json"}' };
+}
+
+function actionIrreversibleAt(block) {
+	if (Number.isInteger(block && block.irreversibleAt)) return block.irreversibleAt;
+	const irr = block && block.irreversible;
+	if (Number.isInteger(irr && irr.atIndex)) return irr.atIndex;
+	if (Number.isInteger(irr && irr.atStep)) return irr.atStep;
+	return -1;
+}
+
+export function irreversibleOptsForActionBlock(block) {
+	if (block && block.reversible === true) return { reversible: true };
+	if (block && (block.class === 'reversible-full' || block.riskClass === 'reversible-full')) return { reversible: true };
+	const at = actionIrreversibleAt(block);
+	return Number.isInteger(at) && at >= 0 ? { reversible: false, irreversibleAt: at } : { reversible: false, irreversibleAt: -1 };
+}
+
+// runActionBlock(page, block, opts): browser-free-testable executor for action blocks that carry inline
+// flow steps. This is the safe implementation scaffold for generic actions; callers that use flow refs
+// must load the referenced committed flow and pass its steps explicitly rather than letting recipes open
+// arbitrary files.
+export async function runActionBlock(page, block, opts = {}) {
+	const spec = normalizeActionSteps(block);
+	if (!spec.ok) throw new Error('invalid action steps: ' + spec.reason);
+	if (!Array.isArray(spec.steps)) throw new Error('action steps reference must be loaded by the caller before execution');
+	const gate = irreversibleOptsForActionBlock(block);
+	return runSteps(page, spec.steps, { ...gate, ...opts });
 }
 
 // runSteps(page, steps, opts): drive the validated step sequence. opts:

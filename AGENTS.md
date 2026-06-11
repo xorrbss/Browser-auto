@@ -75,10 +75,10 @@ video/screenshot pipeline — replay is headless Playwright.
 - Sensitive values stay out of committed flows. `{{input_N}}` tokens are filled from gitignored
   `flows/<name>.values.json`.
 
-## Legacy Flow Migration
+## Flow Engine Cleanup
 
-Old flows may contain `"engine": "agent-browser"`. Omitted `engine` now defaults to Playwright, though
-new flows may still set `"engine": "playwright"` explicitly for clarity. To migrate a legacy flow:
+Omitted `engine` now defaults to Playwright, though new flows may still set `"engine": "playwright"`
+explicitly for clarity. To clean up an older flow with any other explicit engine value:
 
 1. Add or change the flow to `"engine": "playwright"`.
 2. Re-run Playwright auth: `bash setup/auth.sh <app> <login-url> '<success-url>'`.
@@ -87,8 +87,7 @@ new flows may still set `"engine": "playwright"` explicitly for clarity. To migr
 4. Run `bash bin/probe-record.sh verify flows/<name>.flow.json`, resolve any `needs_review`, then compile.
 5. Run the compiled bash wrapper through `bash run.sh <name>` or `bash tests/<name>.test.sh`.
 
-If a legacy flow cannot be migrated yet, keep the engine declaration explicit and treat it as technical
-debt outside the Playwright-only path.
+If a flow cannot be converted yet, keep it outside the compiled Playwright test gate.
 
 ## Conventions
 

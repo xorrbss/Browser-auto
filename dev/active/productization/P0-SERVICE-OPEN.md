@@ -1,7 +1,7 @@
 # P0 Service Open Security Backlog
 
 Status: active backlog
-Date: 2026-06-10
+Date: 2026-06-11
 Scope: external-service readiness for the Browser-auto control plane, runner, noVNC/headed browser,
 job execution, artifacts, and tenant data boundaries.
 
@@ -32,10 +32,10 @@ Backlog:
 
 - [ ] Require login for every webui page, API route, noVNC route, artifact route, and job event stream.
 - [ ] Introduce tenant identity as a first-class field for users, systems, flows, jobs, artifacts, and audit events.
-- [ ] Add RBAC roles: owner, operator, viewer.
+- [ ] Add RBAC roles: owner, admin, operator, viewer.
 - [ ] Enforce route-level authorization for auth setup, record, verify, compile, run, approve, sync, enrich,
   artifact read, artifact delete, job cancel, tenant settings, and user management.
-- [ ] Require operator or owner for live/effectful actions; viewer is read-only.
+- [ ] Require operator, owner, or admin for live/effectful actions; viewer is read-only.
 - [ ] Add session expiration, logout, secure cookie settings, and SameSite protection for HTTPS deployment.
 - [ ] Make local development bypasses explicit, disabled by default in external mode, and visible in startup logs.
 
@@ -43,6 +43,8 @@ Acceptance:
 
 - [ ] Unauthenticated requests to every API, page, noVNC, artifact, and event route return 401 or redirect to login.
 - [ ] A viewer cannot start, record, approve, cancel, mutate settings, or read secret-bearing data.
+- [ ] Sensitive metadata GET/HEAD routes for secret migration, tenant deletion, release checklist,
+  audit detail, and admin/auth detail reject viewer and require operator, owner, or admin.
 - [ ] An operator cannot manage tenant users or view another tenant's systems, jobs, artifacts, or browser sessions.
 - [ ] Live/effectful routes reject any role weaker than operator.
 - [ ] Session expiry invalidates API, webui, noVNC, artifact, and event-stream access.
@@ -111,6 +113,12 @@ Acceptance:
 - [ ] noVNC is never passwordless or unauthenticated on an exposed interface.
 - [ ] Tests cover unauthorized websocket upgrade, cross-tenant websocket upgrade, expired session, and canceled-job access.
 
+Current contract status: external/service/durable production modes refuse passwordless noVNC unless
+`NOVNC_DISABLE=1` or `NOVNC_AUTH_BOUNDARY=authenticated-proxy` with TLS and tenant-session auth is
+declared. WebUI route stubs require authenticated owner/live-action context, deny cross-tenant,
+canceled, and expired sessions, and still return disabled-stub responses after authorization. Real
+proxied noVNC, browser/container isolation, and physical cleanup remain open blockers.
+
 ## P0-E Target Domain And Egress Allowlist
 
 Backlog:
@@ -154,6 +162,17 @@ Acceptance:
 - [ ] Audit records survive process restart and cannot be modified through normal service routes.
 - [ ] Tests cover restart reconciliation, duplicate cancel, failed child process, artifact hash recording, and audit readback.
 
+Current local hardening:
+
+- `WEBUI_EXTERNAL_MODE=1`, service mode, or `WEBUI_REQUIRE_DURABLE_JOBS=1` now makes enqueue fail closed
+  when the durable job row cannot be persisted, and required audit append failures keep the job out of
+  the in-memory queue or move a claimed pre-spawn job to an interrupted safe state.
+- Localhost/internal pilot mode keeps fail-soft journal behavior for operator debugging.
+- The audit webhook outbox has a deterministic fake-connector contract for runner-facing delivery:
+  envelopes are hash-only, target data is metadata-only, plaintext audit/runner credentials are
+  refused before delivery, retry/dead-letter states are classified, and unsafe worker config leaves
+  rows unchanged. This remains connector readiness, not production webhook delivery.
+
 ## P0-G Tenant Boundary And Data Placement
 
 Backlog:
@@ -175,14 +194,61 @@ Acceptance:
 - [ ] Tenant deletion removes or tombstones tenant-scoped jobs, artifacts, browser state, and secrets according to policy.
 - [ ] Tests prove path traversal, guessed IDs, shared cache keys, and artifact URL reuse cannot cross tenant boundaries.
 
+Current local hardening:
+
+- `bin/runner-worker.mjs` polls the existing runner API outbound-only, runs the claimed `commandSpec`,
+  heartbeats, observes cancel requests, redacts logs, and reports terminal state. The fixture test uses
+  a local test double and does not prove a deployed multi-runner production topology.
+
 ## P0-H Tests And Release Gate
+
+Current fixture-only gate:
+
+```bash
+bash tests/security-p0-gate.test.sh
+```
+
+This wrapper is deterministic and local-only. It runs the current runner policy/live-action gate
+checks, local Playwright smoke plus redirect/iframe/initial-navigation egress refusal, external-mode
+auth-provider/CORS/origin/CSRF checks, IdP claim/header mapping and HTTPS cookie-deployment preflights,
+authenticated request-context, session expiry/logout helpers, auth-summary metadata, artifact/static
+secret-boundary, encrypted-local and external-broker secret-store contracts, sanitized migration
+inventory/planning/approval manifests and route adapters, external-mode plaintext secret blocking,
+export/retention approval/expiry/signed-reference gates, tenant deletion route/tombstone metadata
+checks, target egress allowlist, resolver freshness, runtime resolver-policy adapter checks, DNS
+rebinding evidence, and control-plane blocking, noVNC entrypoint scoped-root and route-stub lifecycle
+boundary, job result/SSE redaction, durable runner identity/claim/heartbeat/cancel route dispatch,
+outbound runner-worker cancellation/log-redaction behavior, audit-outbox worker/scheduler coverage with local hash-chain and JSONL sink verification, RBAC,
+effectful-route session, redaction, flow-value metadata, release checklist API metadata handling, CI
+lane guard scripts, and readiness No-Go checks. It is not a complete P0 acceptance suite and does not
+contact live targets, use live auth, or execute live-action flows. It also does not prove a real
+production IdP, KMS/broker, noVNC proxy/browser isolation, platform DNS-at-connection defense,
+external multi-runner deployment, production audit webhook delivery, or operator-approved live/non-local
+acceptance.
+The audit webhook checks use deterministic fake connectors and secret-reference metadata only; a real
+tenant-scoped connector, production secret broker, and deployed runner topology are still required
+before this item can move from contract coverage to acceptance evidence.
+
+The WebUI readiness API now exposes this checklist as a machine-readable matrix. Every `P0-A` through
+`P0-H` section reports checklist counts plus a status of `implemented`, `contract-only`, or
+`external-blocked`. Matrix and release-checklist entries also report missing evidence with the required
+command or operator-owned evidence, current evidence, and blocker reason. The generated release
+checklist records required local commands, separates fixture-only CI lanes from the operator-only lane,
+embeds the static blocked-flow report, and remains No-Go while any section is contract-only, externally
+blocked, or any flow is blocked from compile/replay.
+
+Current static-flow readiness contract: `bin/blocked-flow-report.mjs` reports `needs_review` step
+indices and candidate summaries, `irreversibleAt` warnings, auth freshness (`missing`, `stale`,
+`ready`) from file metadata only, required allowlist/dry-run/owner gates, and compile/replay blocked
+reasons. It does not replay, read `.values.json`, read auth-state contents, expose auth-state paths, or
+inspect raw cookies. Live-action repair remains fail-closed while any `needs_review` step remains.
 
 Backlog:
 
 - [ ] Add an external-mode test profile that enables auth, RBAC, CSRF, tenant checks, egress enforcement,
   durable jobs, and audit assertions.
 - [ ] Add negative tests for every P0 acceptance item above.
-- [ ] Add fixture tenants: owner, operator, viewer, tenant A, tenant B, allowed target, blocked target, blocked metadata URL.
+- [ ] Add deterministic test tenants: owner, operator, viewer, tenant A, tenant B, allowed target, blocked target, blocked metadata URL.
 - [ ] Add security smoke command to CI after existing deterministic flow tests.
 - [ ] Add a release checklist that requires all P0 tests green and any exception signed off as a no-go blocker.
 

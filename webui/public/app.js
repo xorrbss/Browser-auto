@@ -2,6 +2,7 @@
 // Zero-dependency browser app over the existing localhost APIs.
 
 import { $, el, getJson, fmtTime, streamJob, cancelJob, stopJob } from './util.js';
+import { buildOpsDashboardModel } from './ops-dashboard.js';
 
 const DEFAULT_ENGINE = 'playwright';
 const FLOW_NAME_RE = /^[A-Za-z0-9_-]+$/;
@@ -11,6 +12,7 @@ const ROLE_PERMISSIONS = {
 	viewer: ['read'],
 	operator: ['read', 'sync', 'enrich', 'auth', 'record', 'verify', 'compile', 'run'],
 	owner: RBAC_PERMISSIONS,
+	admin: RBAC_PERMISSIONS,
 };
 
 const VIEW_TITLES = {
@@ -83,9 +85,9 @@ function safeText(value, fallback = '') {
 
 function statusKind(value) {
 	const s = String(value || '').toLowerCase();
-	if (['done', 'pass', 'passed', 'ready', 'ok', 'success', 'succeeded', 'approved', 'confirmed', 'synced', 'verified', 'dry-ok', 'implemented', 'enabled'].includes(s)) return 'success';
+	if (['done', 'pass', 'passed', 'ready', 'ok', 'success', 'succeeded', 'approved', 'confirmed', 'synced', 'verified', 'dry-ok', 'implemented', 'enabled', 'runnable-local'].includes(s)) return 'success';
 	if (['running', 'queued', 'pending', 'planned', 'dry-running', 'dry'].includes(s)) return 'info';
-	if (['needs implementation', 'needs-review', 'needs_review', 'missing-values', 'missing-auth', 'needs-compile', 'skipped', 'stale-auth', 'awaiting-confirmation', 'disabled', 'not queued', 'review-required', 'document-complete'].includes(s)) return 'warning';
+	if (['needs implementation', 'needs-review', 'needs_review', 'missing-values', 'missing-auth', 'needs-compile', 'skipped', 'stale-auth', 'awaiting-confirmation', 'disabled', 'not queued', 'review-required', 'document-complete', 'operator-only'].includes(s)) return 'warning';
 	if (['failed', 'fail', 'refused', 'blocked', 'cancelled', 'guard-failed', 'unavailable', 'no-go'].includes(s)) return 'danger';
 	return 'neutral';
 }
@@ -302,7 +304,7 @@ function permissionLabel(permissions) {
 
 function accessKind() {
 	if (!state.rbac?.available) return state.rbac?.error ? 'warning' : 'neutral';
-	if (state.rbac.role === 'owner') return 'success';
+	if (state.rbac.role === 'owner' || state.rbac.role === 'admin') return 'success';
 	if (state.rbac.role === 'operator') return 'info';
 	if (state.rbac.role === 'viewer') return 'warning';
 	return 'danger';
@@ -554,6 +556,7 @@ async function loadDiagnostics() {
 	]);
 	renderDiagnostics();
 	renderReadiness();
+	renderOpsDashboard();
 }
 
 async function loadAuthStates() {
@@ -601,6 +604,7 @@ function renderAll() {
 	renderApprovalState();
 	renderDiagnosticsLinks();
 	renderReadiness();
+	renderOpsDashboard();
 }
 
 function automationForm() {
@@ -978,6 +982,47 @@ function scenarioDisabledReason(flow) {
 	return { label: 'none', kind: 'success', detail: 'Run controls are enabled when the queue is idle.' };
 }
 
+function scenarioStaticAnalysis(flow) {
+	const analysis = flow?.blockedFlow || flow?.scenarioStatus?.staticAnalysis || null;
+	if (!analysis) {
+		return {
+			label: 'unavailable',
+			kind: 'neutral',
+			detail: 'No static blocked-flow analysis was returned for this flow.',
+		};
+	}
+	const blocking = analysis.summary?.blockingCount || 0;
+	const operatorOnly = analysis.summary?.operatorOnlyCount || 0;
+	const codes = (analysis.blockers || []).map((b) => b.code).filter(Boolean).slice(0, 4).join(', ') || 'none';
+	return {
+		label: analysis.status || 'unknown',
+		kind: analysis.status === 'blocked' ? 'danger' : analysis.status === 'operator-only' ? 'warning' : 'success',
+		detail: `${blocking} block / ${operatorOnly} operator-only; ${codes}`,
+	};
+}
+
+function blockerEvidenceText(evidence) {
+	if (!evidence || typeof evidence !== 'object') return '';
+	return Object.entries(evidence)
+		.map(([key, value]) => `${key}=${value}`)
+		.join(', ');
+}
+
+function renderBlockedFlowMetadata(flow) {
+	const analysis = flow?.blockedFlow || flow?.scenarioStatus?.staticAnalysis || null;
+	if (!analysis || !Array.isArray(analysis.blockers) || analysis.blockers.length === 0) return null;
+	const rows = analysis.blockers.map((blocker) => ({
+		code: blocker.code || '-',
+		severity: blocker.severity || '-',
+		message: blocker.message || '-',
+		evidence: blockerEvidenceText(blocker.evidence) || '-',
+	}));
+	return el('div', { class: 'review-block static-analysis-block' },
+		el('strong', {}, `Static blocked-flow analysis: ${analysis.status || 'unknown'}`),
+		renderGenericTable(rows, ['code', 'severity', 'message', 'evidence'], 'Static blocked-flow blockers'),
+	);
+}
+
 function statusDetailNode(detail) {
 	if (!detail) return null;
 	return detail.nodeType ? detail : document.createTextNode(String(detail));
@@ -1005,7 +1050,9 @@ function renderScenarioStatus(flow) {
 	const policy = scenarioPolicyBlock(flow, liveRisk);
 	const failure = scenarioFailureStatus(status);
 	const disabled = scenarioDisabledReason(flow);
+	const staticAnalysis = scenarioStaticAnalysis(flow);
 	return el('div', { class: 'scenario-status-grid' },
+		scenarioStatusItem('static analysis', staticAnalysis.label, staticAnalysis.kind, staticAnalysis.detail),
 		scenarioStatusItem('needs_review', String(status.needsReview || 0), status.needsReview ? 'warning' : 'success'),
 		scenarioStatusItem('missing values', String(missingValues.length), missingValues.length ? 'warning' : 'success', missingValues.join(', ')),
 		scenarioStatusItem('compiled', flow.compiled ? 'fresh' : 'stale/missing', flow.compiled ? 'success' : 'warning'),
@@ -1266,6 +1313,7 @@ function renderAutomationFlow(flow) {
 	setChildren(box,
 		summary,
 		renderScenarioStatus(flow),
+		renderBlockedFlowMetadata(flow),
 		reviewNotice,
 		el('div', { class: 'flow-body' }, steps),
 		...reviewBlocks,
@@ -2454,6 +2502,7 @@ function renderDiagnosticsLinks() {
 		['감사 API', '/api/approve/audit?limit=300', '추가 전용 결재 리프 감사'],
 		['실행 API', '/api/runs', '과거 실행 리포트'],
 		['플로우 API', '/api/flows', '녹화된 선언적 플로우'],
+		['Blocked Flow API', '/api/flows/blocked-report', 'Static analysis only: committed flow JSON, no replay'],
 		['P0 Readiness API', '/api/readiness', '문서 체크리스트 기반 No-Go 상태'],
 		['RBAC API', state.rbac?.endpoint || '/api/rbac', '현재 actor, role, permission 상태'],
 	];
@@ -2482,6 +2531,7 @@ function renderDiagnostics() {
 		{ area: '작업 실패 신호', count: qm.unstableCount || 0, state: queueSignalState, endpoint: '/api/queue' },
 		{ area: '감사 리포트', count: state.auditTotal ?? '-', state: auditSummary.latestAt ? `latest ${fmtTime(auditSummary.latestAt)}` : '레코드 없음', endpoint: '/api/approve/audit?limit=300' },
 		{ area: '플로우', count: state.flows.length, state: state.flows.some((f) => f.needsReview) ? '검토 필요' : '로드됨', endpoint: '/api/flows' },
+		{ area: 'Blocked flows', count: state.readiness?.blockedFlows?.totals?.blocked ?? '-', state: state.readiness?.blockedFlows?.decision || 'unknown', endpoint: '/api/flows/blocked-report' },
 		{ area: '인증 상태', count: state.auth.length, state: state.auth.length ? state.auth.join(', ') : '없음', endpoint: '/api/auth' },
 		{ area: '권한', count: state.rbac?.available ? permissionSummary().split(',').filter(Boolean).length : '-', state: state.rbac?.available ? `${state.rbac.actorId} / ${state.rbac.role || 'unknown'}` : 'API 대기', endpoint: state.rbac?.endpoint || '/api/rbac' },
 		{ area: 'P0 readiness', count: state.readiness?.open ?? '-', state: state.readiness?.decision || 'No-Go', endpoint: '/api/readiness' },
@@ -2502,10 +2552,12 @@ function renderReadiness() {
 		return;
 	}
 	const policy = r.artifactPolicy || {};
+	const blockedFlowTotals = r.blockedFlows?.totals || {};
 	setChildren(summary,
 		el('div', { class: 'metric-grid' },
 			metric('Decision', r.decision || 'No-Go', '문서 체크리스트 상태'),
 			metric('Open Items', r.open ?? '-', `${r.checked || 0}/${r.total || 0} checked`),
+			metric('Blocked Flows', blockedFlowTotals.blocked ?? 0, `${blockedFlowTotals.operatorOnly || 0} operator-only / ${blockedFlowTotals.total || 0} total`),
 			metric('Document', r.document || '-', r.valid ? 'loaded' : 'unavailable'),
 			metric('Raw Export', policy.rawExport || 'blocked', policy.mode || 'read-only metadata'),
 		),
@@ -2518,7 +2570,45 @@ function renderReadiness() {
 		open: s.open,
 		state: s.state,
 	}));
-	setChildren(table, renderGenericTable(rows, ['section', 'title', 'checked', 'open', 'state'], 'P0 readiness'));
+	const flowRows = (r.blockedFlows?.flows || [])
+		.filter((flow) => flow.status !== 'runnable-local')
+		.map((flow) => ({
+			flow: flow.name,
+			status: flow.status,
+			blockers: flow.summary?.blockingCount || 0,
+			operator_only: flow.summary?.operatorOnlyCount || 0,
+			codes: (flow.blockers || []).map((b) => b.code).filter(Boolean).join(', ') || 'none',
+		}));
+	setChildren(table,
+		renderGenericTable(rows, ['section', 'title', 'checked', 'open', 'state'], 'P0 readiness'),
+		flowRows.length
+			? renderGenericTable(flowRows, ['flow', 'status', 'blockers', 'operator_only', 'codes'], 'Static blocked flows')
+			: empty('No blocked or operator-only flows reported by static analysis.'),
+	);
+}
+
+function renderOpsDashboard() {
+	const summary = $('#ops-dashboard-summary');
+	const p0 = $('#ops-dashboard-p0');
+	const lanes = $('#ops-dashboard-lanes');
+	const blockers = $('#ops-dashboard-blockers');
+	if (!summary || !p0 || !lanes || !blockers) return;
+	const model = buildOpsDashboardModel({
+		readiness: state.readiness,
+		queue: state.queue,
+		auditSummary: state.auditSummary,
+		rbac: state.rbac,
+	});
+	setChildren(summary,
+		el('div', { class: 'metric-grid ops-metric-grid' },
+			...model.tiles.map((tile) => metric(tile.label, tile.value, tile.detail)),
+		),
+	);
+	setChildren(p0, renderGenericTable(model.p0Rows, ['section', 'status', 'open', 'local', 'contract', 'blocked'], 'P0 operations matrix'));
+	setChildren(lanes, renderGenericTable(model.laneRows, ['lane', 'ci', 'live', 'command'], 'CI lane policy'));
+	setChildren(blockers, model.blockerRows.length
+		? renderGenericTable(model.blockerRows, ['area', 'reason'], 'Release blockers')
+		: empty('No release blockers reported by the readiness API.'));
 }
 
 function renderGenericTable(rows, columns, label) {

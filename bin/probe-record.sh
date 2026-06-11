@@ -33,24 +33,15 @@ flow_engine() {
 	local flow="$1" engine
 	engine="$(jq -r '.engine // "playwright"' "$flow")"
 	case "$engine" in
-		playwright|agent-browser) printf '%s' "$engine" ;;
-		*) echo "[probe] invalid flow.engine '$engine' in $flow (expected playwright; agent-browser is legacy)" >&2; exit 2 ;;
+		playwright) printf '%s' "$engine" ;;
+		*) echo "[probe] invalid flow.engine '$engine' in $flow (expected playwright)" >&2; exit 2 ;;
 	esac
-}
-
-refuse_legacy_engine() {
-	local mode="$1" flow="$2"
-	echo "[probe] $mode refused: flow.engine=\"agent-browser\" is legacy and has no runtime in the Playwright-only runner." >&2
-	echo "[probe] migrate by setting flow.engine=\"playwright\" (or omit engine for the Playwright default), then run:" >&2
-	echo "[probe]   node bin/play-flow.mjs --flow $flow --validate-only" >&2
-	echo "[probe]   bash bin/probe-record.sh verify $flow" >&2
-	exit 1
 }
 
 compile() {
 	local flow="$1"
 	[ -s "$flow" ] || { echo "[probe] no such flow: $flow" >&2; exit 1; }
-	[ "$(flow_engine "$flow")" = "playwright" ] || refuse_legacy_engine compile "$flow"
+	flow_engine "$flow" >/dev/null
 
 	local name out
 	name="$(jq -r '.name // empty' "$flow")"
@@ -120,7 +111,7 @@ capture() {
 			--stop-file) [ $# -ge 2 ] || usage; stopfile="$2"; shift 2 ;;
 			--engine)
 				[ $# -ge 2 ] || usage
-				[ "$2" = "playwright" ] || { echo "[probe] capture refused: agent-browser is legacy; use Playwright." >&2; exit 1; }
+				[ "$2" = "playwright" ] || { echo "[probe] capture refused: only Playwright is supported." >&2; exit 1; }
 				shift 2 ;;
 			*)
 				if [ -z "$name" ]; then name="$1"; shift
@@ -141,7 +132,7 @@ capture() {
 verify_dispatch() {
 	local flow="$1"
 	[ -s "$flow" ] || { echo "[probe] no such flow: $flow" >&2; exit 1; }
-	[ "$(flow_engine "$flow")" = "playwright" ] || refuse_legacy_engine verify "$flow"
+	flow_engine "$flow" >/dev/null
 	exec node "$PROBE_ROOT/bin/play-flow.mjs" --flow "$flow" --verify
 }
 

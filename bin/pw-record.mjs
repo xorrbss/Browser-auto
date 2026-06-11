@@ -169,7 +169,7 @@ async function main() {
 		const ctx = await browser.newContext(contextOpts);
 		await ctx.addInitScript({ path: capjs });
 		const page = await ctx.newPage();
-		// FAIL-LOUD SCOPE GUARDS (parity with the deleted agent-browser capture watcher): a popup/new tab or a
+		// FAIL-LOUD SCOPE GUARDS: a popup/new tab or a
 		// mid-recording top-level cross-origin navigation puts journey events where this recorder cannot drain
 		// them (a popup's own sessionStorage / a foreign origin's partition), so a silently-incomplete flow
 		// would be written. Out of scope ⇒ record the violation, stop waiting, REFUSE to write the flow.

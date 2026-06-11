@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { PROBE_ROOT } from './spawn.js';
-import { redactObject } from './redact.js';
+import { redactObject, redactText } from './redact.js';
 
 // lib/db.js (CJS): the leaf binds approval to a per-doc TITLE re-verified on the live detail (content guard;
 // red-team CRITICAL F1). The title source is REGISTRY-AWARE (P2): the legacy 결재 path reads the `approvals`
@@ -27,13 +27,14 @@ import { buildPreviewRecipe, listCaptureFlows, sweepOldPreviews, assembleActionB
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const recipeFor = (app) => path.join(PROBE_ROOT, 'recipes', `${app}.json`);
+const approveAuditPath = () => process.env.WEBUI_APPROVE_AUDIT_PATH || path.join(PROBE_ROOT, 'data', 'approve-audit.jsonl');
 // Auth state is resolved through lib/engine.js: canonical fixtures/auth/playwright/<app>.state.json first,
 // then the legacy approve/<app>.pw-state.json compat fallback — so a login from EITHER webui button
 // (시스템 인증 or 결재 로그인) satisfies the approve pipeline.
 const stateFor = (app) => resolveAuthStatePath(PROBE_ROOT, 'playwright', app);
 
 function bumpCount(map, key) {
-	const k = String(key || 'unknown').trim() || 'unknown';
+	const k = redactText(String(key || 'unknown').trim() || 'unknown', 'unknown', 120) || 'unknown';
 	map[k] = (map[k] || 0) + 1;
 }
 
@@ -62,7 +63,7 @@ export function summarizeAuditEntries(entries, malformed = 0) {
 		bumpCount(byStage, entry.stage);
 		bumpCount(byMode, auditMode(entry));
 		bumpCount(byStatus, auditStatus(entry));
-		const at = String(entry.at || '').trim();
+		const at = redactText(String(entry.at || '').trim(), '', 120);
 		if (at && (!latestAt || at > latestAt)) latestAt = at;
 	}
 	return {
@@ -191,8 +192,8 @@ function _stageCapture(bodyJson, { live }) {
 	return { ok: true, args, startedAt: new Date().toISOString(), label: `CAPTURE ${live ? 'LIVE-VERIFY' : 'dry-run'} ${action} ${app} (${docId})` };
 }
 
-// approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) -> handled?
-export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
+// approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf, gitBash }) -> handled?
+export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf, gitBash }) {
 	// KILL-SWITCH: write data/approve-STOP — a running approve leaf stops BEFORE its next doc (red-team
 	// F-KILLSWITCH-UNWIRED). Each new run clears it at the leaf's startup, so this only halts the live batch.
 	if (p === '/api/approve/stop') {
@@ -200,11 +201,10 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 		catch (e) { sendJson(res, 500, { error: 'could not write kill-switch: ' + (e && e.message) }); }
 		return true;
 	}
-	// 결재 로그인 (Playwright): spawn the headed one-time login (approve/auth-pw.mjs) from the webui instead of
+	// 결재 로그인 (Playwright): spawn the headed one-time login from the webui instead of
 	// the terminal — closes the last CLI step in the operator flow. A real Chrome window opens on the operator's
 	// desktop for ID/비번/OTP entry (that human gesture is irreducible — credentials are NOT typed into the webui);
-	// on reaching the success URL the leaf saves the CANONICAL fixtures/auth/playwright/<app>.state.json (the
-	// same storageState every Playwright driver resolves via lib/engine.js).
+	// setup/auth.sh saves the state to local pilot storage or imports it into the configured secret backend.
 	// login_url/success_url come from the registry (generic) or approvals.config (결재).
 	if (p === '/api/approve/login') {
 		const app = String(bodyJson.app || '').trim();
@@ -214,7 +214,10 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 		const needle = successNeedle(coords.successUrl);
 		if (!needle) { sendJson(res, 400, { error: `success URL for '${app}' has no literal segment to match on` }); return true; }
 		const outFile = playwrightAuthRel(app);
-		const job = enqueue({ kind: 'auth', label: `결재 로그인 ${app} (Playwright)`, spawnFn: () => nodeLeaf('approve/auth-pw.mjs', [coords.loginUrl, needle, outFile]) });
+		const spawnFn = gitBash
+			? () => gitBash('setup/auth.sh', [app, coords.loginUrl, coords.successUrl])
+			: () => nodeLeaf('approve/auth-pw.mjs', [coords.loginUrl, needle, outFile]);
+		const job = enqueue({ kind: 'auth', label: `결재 로그인 ${app} (Playwright)`, spawnFn });
 		sendJson(res, 202, { job });
 		return true;
 	}
@@ -281,7 +284,7 @@ export function approvePost(p, bodyJson, res, { sendJson, enqueue, nodeLeaf }) {
 			fs.writeFileSync(tmp, JSON.stringify(r.recipe, null, 2) + '\n', { mode: 0o644 });
 			fs.renameSync(tmp, recipeFor(app)); // atomic replace
 		} catch (e) { sendJson(res, 500, { error: 'could not write recipe: ' + (e && e.message) }); return true; }
-		try { fs.appendFileSync(path.join(PROBE_ROOT, 'data', 'approve-audit.jsonl'), JSON.stringify({ at: meta.date, doc_id: '-', stage: 'capture-enabled', action, by: meta.by }) + '\n'); } catch {}
+		try { fs.appendFileSync(approveAuditPath(), JSON.stringify({ at: meta.date, doc_id: '-', stage: 'capture-enabled', action, by: meta.by }) + '\n'); } catch {}
 		sendJson(res, 200, { ok: true, action, enabled: true });
 		return true;
 	}
@@ -355,7 +358,7 @@ export function approveGet(p, url, res, { sendJson }) {
 	// Audit viewer: the append-only JSONL trail (data/approve-audit.jsonl) the leaf fsyncs every stage to —
 	// the source of truth for what was requested/clicked/confirmed/skipped/reconciled. Newest first.
 	if (p === '/api/approve/audit') {
-		const file = path.join(PROBE_ROOT, 'data', 'approve-audit.jsonl');
+		const file = approveAuditPath();
 		const entries = [];
 		let malformed = 0;
 		try { for (const line of fs.readFileSync(file, 'utf8').split('\n')) { if (!line.trim()) continue; try { entries.push(JSON.parse(line)); } catch { malformed++; /* skip a torn/partial line */ } } }

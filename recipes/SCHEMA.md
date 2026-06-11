@@ -46,6 +46,34 @@ released the per-item-human gate (memory
 deterministic guards in this block are the SOLE safety and every one **fails closed**. Read
 `dev/active/phase2-guarded-approve/` before changing it.
 
+### Generic RPA action catalog
+
+`actions` is a catalog map, not an open-ended command surface. The built-in catalog actions are:
+
+| action | executor | success status | required safety envelope |
+|---|---|---|---|
+| `approve` | `approve-modal-v1` | `approved` | reviewed target set, dry-run, human confirmation, positive completion marker, commit cap, audit. |
+| `reject` | `approve-modal-v1` | `rejected` | same decision-modal shape as approve; must be captured per system/form before enabling. |
+| `update` | `flow-runner` | `updated` | recorded `steps`, `irreversibleAt` unless explicitly reversible, positive completion marker, cap, audit. |
+| `upload` | `flow-runner` | `uploaded` | recorded `steps`, declared file token/input, positive completion marker, cap, audit. |
+| `download` | `flow-runner` | `downloaded` | recorded `steps`, artifact/download gate metadata, completion marker, cap, audit. |
+| `export` | `flow-runner` | `exported` | recorded `steps`, sanitized-export/artifact policy metadata, completion marker, cap, audit. |
+
+Unknown action names are refused unless the block declares a catalog `type`/`actionType`/`catalogAction`.
+Names prefixed with `approve_` or `reject_` inherit the `approve`/`reject` schema for per-form captures.
+`enabled:false` is the correct placeholder for an uncaptured action and is always fail-closed; it may appear in
+committed recipes to document planned coverage, but it cannot run. A captured action must include either a
+legacy `success` marker (for the decision-modal path) or a structured `completion` marker. Absence-only
+completion is not sufficient for live actions.
+
+Flow-backed actions use either inline `steps` (the `flows/*.flow.json` step model) or
+`"steps": { "from": "flows/<name>.flow.json" }`. The path form is only a safe reference; a caller must load the
+committed flow explicitly. Path traversal, arbitrary files, `needs_review`, malformed locators, missing
+`irreversibleAt`, and non-effectful irreversible markers are refused before replay.
+`approve/approve-run.mjs` currently executes only `approve-modal-v1` decision-modal actions (`approve` and
+captured `reject`/`approve_*`/`reject_*` variants). Flow-backed `update`/`upload`/`download`/`export` actions are
+catalog schema plus browser-free runner scaffold until a route explicitly loads their recorded steps.
+
 | Field | Purpose |
 |---|---|
 | `button` `{role,name,exact}` | the approve affordance that opens the decision modal (Hiworks: `결재`). count==1 or abort. |

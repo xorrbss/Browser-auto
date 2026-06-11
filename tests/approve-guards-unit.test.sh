@@ -64,11 +64,13 @@ eq(completionVerdict(true, -1).ok, false, "uncertain list ⇒ fail-closed");
 eq(completionVerdict(false, -1).ok, false, "uncertain list ⇒ fail-closed");
 
 // --- resolveAction: canonical actions.<name> + legacy fallback, FAIL-CLOSED on missing/disabled (Step B) ---
-assert(resolveAction({ actions: { approve: { button: 1 } } }, "approve").ok === true, "actions.approve resolves");
-assert(resolveAction({ actions: { approve: { button: 1 } } }, "approve").action.button === 1, "returns the action block");
-assert(resolveAction({ approve: { button: 1 } }, "approve").ok === true, "legacy top-level approve resolves (fallback)");
+const approveBlock = { button: { name: "Approve" }, decision: { name: "Yes" }, confirm: { name: "OK" }, success: "leftInbox" };
+assert(resolveAction({ actions: { approve: approveBlock } }, "approve").ok === true, "actions.approve resolves");
+assert(resolveAction({ actions: { approve: approveBlock } }, "approve").action.button.name === "Approve", "returns the action block");
+assert(resolveAction({ approve: approveBlock }, "approve").ok === true, "legacy top-level approve resolves (fallback)");
 assert(resolveAction({ actions: { reject: { enabled: false } } }, "reject").ok === false, "enabled:false ⇒ refused (uncaptured)");
-assert(resolveAction({ actions: { x: { enabled: true } } }, "x").ok === true, "enabled:true explicit ⇒ ok");
+assert(resolveAction({ actions: { update: { type: "update", steps: [{ kind: "find", by: "role", value: "button", name: "Save", action: "click" }], irreversibleAt: 0, completion: { kind: "text", value: "Saved" } } } }, "update").ok === true, "catalog update action ⇒ ok");
+assert(resolveAction({ actions: { x: { enabled: true } } }, "x").ok === false, "unknown enabled action ⇒ refused");
 assert(resolveAction({ actions: { approve: {} } }, "submit").ok === false, "unknown action ⇒ refused");
 assert(resolveAction({}, "reject").ok === false, "no actions + non-approve ⇒ refused (no legacy)");
 assert(resolveAction({}, "approve").ok === false, "no actions + no legacy approve ⇒ refused");

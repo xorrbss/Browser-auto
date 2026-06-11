@@ -64,6 +64,10 @@ built-in `node:sqlite`.
 - `GET /api/runs`: run summaries from `report.json`.
 - `GET /api/runs/:id`: per-test status, duration, and artifact availability.
 - `GET /artifacts/<path>`: static artifact serving under `artifacts/`.
+- `GET /api/flows/blocked-report`: structured output from `bin/blocked-flow-report.mjs`; static
+  analysis of committed `flows/*.flow.json` only, with no replay, no auth-state contents,
+  no `.values.json`, and no artifact reads. Auth freshness is metadata-only.
+- `GET /api/readiness`: P0 readiness plus the same blocked-flow metadata under `blockedFlows`.
 - `POST /api/auth`: enqueue headed Playwright auth (`{ app, loginUrl, successUrl }`).
 - `POST /api/record`: enqueue Playwright capture (`{ name, url, app?, seconds? }`).
 - `POST /api/verify`: enqueue Playwright verify-repair (`{ name }`).

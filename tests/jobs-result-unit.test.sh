@@ -2,8 +2,10 @@
 # Browser-free unit tests for structured webui job results.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
-( cd "$DIR" && node --input-type=module - <<'NODE'
+( cd "$DIR" && AQA_DB_PATH="$TMP/jobs.db" WEBUI_JOB_JOURNAL="$TMP/jobs.jsonl" node --input-type=module - <<'NODE'
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
@@ -62,6 +64,7 @@ let jr = jobResult(job.id);
 assert(jr.status === 'done', 'structured job finished');
 assert(jr.meta.commandId === 'cmd_test', 'job meta is public');
 assert(jr.result.results[0].status === 'dry-ok', 'final JSON summary captured as result');
+assert(jr.workerTenantId === 'local' && jr.workerDeploymentId === 'local', 'job result exposes local runner binding metadata');
 
 job = enqueue({
 	kind: 'unit',
@@ -71,6 +74,31 @@ job = enqueue({
 await waitDone(job.id);
 jr = jobResult(job.id);
 assert(jr.result.status === 'ok' && jr.result.value === 3, 'AQA_JOB_RESULT sentinel captured');
+
+job = enqueue({
+	kind: 'unit',
+	label: 'result-redaction',
+	spawnFn: () => spawn(process.execPath, ['-e', `
+		console.log("AQA_JOB_RESULT=" + JSON.stringify({
+			status: "failed",
+			token: "result_token_secret",
+			cookie: "sid=result_cookie_secret",
+			otp: "123456",
+			url: "https://example.test/path?token=result_url_secret",
+			message: "Bearer result_bearer_secret password=result_password_secret",
+			path: "fixtures/auth/playwright/job.state.json"
+		}));
+		process.exit(3);
+	`]),
+});
+await waitDone(job.id);
+jr = jobResult(job.id);
+const jobResultJson = JSON.stringify(jr);
+for (const raw of ['result_token_secret', 'result_cookie_secret', '123456', 'result_url_secret', 'result_bearer_secret', 'result_password_secret', 'job.state.json']) {
+	assert(!jobResultJson.includes(raw), `job result readback redacts ${raw}`);
+	assert(!replayStream(job.id).includes(raw), `SSE replay redacts ${raw}`);
+}
+assert(jobResultJson.includes('[redacted]') || jobResultJson.includes('[REDACTED_SECRET_PATH]'), 'job result includes redaction markers');
 
 job = enqueue({
 	kind: 'unit',

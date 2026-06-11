@@ -19,8 +19,16 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 	AQA_DB_PATH="$TMP/t.db" NODE_NO_WARNINGS=1 node <<'NODE'
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
+const { DatabaseSync } = require('node:sqlite');
 const d = require('./lib/db.js');
 const h = d.openDb();
+
+function pkColumns(db, table) {
+	return db.prepare(`PRAGMA table_info(${table})`).all()
+		.filter((r) => r.pk > 0)
+		.sort((a, b) => a.pk - b.pk)
+		.map((r) => r.name);
+}
 
 // systems CRUD + recipe round-trips as an object
 d.registerSystem(h, {
@@ -111,18 +119,126 @@ d.deleteSystem(h, 'sys');
 assert.equal(d.getSystem(h, 'sys'), undefined, 'system deleted');
 assert.equal(d.countRecords(h, 'sys'), 0, 'delete cascades records');
 
-// legacy engine normalization: a pre-migration row stored with engine='agent-browser' (written
-// before the Playwright-only cutover) must not brick listSystems()/getSystem() — openDb's
-// _migrateSystemsEngine normalizes it to NULL (=> DEFAULT_ENGINE) one time. A second openDb on
-// the same file (WAL allows concurrent connections) plays the "upgraded deployment reopens" role.
+// tenant-scoped systems/records: identical system names in different tenants must not collide,
+// and scoped helpers must not read or delete another tenant's rows.
+const tenantA = { tenantId: 'tenant_a' };
+const tenantB = { tenantId: 'tenant_b' };
+d.registerSystem(h, {
+	tenantId: 'tenant_a',
+	name: 'shared',
+	label: 'Tenant A system',
+	recipe: { collection: { name: 'Rows' }, key: 'k', columns: { k: 'K', title: 'Title' } },
+});
+d.registerSystem(h, {
+	tenantId: 'tenant_b',
+	name: 'shared',
+	label: 'Tenant B system',
+	recipe: { collection: { name: 'Rows' }, key: 'k', columns: { k: 'K', title: 'Title' } },
+});
+d.upsertRecords(h, 'shared', [{ key: 'A1', data: { title: 'tenant A only' } }], undefined, tenantA);
+d.upsertRecords(h, 'shared', [{ key: 'B1', data: { title: 'tenant B only' } }], undefined, tenantB);
+assert.equal(d.getSystem(h, 'shared', tenantA).label, 'Tenant A system', 'tenant A reads its system row');
+assert.equal(d.getSystem(h, 'shared', tenantB).label, 'Tenant B system', 'tenant B reads its system row');
+assert.equal(d.listSystems(h, tenantA).length, 1, 'tenant A list is scoped');
+assert.equal(d.queryRecords(h, 'shared', { tenantId: 'tenant_a' }).length, 1, 'tenant A record query is scoped');
+assert.equal(d.getRecord(h, 'shared', 'B1', tenantA), undefined, 'tenant A cannot read tenant B record key');
+d.deleteSystem(h, 'shared', tenantA);
+assert.equal(d.getSystem(h, 'shared', tenantA), undefined, 'tenant A delete removes only tenant A system');
+assert.equal(d.getSystem(h, 'shared', tenantB).label, 'Tenant B system', 'tenant A delete leaves tenant B system');
+assert.equal(d.getRecord(h, 'shared', 'B1', tenantB).data.title, 'tenant B only', 'tenant B record survives tenant A delete');
+d.deleteSystem(h, 'shared', tenantB);
+
+// migration from legacy single-tenant primary keys: old DBs had systems(name PK)
+// and records(system,key PK), so adding tenant_id alone was not enough to allow
+// duplicate system/record keys in different tenants. openDb must rebuild those
+// tables with tenant-scoped composite primary keys while preserving old local rows.
+const legacyPath = process.env.AQA_DB_PATH.replace(/t\.db$/, 'legacy-pk.db');
+const legacySeed = new DatabaseSync(legacyPath);
+legacySeed.exec(`
+	CREATE TABLE systems (
+		name        TEXT PRIMARY KEY,
+		label       TEXT,
+		engine      TEXT,
+		login_url   TEXT,
+		success_url TEXT,
+		target_url  TEXT,
+		recipe      TEXT,
+		created_at  TEXT
+	);
+	CREATE TABLE records (
+		system     TEXT NOT NULL,
+		key        TEXT NOT NULL,
+		data       TEXT,
+		summary    TEXT,
+		status     TEXT NOT NULL DEFAULT 'fetched',
+		fetched_at TEXT NOT NULL,
+		PRIMARY KEY (system, key)
+	);
+	INSERT INTO systems (name, label, engine, created_at)
+	VALUES ('oldsys', 'Old local row', 'playwright', '2026-01-01T00:00:00Z');
+	INSERT INTO records (system, key, data, summary, fetched_at)
+	VALUES ('oldsys', 'oldkey', '{"title":"old local record"}', 'old summary', '2026-01-01T00:00:00Z');
+`);
+legacySeed.close();
+const legacyDb = d.openDb(legacyPath);
+assert.deepEqual(pkColumns(legacyDb, 'systems'), ['tenant_id', 'name'], 'legacy systems table rebuilt with tenant-scoped PK');
+assert.deepEqual(pkColumns(legacyDb, 'records'), ['tenant_id', 'system', 'key'], 'legacy records table rebuilt with tenant-scoped PK');
+assert.equal(d.getSystem(legacyDb, 'oldsys').label, 'Old local row', 'legacy local system row preserved');
+assert.equal(d.getRecord(legacyDb, 'oldsys', 'oldkey').data.title, 'old local record', 'legacy local record row preserved');
+d.registerSystem(legacyDb, { tenantId: 'legacy_a', name: 'shared-legacy', label: 'Legacy tenant A' });
+d.registerSystem(legacyDb, { tenantId: 'legacy_b', name: 'shared-legacy', label: 'Legacy tenant B' });
+d.upsertRecords(legacyDb, 'shared-legacy', [{ key: 'same-key', data: { title: 'legacy A record' } }], undefined, { tenantId: 'legacy_a' });
+d.upsertRecords(legacyDb, 'shared-legacy', [{ key: 'same-key', data: { title: 'legacy B record' } }], undefined, { tenantId: 'legacy_b' });
+assert.equal(d.getSystem(legacyDb, 'shared-legacy', { tenantId: 'legacy_a' }).label, 'Legacy tenant A', 'migrated DB allows duplicate system name in tenant A');
+assert.equal(d.getSystem(legacyDb, 'shared-legacy', { tenantId: 'legacy_b' }).label, 'Legacy tenant B', 'migrated DB allows duplicate system name in tenant B');
+assert.equal(d.getRecord(legacyDb, 'shared-legacy', 'same-key', { tenantId: 'legacy_a' }).data.title, 'legacy A record', 'migrated DB allows duplicate record key in tenant A');
+assert.equal(d.getRecord(legacyDb, 'shared-legacy', 'same-key', { tenantId: 'legacy_b' }).data.title, 'legacy B record', 'migrated DB allows duplicate record key in tenant B');
+d.closeDb(legacyDb);
+
+// durable WebUI metadata: job reads and artifact metadata are tenant-scoped.
+d.saveWebuiJob(h, {
+	id: 'job-tenant-a',
+	tenantId: 'tenant_a',
+	actorId: 'actor_a',
+	kind: 'unit',
+	label: 'tenant A job',
+	status: 'queued',
+	command: { schemaVersion: 1, runner: 'gitBash', script: 'run.sh', args: ['unit'] },
+	resumable: true,
+	enqueuedAt: Date.now(),
+});
+assert.equal(d.getWebuiJob(h, 'job-tenant-a', tenantA).actorId, 'actor_a', 'tenant A can read its durable job');
+assert.equal(d.getWebuiJob(h, 'job-tenant-a', tenantB), null, 'tenant B cannot read tenant A durable job');
+const artifact = d.saveWebuiArtifact(h, {
+	tenantId: 'tenant_a',
+	actorId: 'actor_a',
+	jobId: 'job-tenant-a',
+	runId: '20990101-010101-tenant',
+	path: 'artifacts/20990101-010101-tenant/report.json',
+	kind: 'report',
+	sha256: 'sha256:' + 'a'.repeat(64),
+	bytes: 12,
+	redaction: 'text-redacted-on-read',
+	retention: 'ephemeral-debug',
+});
+assert.equal(artifact.tenantId, 'tenant_a', 'artifact metadata stores tenant id');
+assert.equal(d.listWebuiArtifacts(h, tenantA).length, 1, 'tenant A can list artifact metadata');
+assert.equal(d.listWebuiArtifacts(h, tenantB).length, 0, 'tenant B cannot list tenant A artifact metadata');
+assert.throws(() => d.saveWebuiArtifact(h, { tenantId: 'tenant_a', runId: 'r', path: '../secret', sha256: 'sha256:' + 'b'.repeat(64) }), /invalid path/, 'artifact path traversal is rejected');
+assert.throws(() => d.saveWebuiArtifact(h, { tenantId: 'tenant_a', runId: 'r', path: 'artifacts/r/report.json', sha256: 'not-a-hash' }), /sha256/, 'artifact hash is required');
+
+// old engine normalization: a pre-migration row stored with an unsupported engine must not brick
+// listSystems()/getSystem(). openDb normalizes it to NULL (=> DEFAULT_ENGINE) one time. A second
+// openDb on the same file (WAL allows concurrent connections) plays the "upgraded deployment
+// reopens" role.
 d.registerSystem(h, { name: 'modern', label: 'M' });
-h.prepare("INSERT INTO systems (name, engine, created_at) VALUES ('legacyab', 'agent-browser', '2026-01-01T00:00:00Z')").run();
-const h2 = d.openDb(); // fresh open runs the migration over the legacy row
-assert.equal(d.listSystems(h2).length, 2, 'listSystems works with a formerly-legacy row present');
-assert.equal(d.getSystem(h2, 'legacyab').engine, 'playwright', 'legacy engine row normalized to the default engine');
+h.prepare("INSERT INTO systems (name, engine, created_at) VALUES ('oldengine', 'selenium', '2026-01-01T00:00:00Z')").run();
+const h2 = d.openDb(); // fresh open runs the migration over the old row
+assert.equal(d.listSystems(h2).length, 2, 'listSystems works with a formerly unsupported engine row present');
+assert.equal(d.getSystem(h2, 'oldengine').engine, 'playwright', 'old engine row normalized to the default engine');
 d.closeDb(h2);
 d.deleteSystem(h, 'modern');
-d.deleteSystem(h, 'legacyab');
+d.deleteSystem(h, 'oldengine');
 
 // approvals: insert/count/default status/lossless amount text
 const inserted = d.upsertApprovals(h, [
@@ -197,12 +313,11 @@ assert.equal(apPii.raw_text.includes('hunter2'), false, 'approval mask password 
 assert.equal(apPii.raw_text.includes('123-45-6789'), false, 'approval redact SSN in raw_text');
 assert.equal(apPii.summary, 'Bearer [REDACTED_TOKEN]', 'approval redact bearer token in summary');
 
-// approvalsFromRecords: the registry→approvals dual-write mapper (GW_APP 결재 sync path).
-// Picks only SCRAPED_COLS from data, falls back to the record-level summary, nulls the rest —
-// so upsertApprovals' COALESCE keeps a list sync non-destructive over a prior enrich.
+// approvalsFromRecords: the registry?�approvals dual-write mapper (GW_APP 결재 sync path).
+// Picks only SCRAPED_COLS from data, falls back to the record-level summary, nulls the rest ??// so upsertApprovals' COALESCE keeps a list sync non-destructive over a prior enrich.
 const mapped = d.approvalsFromRecords([
 	{ key: 'D1', data: { title: 'T', drafter: 'Kim', submitted_at: '2026-06-09', extraneous: 'dropme' } },
-	{ key: 'D2', data: { dept: '관리팀', raw_text: 'body' }, summary: 'S2' },
+	{ key: 'D2', data: { dept: '관리�?', raw_text: 'body' }, summary: 'S2' },
 ]);
 assert.equal(mapped[0].doc_id, 'D1', 'mapper: key -> doc_id');
 assert.equal(mapped[0].title, 'T', 'mapper: data field picked');
@@ -210,7 +325,7 @@ assert.equal(mapped[0].dept, null, 'mapper: absent field nulled (COALESCE keeps 
 assert.equal('extraneous' in mapped[0], false, 'mapper: non-approval field dropped');
 assert.equal(mapped[1].summary, 'S2', 'mapper: record-level summary falls back in');
 d.upsertApprovals(h, mapped, '2026-06-09T00:00:00Z');
-assert.equal(d.getApproval(h, 'D2').dept, '관리팀', 'mapper rows upsert cleanly');
+assert.equal(d.getApproval(h, 'D2').dept, '관리�?', 'mapper rows upsert cleanly');
 assert.throws(() => d.approvalsFromRecords('nope'), /array/, 'mapper: non-array rejected');
 
 // approvals input validation

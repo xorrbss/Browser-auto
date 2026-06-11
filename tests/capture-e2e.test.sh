@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# e2e coverage for bin/capture.js (the in-page recorder) driven by REAL Playwright events; replaces the
-# 12 agent-browser capture-*.test.sh integration tests deleted with the daemon (441294d). Pins the
+# e2e coverage for bin/capture.js (the in-page recorder) driven by real Playwright events. Pins the
 # capture-time guarantees that have no other end-to-end coverage:
 #   masking-at-capture (PII never enters the buffer); checkable absolute `check` (incl. label pre-toggle
 #   flip + uncheck-stays-click residual); input coalescing + Enter flush order; key allowlist +
@@ -50,6 +49,11 @@ const PAGES = {
 		<button id="top" type="button">Top</button>
 		<div style="height:3000px"></div>
 		<button id="after" type="button" style="position:fixed;top:4px;right:4px">After</button>`,
+	'/container-scroll': `<!doctype html><meta charset="utf-8">
+		<div id="box" data-testid="scrollbox" style="height:120px;overflow:auto;border:1px solid #999">
+			<div style="height:900px">Scrollable container content</div>
+		</div>
+		<button id="after" type="button">After container scroll</button>`,
 	'/swap': `<!doctype html><meta charset="utf-8">
 		<button id="swap" type="button">Swap</button><div id="box"><p>old</p></div>
 		<script>document.getElementById('swap').onclick = () => {
@@ -253,7 +257,33 @@ await page.click('#after');
 	ok(iScroll >= 0 && iClick >= 0 && iScroll < iClick, 'scroll: scroll-then-click order preserved');
 }
 
-// 7) dom_settle: a click that swaps a large subtree WITHOUT a URL change records a settle marker.
+// 7) container scroll: not silently ignored and not promoted to a runnable page scroll. It records an
+//    unsupported capability that build-flow turns into needs_review.
+await openCase('/container-scroll');
+await page.locator('#box').hover();
+await page.mouse.wheel(0, 320);
+await page.waitForTimeout(500);
+await page.click('#after');
+{
+	const buf = await drain('container-scroll');
+	const unsupported = byType(buf, 'unsupported');
+	ok(unsupported.length === 1, `container-scroll: one unsupported record (got ${unsupported.length})`);
+	const ev = unsupported[0];
+	ok(!!ev && ev.capability === 'container-scroll' && ev.insufficient === true, 'container-scroll: capability flagged insufficient');
+	ok(!!ev && ev.dir === 'down' && ev.px > 0, 'container-scroll: recorded direction and px evidence');
+	ok(byType(buf, 'scroll').length === 0, 'container-scroll: no runnable page-scroll record emitted');
+	const iUnsupported = idxOf(buf, (e) => e.action_type === 'unsupported' && e.capability === 'container-scroll');
+	const iClick = idxOf(buf, (e) => e.action_type === 'click');
+	ok(iUnsupported >= 0 && iClick >= 0 && iUnsupported < iClick, 'container-scroll: unsupported record ordered before following click');
+	const built = buildFlowFromRecords('container_scroll_flow', ORIGIN + '/container-scroll', buf);
+	const step = built.flow.steps.find((s) => s.unsupported === 'container-scroll');
+	ok(step && step.needs_review === true, 'container-scroll: built step is needs_review');
+	ok(step && step.kind === 'scroll' && step.recordedDir === 'down' && step.recordedPx > 0, 'container-scroll: review step retains scroll evidence');
+	const invalid = spawnSync(process.execPath, ['bin/play-flow.mjs', '--flow', built.flowPath, '--validate-only'], { cwd: ROOT, encoding: 'utf8' });
+	ok(invalid.status !== 0 && /needs_review/.test(`${invalid.stdout || ''}${invalid.stderr || ''}`), 'container-scroll: validate/replay refuses needs_review flow');
+}
+
+// 8) dom_settle: a click that swaps a large subtree WITHOUT a URL change records a settle marker.
 await openCase('/swap');
 await page.click('#swap');
 await page.waitForTimeout(700);

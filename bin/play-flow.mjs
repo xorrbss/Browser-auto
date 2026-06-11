@@ -16,6 +16,13 @@ const {
 	failureSuggestion,
 	sanitizeUrl,
 } = require('../lib/flow-policy.js');
+const {
+	createFlowEgressChecker,
+} = require('../lib/egress-policy.js');
+const {
+	createRuntimeEgressChecker,
+	runtimeEgressDenyEvent,
+} = require('../lib/egress-runtime.js');
 const aria = require('../lib/aria.js');
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
@@ -84,8 +91,10 @@ function policyOptions(phase) {
 		phase,
 		runMode: process.env.AQA_RUN_MODE || 'local',
 		allowlist: process.env.AQA_LIVE_ALLOWLIST || '',
+		liveDryRunPassed: process.env.AQA_LIVE_DRY_RUN_PASSED || '',
 		liveActionApprove: process.env.AQA_LIVE_ACTION_APPROVE || '',
 		scheduledNoLive: process.env.AQA_SCHEDULED_NO_LIVE === '1',
+		egress: egressOptions(phase),
 	};
 }
 
@@ -93,6 +102,20 @@ function assertFlowPolicy(flow, phase) {
 	const policyValidation = validateFlowRunPolicy(flow, policyOptions(phase));
 	if (!policyValidation.ok) throw new Error('flow policy refused: ' + policyValidation.reason);
 	return policyValidation;
+}
+
+function egressOptions(phase) {
+	return {
+		phase,
+		runMode: process.env.AQA_RUN_MODE || 'local',
+		allowlist: process.env.AQA_TARGET_ALLOWLIST || process.env.AQA_EGRESS_ALLOWLIST || '',
+		profile: process.env.AQA_EGRESS_PROFILE || '',
+	};
+}
+
+function createRuntimeFlowEgressChecker(flow, phase) {
+	const base = createFlowEgressChecker(flow, egressOptions(phase));
+	return createRuntimeEgressChecker({ policyOptions: base.context });
 }
 
 function shouldCheckAuthReadiness(flow) {
@@ -158,9 +181,6 @@ function assertPlayableEngine(flow) {
 	const raw = flow && flow.engine;
 	const engine = raw == null || raw === '' ? 'playwright' : String(raw).trim();
 	if (engine === 'playwright') return engine;
-	if (engine === 'agent-browser') {
-		throw new Error('flow.engine is "agent-browser"; Playwright-only runtime refuses legacy flows. Set flow.engine="playwright" (or omit engine) and run `node bin/play-flow.mjs --flow <flow> --validate-only` before replay.');
-	}
 	throw new Error(`flow.engine: invalid engine "${engine}" (expected playwright)`);
 }
 
@@ -352,24 +372,119 @@ async function loadChromium() {
 	return pwRequire('playwright').chromium;
 }
 
+function playAuditPath() {
+	const override = String(process.env.AQA_PLAY_AUDIT_PATH || '').trim();
+	return override || path.join(PROBE_ROOT, 'data', 'play-audit.jsonl');
+}
+
+function writePlayAuditEvent(event) {
+	const auditFile = playAuditPath();
+	fs.mkdirSync(path.dirname(auditFile), { recursive: true });
+	const line = JSON.stringify({ at: new Date().toISOString(), ...event }) + '\n';
+	const fd = fs.openSync(auditFile, 'a');
+	try { fs.writeSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
 // appendPlayAudit: when a flow declares an irreversible point-of-no-return (flow.irreversibleAt), record
 // the commit to an append-only fsync'd trail BEFORE it runs — the play-side analogue of the approve leaf's
-// audit, so a gated replay is never un-audited. Best-effort (never blocks the run on an audit-write error).
+// audit, so a gated replay is never un-audited. This is fail-closed for every irreversible gate.
 function appendPlayAudit(flowFile, flow, i, step) {
+	const startUrl = sanitizeUrl(flow.startUrl);
 	try {
-		const dir = path.join(PROBE_ROOT, 'data');
-		fs.mkdirSync(dir, { recursive: true });
-		const line = JSON.stringify({ at: new Date().toISOString(), flow: flow.name || path.basename(flowFile), startUrl: flow.startUrl, irreversibleStep: i, action: step && step.action, by: step && step.by, value: step && step.value }) + '\n';
-		const fd = fs.openSync(path.join(dir, 'play-audit.jsonl'), 'a');
-		try { fs.writeSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-	} catch { /* observability only — never fail the run on an audit-write error */ }
+		writePlayAuditEvent({ event: 'irreversible-step', flow: flow.name || path.basename(flowFile), startUrl, irreversibleStep: i, action: step && step.action, by: step && step.by, value: step && step.value });
+	} catch (e) {
+		const reason = String((e && (e.code || e.message)) || e || 'unknown audit write error');
+		throw new Error(`play audit write failed before irreversible step ${i} for flow "${flow.name || path.basename(flowFile)}" startUrl=${startUrl} (fail-closed): ${reason}`);
+	}
+}
+
+function appendPlayEgressAudit(flowFile, flow, verdict) {
+	try {
+		const event = runtimeEgressDenyEvent(verdict, { flow: flow.name || path.basename(flowFile) });
+		event.startUrl = sanitizeUrl(flow.startUrl);
+		writePlayAuditEvent(event);
+	} catch (e) {
+		const reason = String((e && (e.code || e.message)) || e || 'unknown audit write error');
+		console.error(`[play-flow] egress audit write failed: ${reason}`);
+	}
 }
 
 async function newContext(browser, flow) {
-	if (!flow.app) return browser.newContext();
+	if (!flow.app) return browser.newContext({ serviceWorkers: 'block' });
 	const statePath = resolveAuthStatePath(PROBE_ROOT, 'playwright', flow.app);
 	if (!fs.existsSync(statePath)) throw new Error(`missing Playwright auth state for app "${flow.app}"; run setup/auth.sh before deterministic replay`);
-	return browser.newContext({ storageState: statePath });
+	return browser.newContext({ storageState: statePath, serviceWorkers: 'block' });
+}
+
+function egressRequestInfo(request) {
+	const paths = [];
+	try {
+		if (request.redirectedFrom()) paths.push('redirect');
+	} catch {}
+	try {
+		if (request.isNavigationRequest()) {
+			const frame = request.frame();
+			if (frame && frame.parentFrame()) paths.push('iframe');
+		}
+	} catch {}
+	const pathLabel = paths.length ? paths.join('+') : 'request';
+	return {
+		label: paths.length ? `request:${pathLabel}` : 'request',
+		path: pathLabel,
+	};
+}
+
+async function installEgressGuard(ctx, checker, opts = {}) {
+	let blocked = null;
+	const auditedBlocks = new Set();
+	const recordDeny = (verdict) => {
+		const audit = verdict.audit || {};
+		const key = `${audit.label || ''}|${audit.url || ''}|${verdict.reason || ''}`;
+		if (auditedBlocks.has(key)) return;
+		auditedBlocks.add(key);
+		if (typeof opts.onDeny === 'function') opts.onDeny(verdict);
+	};
+	const check = (request) => {
+		const info = egressRequestInfo(request);
+		const verdict = checker.checkUrl(request.url(), info.label, { egressPath: info.path });
+		if (!verdict.ok) {
+			if (!blocked) blocked = verdict;
+			recordDeny(verdict);
+		}
+		return verdict;
+	};
+	ctx.on('request', (request) => {
+		check(request);
+	});
+	await ctx.route('**/*', async (route) => {
+		const verdict = check(route.request());
+		if (!verdict.ok) {
+			await route.abort('blockedbyclient').catch(() => {});
+			return;
+		}
+		await route.continue();
+	});
+	return {
+		assertClear() {
+			if (blocked) {
+				const reason = blocked.reason;
+				blocked = null;
+				throw new Error(reason);
+			}
+		},
+	};
+}
+
+async function gotoWithEgressGuard(page, url, guard) {
+	try {
+		await page.goto(url, { waitUntil: 'domcontentloaded' });
+	} catch (e) {
+		if (guard && typeof guard.assertClear === 'function') {
+			try { guard.assertClear(); } catch (egressError) { throw egressError; }
+		}
+		throw e;
+	}
+	if (guard && typeof guard.assertClear === 'function') guard.assertClear();
 }
 
 async function runAsserts(page, asserts, resolveValue) {
@@ -523,7 +638,11 @@ async function runFlowStepsWithDiagnostics(page, steps, opts) {
 			await runSteps(page, [replayStep(step, opts.resolveValue)], oneStepOpts);
 			if (typeof opts.afterStep === 'function') await opts.afterStep(i, step);
 		} catch (e) {
-			const msg = errorMessage(e);
+			let egressMsg = '';
+			if (typeof opts.assertNoEgressBlocked === 'function') {
+				try { opts.assertNoEgressBlocked(); } catch (eg) { egressMsg = errorMessage(eg); }
+			}
+			const msg = egressMsg || errorMessage(e);
 			throw new Error(`step ${i} (${describeStep(step)}) failed: ${msg}; currentUrl=${sanitizeUrl(page.url())}; suggestedAction=${failureSuggestion(msg)}`);
 		}
 	}
@@ -540,6 +659,9 @@ try {
 	validateAsserts(flow.asserts || []);
 	if (!flow.startUrl) throw new Error('startUrl required');
 	const policyValidation = assertFlowPolicy(flow, validateOnly || verify ? 'validate' : 'run');
+	const egressPhase = validateOnly ? 'validate' : verify ? 'verify' : 'run';
+	const egressChecker = createRuntimeFlowEgressChecker(flow, egressPhase);
+	egressChecker.assertUrl(flow.startUrl, 'startUrl');
 	const valuesFile = valuesPathFor(absFlow);
 	const values = readJson(valuesFile, {});
 	const resolveValue = makeResolveValue(values, valuesFile);
@@ -554,8 +676,11 @@ try {
 	const browser = await chromium.launch({ headless: !headed, channel: process.env.AQA_PW_CHANNEL || 'chrome' });
 	try {
 		const ctx = await newContext(browser, flow);
+		const egressGuard = await installEgressGuard(ctx, egressChecker, {
+			onDeny: (verdict) => appendPlayEgressAudit(absFlow, flow, verdict),
+		});
 		const page = await ctx.newPage();
-		await page.goto(flow.startUrl, { waitUntil: 'domcontentloaded' });
+		await gotoWithEgressGuard(page, flow.startUrl, egressGuard);
 		await assertPageAuthReady(page, flow, 'initial navigation');
 		if (verify) {
 			const v = await verifyFlow(page, flow, absFlow, resolveValue);
@@ -566,7 +691,16 @@ try {
 			// irreversible point-of-no-return replays through the audited fail-closed gate; every other flow
 			// stays reversible exactly as before. See approve/flow-runner.mjs irreversibleOptsFor.
 			const gate = irreversibleOptsFor(flow);
-			const runOpts = { resolveValue, openRecord, gate, afterStep: (_i, _step) => assertPageAuthReady(page, flow, 'post-step') };
+			const runOpts = {
+				resolveValue,
+				openRecord,
+				gate,
+				assertNoEgressBlocked: () => egressGuard.assertClear(),
+				afterStep: async (_i, _step) => {
+					egressGuard.assertClear();
+					await assertPageAuthReady(page, flow, 'post-step');
+				},
+			};
 			if (gate.reversible === false) runOpts.onBeforeIrreversible = (i, step) => appendPlayAudit(absFlow, flow, i, step);
 			await runFlowStepsWithDiagnostics(page, flow.steps, runOpts);
 			await runAsserts(page, flow.asserts || [], resolveValue);

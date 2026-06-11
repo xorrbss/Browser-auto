@@ -13,18 +13,21 @@ import { resolveAction } from "./approve/guards.mjs";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const assert = (c, m) => { if (!c) { console.error("  ✗ capture: " + m); process.exit(1); } };
 
-const rec = { app: "x", actions: { approve: { button: { name: "결재" }, titleField: "title" }, reject: { enabled: false, button: { name: "결재" } } } };
+const rec = { app: "x", actions: {
+  approve: { button: { name: "결재" }, decision: { name: "승인" }, confirm: { name: "확인" }, success: "leftInbox", titleField: "title" },
+  reject: { enabled: false, button: { name: "결재" }, decision: { name: "반려" }, opinion: { placeholder: "사유", text: "반려 사유" }, confirm: { name: "확인" }, success: "leftInbox" }
+} };
 const pa = buildPreviewRecipe(rec, "approve", null);
 assert(pa && pa.actions.approve.button.name === "결재", "existing approve block used");
 assert(resolveAction(pa, "approve").ok === true, "preview approve resolves");
 const pr = buildPreviewRecipe(rec, "reject", null);
 assert(pr && pr.actions.reject.enabled === undefined, "reject enabled:false STRIPPED in preview");
 assert(resolveAction(pr, "reject").ok === true, "a disabled action RESOLVES in the dry preview (dry never commits)");
-const pb = buildPreviewRecipe(rec, "approve_합의", { button: { name: "결재" }, decision: { name: "합의" } });
+const pb = buildPreviewRecipe(rec, "approve_합의", { button: { name: "결재" }, decision: { name: "합의" }, confirm: { name: "확인" }, success: "leftInbox" });
 assert(pb && pb.actions["approve_합의"].decision.name === "합의", "operator-supplied block injected");
 assert(resolveAction(pb, "approve_합의").ok === true, "custom block resolves");
 assert(buildPreviewRecipe(rec, "nope", null) === null, "no block to test ⇒ null (fail-closed)");
-const leg = buildPreviewRecipe({ approve: { button: { name: "결재" } } }, "approve", null);
+const leg = buildPreviewRecipe({ approve: { button: { name: "결재" }, decision: { name: "승인" }, confirm: { name: "확인" }, success: "leftInbox" } }, "approve", null);
 assert(leg && resolveAction(leg, "approve").ok === true, "legacy top-level approve fallback");
 assert(rec.actions.reject.enabled === false, "buildPreviewRecipe does NOT mutate the committed recipe");
 

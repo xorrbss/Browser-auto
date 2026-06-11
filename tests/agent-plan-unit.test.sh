@@ -179,7 +179,7 @@ assert(r.code === 202, 'plan4 live job queued');
 const live4 = enqueued.find((e) => e.job.id === r.body.job.id);
 live4.spec.onFinish({ id: live4.job.id, status: 'done', exitCode: 0, result: { approved: 0, results: [{ doc_id: 'DOC-1', status: 'skipped', reason: 'kill-switch' }] } });
 assert(get(`/api/agent/plan/${plan4.id}`).body.plan.status === 'failed', 'all-skipped live run records failed, not succeeded');
-assert(get(`/api/agent/plan/${plan4.id}/events`).body.events.some((e) => e.type === 'live_completed' && e.status === 'failed' && e.reason === 'live_no_approval'), 'all-skip live emits live_no_approval reason');
+assert(get(`/api/agent/plan/${plan4.id}/events`).body.events.some((e) => e.type === 'live_completed' && e.status === 'failed' && e.reason === 'live_no_completion'), 'all-skip live emits live_no_completion reason');
 
 // #3 positive: a run that approves >=1 (others skipped) still records 'succeeded'.
 r = await post('/api/agent/plan', { text: 'approve partial', system: 'planunit', action: 'approve' });

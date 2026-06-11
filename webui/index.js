@@ -10,6 +10,7 @@ import { readdir, readFile, stat, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { redactText } from './redact.js';
+import { staticFilePolicy } from './secrets.js';
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
 export const ARTIFACTS_DIR = path.join(PROBE_ROOT, 'artifacts');
@@ -148,6 +149,7 @@ function artifactUrlFor(value, runId) {
 	const full = path.resolve(msys ? `${msys[1]}:/${msys[2]}` : raw);
 	const rel = path.relative(runDir, full);
 	if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+	if (!staticFilePolicy(full, { root: ARTIFACTS_DIR, artifact: true }).allowed) return null;
 	return `/artifacts/${runId}/${rel.split(path.sep).map(encodeURIComponent).join('/')}`;
 }
 

@@ -412,17 +412,65 @@
   }
 
   // --- explicit PAGE scroll (coalesced; #2) ---
-  // Only window.scrollY/X (page scroll) is tracked, so a scrollable CONTAINER's scroll never changes
-  // it and is inherently ignored (containers need a selector = out of scope). A gesture is debounced
+  // Only window.scrollY/X (page scroll) is directly replayable. A scrollable CONTAINER's scroll is
+  // recorded as unsupported/needs_review because it needs a stable container locator. A gesture is debounced
   // into ONE record: on settle, the net delta from the last committed position becomes a `scroll`
   // action (dominant axis, |Δ| >= SCROLL_MIN). commitScroll() flushes any pending INPUT first so the
   // buffer seq matches the journey, and it is called before every recorded click/key/nav so a
   // scroll-then-action never reorders. Replay re-issues `scroll <dir> <px>` BY the delta (composes).
   var SCROLL_SETTLE_MS = 250, SCROLL_MIN = 80;
   var scrollTimer = null, scrollBaseY = 0, scrollBaseX = 0, scrollPending = false;
+  var containerScrollTimer = null, containerScrollPending = null;
+  var containerScrollLast = (typeof WeakMap === 'function') ? new WeakMap() : null;
   function _scrollY() { try { return Math.round(window.scrollY || window.pageYOffset || 0); } catch (e) { return 0; } }
   function _scrollX() { try { return Math.round(window.scrollX || window.pageXOffset || 0); } catch (e) { return 0; } }
+  function _elScroll(el) { try { return { y: Math.round(el.scrollTop || 0), x: Math.round(el.scrollLeft || 0) }; } catch (e) { return { y: 0, x: 0 }; } }
+  function pageScrollTarget(t) { return !t || t === document || t === document.documentElement || t === document.body || t === window; }
   scrollBaseY = _scrollY(); scrollBaseX = _scrollX();
+  function dirPxFromDelta(dy, dx) {
+    var ay = Math.abs(dy), ax = Math.abs(dx);
+    if (Math.max(ay, ax) <= 0) return null;
+    if (ay >= ax) return { dir: dy > 0 ? 'down' : 'up', px: ay };
+    return { dir: dx > 0 ? 'right' : 'left', px: ax };
+  }
+  function commitContainerScroll() {
+    if (containerScrollTimer) { clearTimeout(containerScrollTimer); containerScrollTimer = null; }
+    if (!containerScrollPending) return;
+    var p = containerScrollPending; containerScrollPending = null;
+    commitPend();                              // commit any pending input BEFORE the unsupported scroll
+    var dp = dirPxFromDelta(p.lastY - p.baseY, p.lastX - p.baseX);
+    if (!dp || dp.px < 1) return;
+    if (containerScrollLast && p.el) {
+      try { containerScrollLast.set(p.el, { y: p.lastY, x: p.lastX }); } catch (e) {}
+    }
+    record({
+      action_type: 'unsupported',
+      capability: 'container-scroll',
+      reason: 'scrollable container gestures require a stable container locator and are not replayable as page scroll',
+      dir: dp.dir,
+      px: dp.px,
+      primary: null,
+      candidates: [],
+      insufficient: true,
+      is_navigation_boundary: false
+    });
+  }
+  function armContainerScroll(el) {
+    if (!el || el.nodeType !== 1) return;
+    var cur = _elScroll(el), prev = null;
+    if (containerScrollLast) {
+      try { prev = containerScrollLast.get(el) || null; } catch (e) { prev = null; }
+    }
+    if (!containerScrollPending || containerScrollPending.el !== el) {
+      commitContainerScroll();
+      containerScrollPending = { el: el, baseY: prev ? prev.y : 0, baseX: prev ? prev.x : 0, lastY: cur.y, lastX: cur.x };
+    } else {
+      containerScrollPending.lastY = cur.y;
+      containerScrollPending.lastX = cur.x;
+    }
+    if (containerScrollTimer) clearTimeout(containerScrollTimer);
+    containerScrollTimer = setTimeout(commitContainerScroll, SCROLL_SETTLE_MS);
+  }
   function commitScroll() {
     if (scrollTimer) { clearTimeout(scrollTimer); scrollTimer = null; }
     if (!scrollPending) return;
@@ -430,22 +478,22 @@
     commitPend();                              // commit any pending input BEFORE the scroll (seq order)
     var y = _scrollY(), x = _scrollX(), dy = y - scrollBaseY, dx = x - scrollBaseX;
     scrollBaseY = y; scrollBaseX = x;
-    var ay = Math.abs(dy), ax = Math.abs(dx);
-    if (Math.max(ay, ax) < SCROLL_MIN) return;  // jitter / trivial scroll -> drop
-    var dir, px;
-    if (ay >= ax) { dir = dy > 0 ? 'down' : 'up'; px = ay; } else { dir = dx > 0 ? 'right' : 'left'; px = ax; }
-    record({ action_type: 'scroll', dir: dir, px: px, primary: null, candidates: [], is_navigation_boundary: false });
+    var dp = dirPxFromDelta(dy, dx);
+    if (!dp || dp.px < SCROLL_MIN) return;  // jitter / trivial scroll -> drop
+    record({ action_type: 'scroll', dir: dp.dir, px: dp.px, primary: null, candidates: [], is_navigation_boundary: false });
   }
-  window.addEventListener('scroll', function () {
+  window.addEventListener('scroll', function (e) {
+    var target = e && e.target;
+    if (!pageScrollTarget(target)) { armContainerScroll(target); return; }
     scrollPending = true;
     if (scrollTimer) clearTimeout(scrollTimer);
     scrollTimer = setTimeout(commitScroll, SCROLL_SETTLE_MS);
-  });
+  }, true);
   // flushAll: commit a pending INPUT and then a pending scroll, in that order. Bound to the Enter key
   // and to teardown so a typed value is NEVER lost when the form submits / the context dies with no
   // intervening focusout/change (commitScroll alone early-returns past its commitPend when no scroll
   // is pending — that was a regression vs the prior unconditional commitPend teardown).
-  function flushAll() { commitPend(); commitScroll(); }
+  function flushAll() { commitPend(); commitContainerScroll(); commitScroll(); }
   // resetScrollBase: re-anchor the scroll delta to the CURRENT page offset at a navigation boundary.
   // The init-script does NOT re-run on SPA nav, so without this a stale pre-nav base would make the
   // first post-nav scroll record a wrong direction/magnitude (a route change often resets scroll).
@@ -475,7 +523,8 @@
     var now = Date.now();
     if (lastLabelControl === el && (now - lastLabelAt) < 700) { lastLabelAt = now; return; } // suppress label->control dup
     if (raw.tagName === 'LABEL' || (raw.closest && raw.closest('label'))) { lastLabelControl = el; lastLabelAt = now; }
-    commitScroll();   // flush a pending scroll BEFORE this click so the buffer order matches the journey
+    commitContainerScroll();
+    commitScroll();   // flush pending scrolls BEFORE this click so the buffer order matches the journey
     if (fileInputType(el)) {
       emit('click', el, { insufficient: true, upload: true });
       return;
@@ -529,7 +578,7 @@
   }, true);
 
   // --- navigation: A(durable, via record) + B(history) + C(prevUrl sentinel) + D(teardown) ---
-  function navMark(from) { commitScroll(); resetScrollBase(); record({ action_type: 'navigate', from: from, primary: null, candidates: [], is_navigation_boundary: true }); }
+  function navMark(from) { commitContainerScroll(); commitScroll(); resetScrollBase(); record({ action_type: 'navigate', from: from, primary: null, candidates: [], is_navigation_boundary: true }); }
   ['pushState', 'replaceState'].forEach(function (m) {
     var orig = history[m];
     if (orig && !orig.__aqa) {

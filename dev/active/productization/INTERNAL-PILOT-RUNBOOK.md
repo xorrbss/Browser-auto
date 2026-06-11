@@ -91,8 +91,8 @@ Some tests are deterministic in code but depend on live browser state. Treat the
   before filing a product defect.
 - If a flow contains `needs_review`, `@eN` refs, missing transition waits, or non-unique locators, stop
   and repair the flow before compile or replay.
-- Do not add legacy `engine: "agent-browser"` flows to the pilot gate. Migrate to `engine: "playwright"`
-  first or list them as explicit debt.
+- Do not add non-Playwright flows to the pilot gate. Convert them to `engine: "playwright"` first or
+  keep them out of scope.
 
 ## 5. Read-Only Smoke Path
 

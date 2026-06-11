@@ -46,6 +46,18 @@ assert(spawned.args[0] === 'https://login.example.com/app', 'arg0 = loginUrl');
 assert(spawned.args[1] === '/home', 'arg1 = needle (glob stripped), got ' + spawned.args[1]);
 assert(spawned.args[2] === playwrightAuthRel('logintest'), 'arg2 = canonical playwright state file, got ' + spawned.args[2]);
 
+// when the server provides Git Bash, the route delegates storage policy to setup/auth.sh
+let bashSpawned = null;
+spawned = null; code = null; body = null;
+const gitBash = (script, args) => { bashSpawned = { script, args }; return { on() {}, stdout: { on() {} }, stderr: { on() {} } }; };
+approvePost('/api/approve/login', { app: 'logintest' }, res, { sendJson, enqueue, nodeLeaf, gitBash });
+assert(code === 202, 'gitBash-backed route returns 202, got ' + code);
+assert(bashSpawned && bashSpawned.script === 'setup/auth.sh', 'gitBash-backed route spawned setup/auth.sh');
+assert(bashSpawned.args[0] === 'logintest', 'setup arg0 = app');
+assert(bashSpawned.args[1] === 'https://login.example.com/app', 'setup arg1 = loginUrl');
+assert(bashSpawned.args[2] === '**/home', 'setup arg2 keeps the success glob for setup/auth.sh');
+assert(spawned === null, 'gitBash-backed route does not bypass setup/auth.sh with nodeLeaf');
+
 // invalid app name and missing coordinates are refused (400), never spawned
 spawned = null; code = null;
 approvePost('/api/approve/login', { app: 'bad name!' }, res, { sendJson, enqueue, nodeLeaf });

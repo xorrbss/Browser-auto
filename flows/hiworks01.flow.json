@@ -1,6 +1,6 @@
 {
   "name": "hiworks01",
-  "engine": "agent-browser",
+  "engine": "playwright",
   "environment": "live-action",
   "riskClass": "destructive",
   "app": "4345",

@@ -3,6 +3,7 @@
 // recipe + recorder; they NEVER approve and NEVER write the committed recipe (that is Phase 2 / enable).
 import fs from 'node:fs';
 import path from 'node:path';
+import { validateActionBlock } from '../approve/guards.mjs';
 
 // buildPreviewRecipe(recipeObj, action, block): return a NON-committed preview recipe whose actions[action] is
 // the block to dry-run-test — `block` (an operator-supplied/edited block) when given, else the recipe's existing
@@ -72,6 +73,8 @@ export function enableActionInRecipe(recipeObj, action, block, meta = {}) {
 	if (!(block.button && block.button.name)) return { ok: false, error: 'block.button.name required (the 결재 affordance)' };
 	if (!(block.decision && block.decision.name)) return { ok: false, error: 'block.decision.name required (the 승인 radio)' };
 	if (!(block.confirm && block.confirm.name)) return { ok: false, error: 'block.confirm.name required (the 확인 commit button)' };
+	const schema = validateActionBlock(action, { ...block, enabled: true });
+	if (!schema.ok) return { ok: false, error: schema.reason };
 	const { enabled, _capturedVia, capture, ...rest } = block; // we set enabled + capture ourselves
 	const actions = { ...(base.actions || {}) };
 	actions[action] = { ...rest, enabled: true, capture: { date: meta.date || null, by: meta.by || null, confirmed: true, notes: String(meta.notes || ''), via: 'webui-capture' } };

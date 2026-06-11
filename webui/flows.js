@@ -13,6 +13,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { latestTestResultsByName } from './index.js';
 import { authReadinessForApp } from './auth.js';
+import { createSecretStore } from './secrets.js';
+import { analyzeBlockedFlowForWebui } from './blocked-flows.js';
 
 const require = createRequire(import.meta.url);
 const { flowEngine } = require('../lib/engine.js');
@@ -24,6 +26,7 @@ const FLOWS_DIR = path.join(PROBE_ROOT, 'flows');
 const TESTS_DIR = path.join(PROBE_ROOT, 'tests');
 const NAME_RE = /^[A-Za-z0-9_-]+$/; // also blocks path traversal in the name
 const TOKEN_RE = /\{\{(input_\d+)\}\}/g;
+const secretStore = createSecretStore();
 
 export const validName = (name) => typeof name === 'string' && NAME_RE.test(name);
 
@@ -34,6 +37,96 @@ const snapshotPath = (name) => path.join(FLOWS_DIR, `${name}.snapshot.txt`);
 const recipePath = (name) => path.join(PROBE_ROOT, 'recipes', `${name}.json`);
 
 export const flowExists = (name) => validName(name) && existsSync(flowPath(name));
+
+function localValuesSecretMetadata(name) {
+	return secretStore.describeLocalFile({
+		kind: 'flow-values',
+		name,
+		filePath: valuesPath(name),
+	});
+}
+
+function useEncryptedBackendOnly() {
+	return secretStore.secureBackend && secretStore.configured && !secretStore.policy?.plaintextAllowed;
+}
+
+function plaintextBlocked() {
+	return secretStore.policy?.external && !secretStore.policy?.plaintextAllowed;
+}
+
+function secureBackendConfigBlockedReason() {
+	if (!secretStore.secureBackend || secretStore.policy?.configOk) return '';
+	const errors = Array.isArray(secretStore.policy?.configErrors) ? secretStore.policy.configErrors.filter(Boolean) : [];
+	return `secret backend configuration is not ready: ${errors.join('; ') || 'secure secret backend is unavailable'}`;
+}
+
+async function encryptedValuesSecretMetadata(name) {
+	if (!secretStore.secureBackend) return null;
+	return secretStore.describeSecret({ kind: 'flow-values', name });
+}
+
+async function readFlowValues(name) {
+	const localStorage = localValuesSecretMetadata(name);
+	const configBlockedReason = secureBackendConfigBlockedReason();
+	if (configBlockedReason) {
+		return {
+			values: {},
+			storage: await encryptedValuesSecretMetadata(name) || localStorage,
+			localPlaintextStorage: localStorage,
+			source: secretStore.backend,
+			blockedReason: configBlockedReason,
+		};
+	}
+	if (useEncryptedBackendOnly()) {
+		const encryptedStorage = await encryptedValuesSecretMetadata(name);
+		if (encryptedStorage?.present && encryptedStorage.usable) {
+			try {
+				const parsed = await secretStore.describeJsonObjectKeys({ kind: 'flow-values', name });
+				if (parsed.blocked || parsed.parseStatus !== 'object') throw new Error('secure flow values metadata is unreadable');
+				return {
+					values: Object.fromEntries((parsed.jsonObjectKeys || []).map((key) => [key, true])),
+					storage: encryptedStorage,
+					localPlaintextStorage: localStorage,
+					source: secretStore.backend,
+					blockedReason: '',
+				};
+			} catch {
+				return {
+					values: {},
+					storage: { ...encryptedStorage, usable: false, blocked: true, blockReason: 'encrypted flow values are unreadable' },
+					localPlaintextStorage: localStorage,
+					source: secretStore.backend,
+					blockedReason: 'secure flow values metadata is unreadable',
+				};
+			}
+		}
+		return {
+			values: {},
+			storage: encryptedStorage || localStorage,
+			localPlaintextStorage: localStorage,
+			source: secretStore.backend,
+			blockedReason: localStorage.present
+				? 'local plaintext flow values are blocked in external mode; secure backend flow values are required'
+				: 'secure backend flow values are missing',
+		};
+	}
+	if (plaintextBlocked()) {
+		return {
+			values: {},
+			storage: localStorage,
+			localPlaintextStorage: localStorage,
+			source: 'local-pilot-file',
+			blockedReason: localStorage.blockReason || 'local plaintext flow values are blocked in external mode',
+		};
+	}
+	return {
+		values: (await readJsonFile(valuesPath(name))) || {},
+		storage: localStorage,
+		localPlaintextStorage: localStorage,
+		source: 'local-pilot-file',
+		blockedReason: '',
+	};
+}
 
 function compiledFresh(name) {
 	try {
@@ -118,7 +211,7 @@ function flowPolicyStatus(flow) {
 		};
 }
 
-async function buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun }) {
+async function buildScenarioStatus({ flow, steps, engine, compiled, missingValues, valuesBlockedReason = '', lastRun, blockedFlow = null }) {
 	const needsReview = steps.filter((s) => s.needs_review === true).length;
 	const auth = await authStatus(flow, engine);
 	const policy = flowPolicyStatus(flow);
@@ -126,6 +219,7 @@ async function buildScenarioStatus({ flow, steps, engine, compiled, missingValue
 	if (engine.engineError) reasons.push(engine.engineError);
 	if (!policy.ok) reasons.push(`policy: ${policy.reason}`);
 	if (needsReview) reasons.push(`${needsReview} needs_review step(s)`);
+	if (valuesBlockedReason) reasons.push(valuesBlockedReason);
 	if (missingValues.length) reasons.push(`missing values: ${missingValues.join(', ')}`);
 	if (auth.required && auth.refreshNeeded) reasons.push(`auth refresh needed: ${auth.state}`);
 	else if (auth.required && !auth.ready) reasons.push(auth.error || `missing Playwright auth for app "${auth.app}"`);
@@ -135,6 +229,7 @@ async function buildScenarioStatus({ flow, steps, engine, compiled, missingValue
 	if (engine.engineError) state = 'engine-error';
 	else if (!policy.ok) state = 'policy-blocked';
 	else if (needsReview) state = 'needs-review';
+	else if (valuesBlockedReason) state = 'blocked-values';
 	else if (missingValues.length) state = 'missing-values';
 	else if (auth.required && auth.refreshNeeded) state = 'stale-auth';
 	else if (auth.required && !auth.ready) state = 'missing-auth';
@@ -154,6 +249,7 @@ async function buildScenarioStatus({ flow, steps, engine, compiled, missingValue
 		policy,
 		lastRun: lastRun || null,
 		lastFailureReason: lastRun?.status === 'fail' ? lastRun.failureReason : '',
+		staticAnalysis: blockedFlow,
 	};
 }
 
@@ -305,17 +401,20 @@ export async function listFlows() {
 		if (!flow) continue;
 		const steps = Array.isArray(flow.steps) ? flow.steps : [];
 		const tokens = collectTokens(flow);
-		const values = (await readJsonFile(valuesPath(name))) || {};
+		const valuesRead = await readFlowValues(name);
+		const values = valuesRead.values;
 		const engine = safeFlowEngine(flow);
 		const compiled = compiledFresh(name);
 		const missingValues = missingTokens(tokens, values);
-		const scenarioStatus = await buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun: latestResults[name] || null });
+		const blockedFlow = analyzeBlockedFlowForWebui(flow, { name, file: flowPath(name) });
+		const scenarioStatus = await buildScenarioStatus({ flow, steps, engine, compiled, missingValues, valuesBlockedReason: valuesRead.blockedReason, lastRun: latestResults[name] || null, blockedFlow });
 		out.push({
 			name,
 			engine: engine.engine,
 			engineError: engine.engineError,
 			environment: flow.environment || '',
 			riskClass: flow.riskClass || '',
+			blockedFlow,
 			policy: scenarioStatus.policy,
 			startUrl: flow.startUrl || '',
 			app: flow.app || null,
@@ -324,9 +423,12 @@ export async function listFlows() {
 			inputTokens: tokens,
 			missingValues,
 			valueStatus: valueStatus(tokens, values),
-			hasValues: existsSync(valuesPath(name)),
+			valuesStorage: valuesRead.storage,
+			localPlaintextValuesStorage: valuesRead.localPlaintextStorage,
+			valuesBlockedReason: valuesRead.blockedReason,
+			hasValues: !!valuesRead.storage?.present,
 			compiled,
-			compilable: !engine.engineError && scenarioStatus.policy.ok && scenarioStatus.needsReview === 0 && missingValues.length === 0,
+			compilable: !engine.engineError && scenarioStatus.policy.ok && scenarioStatus.needsReview === 0 && !valuesRead.blockedReason && missingValues.length === 0,
 			runnable: scenarioStatus.runnable,
 			runBlockedReason: scenarioStatus.unrunnableReason,
 			lastRun: scenarioStatus.lastRun,
@@ -343,19 +445,22 @@ export async function getFlow(name) {
 	const flow = await readJsonFile(flowPath(name));
 	if (!flow) return null;
 	const steps = Array.isArray(flow.steps) ? flow.steps : [];
-	const values = (await readJsonFile(valuesPath(name))) || {};
+	const valuesRead = await readFlowValues(name);
+	const values = valuesRead.values;
 	const tokens = collectTokens(flow);
 	const engine = safeFlowEngine(flow);
 	const compiled = compiledFresh(name);
 	const missingValues = missingTokens(tokens, values);
 	const latestResults = await latestTestResultsByName();
-	const scenarioStatus = await buildScenarioStatus({ flow, steps, engine, compiled, missingValues, lastRun: latestResults[name] || null });
+	const blockedFlow = analyzeBlockedFlowForWebui(flow, { name, file: flowPath(name) });
+	const scenarioStatus = await buildScenarioStatus({ flow, steps, engine, compiled, missingValues, valuesBlockedReason: valuesRead.blockedReason, lastRun: latestResults[name] || null, blockedFlow });
 	return {
 		name,
 		engine: engine.engine,
 		engineError: engine.engineError,
 		environment: flow.environment || '',
 		riskClass: flow.riskClass || '',
+		blockedFlow,
 		policy: scenarioStatus.policy,
 		startUrl: flow.startUrl || '',
 		app: flow.app || null,
@@ -368,11 +473,14 @@ export async function getFlow(name) {
 		inputTokens: tokens,
 		values: Object.fromEntries(tokens.map((t) => [t, ''])),
 		valueStatus: valueStatus(tokens, values),
+		valuesStorage: valuesRead.storage,
+		localPlaintextValuesStorage: valuesRead.localPlaintextStorage,
+		valuesBlockedReason: valuesRead.blockedReason,
 		missingValues,
 		compiled,
 		scenarioStatus,
 		// compile is safe only when no needs_review remains AND every token has a value.
-		compilable: !engine.engineError && scenarioStatus.policy.ok && steps.every((s) => s.needs_review !== true) && tokens.every((t) => t in values && values[t] !== ''),
+		compilable: !engine.engineError && scenarioStatus.policy.ok && !valuesRead.blockedReason && steps.every((s) => s.needs_review !== true) && tokens.every((t) => t in values && values[t] !== ''),
 		runnable: scenarioStatus.runnable,
 		runBlockedReason: scenarioStatus.unrunnableReason,
 		lastRun: scenarioStatus.lastRun,
@@ -470,10 +578,22 @@ async function saveValuesInner(name, valuesObj) {
 	if (!validName(name)) return { ok: false, error: 'invalid flow name' };
 	if (!existsSync(flowPath(name))) return { ok: false, error: 'no such flow' };
 	if (!valuesObj || typeof valuesObj !== 'object') return { ok: false, error: 'invalid values' };
-	const existing = (await readJsonFile(valuesPath(name))) || {};
-	for (const [k, v] of Object.entries(valuesObj)) {
-		if (/^input_\d+$/.test(k) && typeof v === 'string') existing[k] = v;
+	const configBlockedReason = secureBackendConfigBlockedReason();
+	if (configBlockedReason) return { ok: false, error: configBlockedReason };
+	if (plaintextBlocked() && !useEncryptedBackendOnly()) {
+		return { ok: false, error: secretStore.policy?.plaintextBlockReason || 'local plaintext flow values are blocked in external mode' };
 	}
+	const incoming = {};
+	for (const [k, v] of Object.entries(valuesObj)) {
+		if (/^input_\d+$/.test(k) && typeof v === 'string') incoming[k] = v;
+	}
+	if (useEncryptedBackendOnly()) {
+		const secretStorage = await secretStore.putJsonObjectFields({ kind: 'flow-values', name, values: incoming });
+		return { ok: true, secretStorage };
+	}
+	const current = await readFlowValues(name);
+	const existing = current.values || {};
+	for (const [k, v] of Object.entries(incoming)) existing[k] = v;
 	await writeFile(valuesPath(name), JSON.stringify(existing, null, 2) + '\n', 'utf8');
 	return { ok: true };
 }

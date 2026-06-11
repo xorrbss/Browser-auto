@@ -5,7 +5,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"; rm -f "$DIR/approve/capunit.pw-state.json" "$DIR/fixtures/auth/playwright/capunit.state.json"' EXIT
 
-( cd "$DIR" && AQA_DB_PATH="$TMP/t.db" node --input-type=module - <<'NODE'
+( cd "$DIR" && AQA_DB_PATH="$TMP/t.db" AQA_TARGET_ALLOWLIST="https://example.test" node --input-type=module - <<'NODE'
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 

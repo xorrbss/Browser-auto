@@ -11,6 +11,14 @@ import { pathToFileURL } from 'node:url';
 const require = createRequire(import.meta.url);
 const dbm = require('../lib/db.js');
 const { resolveAuthStatePath } = require('../lib/engine.js');
+const {
+	createSystemEgressChecker,
+	validateSystemEgressPolicy,
+} = require('../lib/egress-policy.js');
+const {
+	createRuntimeEgressChecker,
+	runtimeEgressDenyEvent,
+} = require('../lib/egress-runtime.js');
 import { pagerDecision } from '../approve/guards.mjs'; // THE pager fail-closed rule — shared with approve-run.mjs (one copy, no drift)
 
 const PROBE_ROOT = path.resolve(import.meta.dirname, '..');
@@ -47,6 +55,8 @@ function readSystem(name) {
 		const s = dbm.getSystem(db, name);
 		if (!s) throw new Error(`no such system: ${name}`);
 		if (!s.target_url) throw new Error(`system '${name}' has no target_url`);
+		const egress = validateSystemEgressPolicy(s, { phase: 'run', fields: ['target_url'] });
+		if (!egress.ok) throw new Error(egress.reason);
 		return s;
 	} finally {
 		dbm.closeDb(db);
@@ -98,6 +108,24 @@ async function loadChromium() {
 	return pwRequire('playwright').chromium;
 }
 
+function egressRequestInfo(request) {
+	const paths = [];
+	try {
+		if (request.redirectedFrom()) paths.push('redirect');
+	} catch {}
+	try {
+		if (request.isNavigationRequest()) {
+			const frame = request.frame();
+			if (frame && frame.parentFrame()) paths.push('iframe');
+		}
+	} catch {}
+	const pathLabel = paths.length ? paths.join('+') : 'request';
+	return {
+		label: paths.length ? `request:${pathLabel}` : 'request',
+		path: pathLabel,
+	};
+}
+
 async function newPage(system) {
 	const statePath = resolveAuthStatePath(PROBE_ROOT, 'playwright', system.name);
 	if (!fs.existsSync(statePath)) {
@@ -106,14 +134,64 @@ async function newPage(system) {
 	const chromium = await loadChromium();
 	const headless = process.env.AQA_PW_HEADLESS !== '0';
 	const browser = await chromium.launch({ headless, channel: process.env.AQA_PW_CHANNEL || 'chrome' });
-	const ctx = await browser.newContext({ storageState: statePath });
+	const ctx = await browser.newContext({ storageState: statePath, serviceWorkers: 'block' });
+	const baseChecker = createSystemEgressChecker(system, { phase: 'run' });
+	const checker = createRuntimeEgressChecker({ policyOptions: baseChecker.context });
+	const loggedBlocks = new Set();
+	let blocked = null;
+	const check = (request) => {
+		const info = egressRequestInfo(request);
+		const verdict = checker.checkUrl(request.url(), info.label, { egressPath: info.path });
+		if (!verdict.ok) {
+			if (!blocked) blocked = verdict;
+			if (!loggedBlocks.has(verdict.reason)) {
+				loggedBlocks.add(verdict.reason);
+				log('egress', verdict.reason);
+				log('egress-event', JSON.stringify(runtimeEgressDenyEvent(verdict, { system: system.name })));
+			}
+		}
+		return verdict;
+	};
+	const assertNoEgressBlocked = () => {
+		if (blocked) {
+			const reason = blocked.reason;
+			blocked = null;
+			throw new Error(reason);
+		}
+	};
+	ctx.on('request', (request) => {
+		check(request);
+	});
+	await ctx.route('**/*', async (route) => {
+		const verdict = check(route.request());
+		if (!verdict.ok) {
+			await route.abort('blockedbyclient').catch(() => {});
+			return;
+		}
+		await route.continue();
+	});
 	const page = await ctx.newPage();
-	return { browser, page };
+	Object.defineProperty(page, '__aqaAssertNoEgressBlocked', { value: assertNoEgressBlocked });
+	return { browser, page, assertNoEgressBlocked };
+}
+
+function assertPageEgressClear(page) {
+	if (typeof page.__aqaAssertNoEgressBlocked === 'function') page.__aqaAssertNoEgressBlocked();
+}
+
+async function gotoWithEgressPolicy(page, url, options = {}) {
+	try {
+		await page.goto(url, options);
+	} catch (e) {
+		assertPageEgressClear(page);
+		throw e;
+	}
+	assertPageEgressClear(page);
 }
 
 async function gotoTarget(page, url, prefix) {
 	log(prefix, `navigating to target...`);
-	await page.goto(url, { waitUntil: 'domcontentloaded' });
+	await gotoWithEgressPolicy(page, url, { waitUntil: 'domcontentloaded' });
 	log(prefix, `landed: ${page.url()}`);
 }
 
@@ -254,7 +332,7 @@ function upsert(system, items, prefix) {
 
 // Legacy 결재 dual-write: GW_APP (data/approvals.config) names the 결재 system. The approvals table
 // is still the read model for the 결재 dashboard / NL 결재 query / shadow-eval / approve title-binding,
-// and its dedicated writers (fetch/enrich-approvals.sh) were deleted with the agent-browser engine —
+// and its dedicated writers (fetch/enrich-approvals.sh) were deleted during the Playwright-only migration -
 // so a registry sync/enrich of THAT system keeps approvals fresh too. Other systems write records only.
 function approvalsDualWrite(systemName, items, prefix) {
 	loadShellEnv(path.join(DATA_DIR, 'approvals.config'));
@@ -380,7 +458,7 @@ export async function openRecord(page, system, recipePath, key, listReady, deps 
 	const waitListSettledFn = deps.waitListSettled || waitListSettled;
 	const settleWait = deps.settleWait || (() => page.waitForTimeout(500));
 	const settleTries = deps.settleTries || 24;
-	await page.goto(system.target_url, { waitUntil: 'domcontentloaded' });
+	await gotoWithEgressPolicy(page, system.target_url, { waitUntil: 'domcontentloaded' });
 	await waitTextFn(page, listReady, readySeconds(system.recipe?.ready, 12));
 	const getList = () => snapshotListFn(page, recipePath);
 	const settleOpts = { tries: settleTries, wait: settleWait };

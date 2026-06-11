@@ -175,6 +175,8 @@ Deletion rules:
   deletion without leaking content.
 - External mode must deny direct path traversal, guessed run IDs, stale signed URLs, and cross-tenant
   artifact reads.
+- Tenant deletion preflight must be metadata-only and fail closed on legal hold, incident hold,
+  missing tenant scope, unknown deletion class, or unapproved export reference invalidation.
 
 ## 7. Export Policy
 
@@ -190,7 +192,7 @@ An export bundle may be created only when all conditions are true:
   `.values.json` content, auth state, DB files, private URLs, and raw document bodies not approved for
   export.
 - The bundle manifest records tenant, requester, purpose, included IDs, hashes, scan tool/version,
-  redaction status, creation time, retention class, and expiration.
+  redaction status, policy approval manifest hash, creation time, retention class, and expiration.
 - The export action writes an audit event with the manifest hash and redaction status.
 
 Blocked export inputs:
@@ -213,6 +215,14 @@ Internal pilot is go only when:
 - Auth state, values, DB, artifacts, and job logs are gitignored and not staged.
 - The operator reviews artifacts locally before sharing.
 - Live actions are supervised, bounded, and dry-run first.
+- The fixture-only P0 gate, `bash tests/security-p0-gate.test.sh`, is green for local auth/provider,
+  CORS, claim/header mapping, HTTPS cookie preflight, redaction, secret-store, migration approval,
+  migration route adapters, export approval/expiry/signed refs, tenant deletion route/tombstone
+  metadata, egress resolver/runtime evidence/control-plane blocking, noVNC scoped-root
+  entrypoint/route-stub, durable job/runner route/audit outbox scheduler, release checklist API, CI
+  lane guards, artifact, and readiness checks.
+- The readiness matrix reports local implementation, contract-only controls, and external blockers
+  separately so release review cannot mistake local metadata checks for external-service approval.
 
 External service open is no-go until:
 

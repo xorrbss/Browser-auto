@@ -1,14 +1,16 @@
-# docker-compose.yml — run the agent-qa recording server (remote-human capture) on Linux.
+# docker-compose.yml - run the agent-qa recording server (remote-human capture) on Linux.
 #
 #   docker compose up --build      # build + start
-#   open http://127.0.0.1:6080/vnc.html   (noVNC — drive the recorder's Chrome)
-#   open http://127.0.0.1:4310            (webui — start/stop record, compile, run, results)
+#   open http://127.0.0.1:6080/vnc.html   (noVNC: drive the recorder's Chrome)
+#   open http://127.0.0.1:4310            (webui: start/stop record, compile, run, results)
 #
 # SECURITY: both ports are bound to 127.0.0.1 (host-localhost) ONLY. The webui has NO auth and
 # spawns processes; noVNC has no password. NEVER publish these to 0.0.0.0 / the internet directly.
-# To reach them externally, front with an authenticated tunnel/proxy + set WEBUI_ALLOWED_HOSTS
-# (Host-header allowlist) — see README "Docker recording server". In WEBUI_EXTERNAL_MODE=1 the
-# entrypoint refuses passwordless noVNC unless NOVNC_DISABLE=1 or NOVNC_AUTH_BOUNDARY=authenticated-proxy.
+# noVNC is not protected by WebUI middleware because it is a separate x11vnc/websockify endpoint.
+# To reach WebUI externally, front with an authenticated tunnel/proxy and set WEBUI_ALLOWED_HOSTS.
+# To reach noVNC externally, use an authenticated TLS proxy/tunnel and set
+# NOVNC_AUTH_BOUNDARY=authenticated-proxy, or set NOVNC_DISABLE=1. In external/service/durable
+# production modes the entrypoint refuses noVNC unless one of those boundaries is explicit.
 services:
   agent-qa:
     build: .
@@ -24,10 +26,18 @@ services:
       - ./artifacts:/app/artifacts
       - ./flows:/app/flows
       - ./fixtures:/app/fixtures
+      - ./data/browser-sessions:/app/data/browser-sessions
     environment:
       - WEBUI_KEEP_RUNS=50      # artifacts retention (matches the server default)
+      - WEBUI_NOVNC_BROWSER_ROOT=/app/data/browser-sessions
       # Bind the webui to all interfaces INSIDE the container so Docker's published port can reach it
       # (a 127.0.0.1 listener in the container is unreachable via the published port). Still safe: the
-      # ports above publish only to the host's 127.0.0.1 — front with an auth proxy for remote access.
+      # ports above publish only to the host's 127.0.0.1; front with an auth proxy for remote access.
       - WEBUI_HOST=0.0.0.0
+      # External-mode noVNC choices:
+      # - NOVNC_DISABLE=1 disables the headed browser view.
+      # - NOVNC_AUTH_BOUNDARY=authenticated-proxy asserts a fronting proxy/tunnel protects 6080.
+      #   It also requires NOVNC_PROXY_TLS=1 and NOVNC_PROXY_AUTH=tenant-session.
+      #   Optional NOVNC_PROXY_URL must be https://...
+      # Leave both unset for local loopback recording only.
     restart: unless-stopped

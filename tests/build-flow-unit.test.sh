@@ -213,13 +213,36 @@ eq "$(jq -rc '.steps[0]|[.kind,.value,.action]' "$FLOW5")" '["find","Open","clic
 eq "$(jq -rc '.steps[1]|[.kind,.dir,.px]' "$FLOW5")" '["scroll","down",700]' "scroll step1 -> {kind:scroll,dir:down,px:700}"
 eq "$(jq -rc '.steps[2]|[.kind,.value]' "$FLOW5")" '["find","Loaded"]' "scroll step2 click after the dropped scrolls"
 SCN="_bfu_scroll_$$"
-jq --arg n "$SCN" '.name=$n' "$FLOW5" > "$DIR/flows/$SCN.flow.json"
+jq --arg n "$SCN" '.name=$n | .environment="local" | .startUrl="http://127.0.0.1/feed"' "$FLOW5" > "$DIR/flows/$SCN.flow.json"
 bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$SCN.flow.json" >/dev/null 2>&1 || fail "scroll flow compile failed"
 grep -q 'bin/play-flow.mjs' "$DIR/tests/$SCN.test.sh" || fail "scroll compile did not emit play-flow wrapper"
-if grep -Eq '\bAB(_AUTH|_JSON|X)?\b|BATCH|wait_url|record start' "$DIR/tests/$SCN.test.sh"; then
-	fail "scroll wrapper leaked legacy agent-browser commands"
-fi
+grep -q -- '--flow' "$DIR/tests/$SCN.test.sh" || fail "scroll wrapper must pass --flow to play-flow"
 node "$DIR/bin/play-flow.mjs" --flow "$DIR/flows/$SCN.flow.json" --validate-only >/dev/null 2>&1 || fail "play-flow validate-only rejected scroll flow"
 rm -f "$DIR/flows/$SCN.flow.json" "$DIR/flows/$SCN.candidates.json" "$DIR/tests/$SCN.test.sh"
+
+# 20. Unsupported recorder capabilities are represented explicitly and fail closed. Container scroll
+#     is captured by capture.js as an unsupported event (not silently dropped and not converted to a
+#     runnable page scroll). Modifier shortcuts remain partial support: build-flow emits a press but
+#     prints a review warning.
+REC9="$TMP/records9.json"; FLOWS9="$TMP/flows9"; mkdir -p "$FLOWS9"
+cat > "$REC9" <<'JSON'
+[
+ {"seq":1,"action_type":"key","url_at_capture":"https://app.example.com/editor","primary":null,"candidates":[],"input_value":"Control+s","modifier":true,"is_navigation_boundary":false},
+ {"seq":2,"action_type":"unsupported","capability":"container-scroll","reason":"scrollable container gestures require a stable container locator and are not replayable as page scroll","dir":"down","px":240,"primary":null,"candidates":[],"insufficient":true,"is_navigation_boundary":false}
+]
+JSON
+LOG9="$TMP/unsupported.log"
+node "$DIR/bin/build-flow.js" unsupportedflow "https://app.example.com/editor" "" "$REC9" "$FLOWS9" "$BF_ENGINE" 2>"$LOG9" \
+	|| fail "build-flow.js exited non-zero on the unsupported capability stream"
+FLOW9="$FLOWS9/unsupportedflow.flow.json"
+eq "$(jq -rc '.steps[0]|[.kind,.value]' "$FLOW9")" '["press","Control+s"]' "unsupported: modifier shortcut remains an explicit press"
+grep -q "modifier shortcut 'Control+s'" "$LOG9" || fail "unsupported: modifier shortcut warning missing"
+eq "$(jq -r '.steps[1].kind' "$FLOW9")" 'scroll' "unsupported: container scroll review step uses scroll kind"
+eq "$(jq -r '.steps[1].needs_review' "$FLOW9")" 'true' "unsupported: container scroll is needs_review"
+eq "$(jq -r '.steps[1].unsupported' "$FLOW9")" 'container-scroll' "unsupported: capability name recorded"
+eq "$(jq -rc '.steps[1]|[.recordedDir,.recordedPx]' "$FLOW9")" '["down",240]' "unsupported: recorded scroll evidence retained"
+if node "$DIR/bin/play-flow.mjs" --flow "$FLOW9" --validate-only >/dev/null 2>&1; then
+	fail "unsupported: validate-only accepted a needs_review container scroll"
+fi
 
 echo "  ✓ build-flow-unit.test.sh passed"

@@ -138,6 +138,29 @@ function actionFind(rec, action, extra) {
   candidatesByStep[steps.length - 1] = ladderOf(rec);
 }
 
+function unsupportedReview(rec) {
+  needsReview++;
+  const capability = rec.capability || 'unsupported';
+  const reason = rec.reason || 'recorded capability is not replayable by the current flow schema';
+  const step = {
+    kind: capability === 'container-scroll' ? 'scroll' : 'find',
+    needs_review: true,
+    unsupported: capability,
+    reason,
+    candidates: (rec.candidates || []).slice(0, Math.max(2, (rec.candidates || []).length))
+  };
+  if (capability === 'container-scroll') {
+    if (rec.dir) step.recordedDir = rec.dir;
+    const px = Math.round(Number(rec.px));
+    if (Number.isFinite(px) && px > 0) step.recordedPx = px;
+  } else if (rec.action) {
+    step.action = rec.action;
+  }
+  steps.push(step);
+  candidatesByStep[steps.length - 1] = ladderOf(rec);
+  warns.push(`needs_review step #${steps.length - 1} (${capability}): ${reason}`);
+}
+
 function token(realValue) {
   inputN++;
   const key = 'input_' + inputN;
@@ -206,6 +229,10 @@ for (let i = 0; i < records.length; i++) {
     }
     if (nextTxt) steps.push({ kind: 'wait', until: 'text', value: nextTxt });
     else steps.push({ kind: 'wait', until: 'load', value: 'networkidle' });
+    continue;
+  }
+  if (t === 'unsupported') {
+    unsupportedReview(rec);
     continue;
   }
   if (isSelectInputDuplicate(rec, records[i + 1])) {
