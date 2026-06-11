@@ -7,7 +7,6 @@ PORT=$((6100 + RANDOM % 1000))
 SRV=""
 DEV_FLOW_NAME="_webui_dev_readonly_$$"
 DEV_FLOW="$DIR/flows/$DEV_FLOW_NAME.flow.json"
-DEV_TEST="$DIR/tests/$DEV_FLOW_NAME.test.sh"
 
 fail(){ echo "  webui-blocked-flow-route-unit: $1" >&2; exit 1; }
 
@@ -16,7 +15,7 @@ cleanup() {
 		kill "$SRV" 2>/dev/null || true
 		wait "$SRV" 2>/dev/null || true
 	fi
-	rm -f "$DEV_FLOW" "$DEV_TEST"
+	rm -f "$DEV_FLOW"
 	rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -34,12 +33,6 @@ cat > "$DEV_FLOW" <<JSON
   "asserts": []
 }
 JSON
-cat > "$DEV_TEST" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-touch "$DEV_TEST"
-
 node --check "$DIR/webui/blocked-flows.js" || fail "blocked-flows syntax failed"
 node --check "$DIR/webui/flows.js" || fail "flows syntax failed"
 node --check "$DIR/webui/readiness.js" || fail "readiness syntax failed"
@@ -150,6 +143,7 @@ assert.equal(body.evidencePackRequired, false, 'route does not require evidence 
 assert.equal(body.allowlist, 'https://example.com', 'route returns exact allowlist');
 assert.equal(body.job?.meta?.workflow, 'development-integration', 'job metadata marks development integration');
 assert.equal(body.job?.meta?.productionOpenApprovalRequired, false, 'job metadata keeps production approval separate');
+assert.match(body.job?.label || '', /dev-readonly validate/, 'validate-only dev route uses the development validate lane');
 const jobId = body.job.id;
 let job = null;
 for (let i = 0; i < 80; i += 1) {
@@ -167,6 +161,19 @@ r = await fetch(`${base}/api/dev-integration-readonly`, {
 	body: JSON.stringify({ name: process.env.DEV_FLOW_NAME, allowlist: 'https://example.com/path' }),
 });
 assert.equal(r.status, 400, 'development read-only route rejects path allowlist entries');
+
+r = await fetch(`${base}/api/dev-integration-readonly`, {
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	body: JSON.stringify({
+		name: process.env.DEV_FLOW_NAME,
+		allowlist: 'https://example.com',
+		resolverEvidence,
+	}),
+});
+assert.equal(r.status, 409, 'development read-only replay still requires compiled test wrapper');
+body = await r.json();
+assert.match(body.error || '', /compiled test is missing or older than the flow/, 'replay compile blocker is explicit');
 
 r = await fetch(`${base}/api/dev-integration-readonly`, {
 	method: 'POST',

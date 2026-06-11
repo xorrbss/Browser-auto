@@ -330,6 +330,15 @@ function normalizeExactTargetAllowlist(value, fallback = '') {
 	return [...new Set(origins)].join(',');
 }
 
+const COMPILED_TEST_BLOCKER = 'compiled test is missing or older than the flow';
+
+function devReadonlyScenarioBlocker(flow, { validateOnly }) {
+	if (flow.runnable) return '';
+	const reasons = Array.isArray(flow.scenarioStatus?.reasons) ? flow.scenarioStatus.reasons : [];
+	const blockers = validateOnly ? reasons.filter((reason) => reason !== COMPILED_TEST_BLOCKER) : reasons;
+	return blockers[0] || (!validateOnly ? flow.runBlockedReason : '') || '';
+}
+
 function normalizeJsonEnvValue(value, label) {
 	const raw = String(value || '').trim();
 	if (!raw) return '';
@@ -632,12 +641,6 @@ const server = http.createServer(async (req, res) => {
 					return sendJson(res, 409, { error: 'development read-only integration requires flow.environment staging or live-readonly' });
 				}
 				if (riskClass !== 'read') return sendJson(res, 409, { error: 'development read-only integration requires riskClass read' });
-				if (!flow.runnable) {
-					return sendJson(res, 409, {
-						error: flow.runBlockedReason || 'flow is not ready for deterministic replay',
-						state: flow.scenarioStatus?.state || 'not-ready',
-					});
-				}
 				const requestedMode = String(bodyJson.runMode || bodyJson.run_mode || environment).trim();
 				if (requestedMode !== environment) return sendJson(res, 400, { error: `runMode must match flow.environment ${environment}` });
 				let allowlist;
@@ -647,6 +650,13 @@ const server = http.createServer(async (req, res) => {
 					return sendJson(res, 400, { error: e.message });
 				}
 				const validateOnly = bodyJson.validateOnly === true || bodyJson.validate_only === true;
+				const scenarioBlocker = devReadonlyScenarioBlocker(flow, { validateOnly });
+				if (scenarioBlocker) {
+					return sendJson(res, 409, {
+						error: scenarioBlocker || 'flow is not ready for deterministic replay',
+						state: flow.scenarioStatus?.state || 'not-ready',
+					});
+				}
 				const args = validateOnly ? ['--validate-only', '--allowlist', allowlist, name] : ['--allowlist', allowlist, name];
 				const env = { AQA_TARGET_ALLOWLIST: allowlist };
 				try {
