@@ -49,8 +49,22 @@ target:
   origin: https://approval.office.hiworks.com
   expected_start_path: /ibizsoftware.net/approval/document/lists/W
   expected_return_path: /ibizsoftware.net/approval/document/lists/W
-  approved_redirect_origins:
+  approved_readonly_origins:
     - https://approval.office.hiworks.com
+    - https://account-api.office.hiworks.com
+    - https://banner-api.office.hiworks.com
+    - https://cache-api.office.hiworks.com
+    - https://cdn.jsdelivr.net
+    - https://count-api.office.hiworks.com
+    - https://gnb.office.hiworks.com
+    - https://hr-api.office.hiworks.com
+    - https://in-app.office.hiworks.com
+    - https://menu-api-v4.office.hiworks.com
+    - https://office.hiworks.com
+    - https://security-alarm-api.office.hiworks.com
+    - https://static.gabia.com
+    - https://static.hiworks.com
+    - https://tab-menu.office.hiworks.com
 
 egress:
   resolver_evidence_file:
@@ -66,11 +80,11 @@ documentation placeholders only.
 
 ```bash
 export AQA_RUN_MODE=live-readonly
-export AQA_TARGET_ALLOWLIST=https://approval.office.hiworks.com
+export AQA_TARGET_ALLOWLIST='https://approval.office.hiworks.com,https://account-api.office.hiworks.com,https://banner-api.office.hiworks.com,https://cache-api.office.hiworks.com,https://cdn.jsdelivr.net,https://count-api.office.hiworks.com,https://gnb.office.hiworks.com,https://hr-api.office.hiworks.com,https://in-app.office.hiworks.com,https://menu-api-v4.office.hiworks.com,https://office.hiworks.com,https://security-alarm-api.office.hiworks.com,https://static.gabia.com,https://static.hiworks.com,https://tab-menu.office.hiworks.com'
 export AQA_EGRESS_REQUIRE_FRESH_RESOLVER_EVIDENCE=1
 export AQA_EGRESS_REQUIRE_CONNECTION_IP_EVIDENCE=1
 
-# Replace this with fresh operator-approved resolver evidence for approval.office.hiworks.com.
+# Replace this with fresh operator-approved resolver evidence for every host in AQA_TARGET_ALLOWLIST.
 export AQA_EGRESS_RESOLVER_EVIDENCE='{
   "approval.office.hiworks.com": {
     "addresses": ["203.0.113.10"],
@@ -108,6 +122,24 @@ Do not run bare `node bin/play-flow.mjs --flow
 flows/approval_office_hiworks_com_ibizsoftware_net_approval.flow.json --validate-only` without the
 operator env above. The flow is `live-readonly`, so validation must include matching `AQA_RUN_MODE`,
 target allowlist, and fresh resolver/connection-IP evidence.
+
+## Manual Auth Helper
+
+When `auth_state_status` is `missing` or `stale`, refresh the local `r45` Playwright auth state from
+the operator's own Windows desktop:
+
+```text
+auth-r45.cmd
+```
+
+This helper opens a visible Git Bash auth runner, which then opens the Playwright browser. Log in to
+Hiworks, navigate to the approval document list, and press Enter in the helper window only after the
+list is visible. The helper writes a local stopfile so `setup/auth.sh` saves
+`fixtures/auth/playwright/r45.state.json`.
+
+Do not attach the saved state file, cookies, OTPs, or screenshots that expose business payloads as
+evidence. Record only the operator, timestamp, target origin, and whether the auth state was refreshed
+successfully.
 
 ## Operator Validate-Only
 
@@ -150,7 +182,7 @@ Attach redacted evidence only:
 Do not run if any of these are true:
 
 - `AQA_RUN_MODE` is not `live-readonly`.
-- `AQA_TARGET_ALLOWLIST` is broader than `https://approval.office.hiworks.com`.
+- `AQA_TARGET_ALLOWLIST` is broader than the owner-approved Hiworks read-only origin set above.
 - Resolver or connection-IP evidence is stale, missing, or mismatched.
 - Auth state is missing/stale, reaches MFA/OTP, or belongs to the wrong account or tenant.
 - The journey exposes a write, approve, reject, delete, save, upload, download, or irreversible action.
