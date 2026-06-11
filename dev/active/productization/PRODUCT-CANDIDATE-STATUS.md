@@ -129,6 +129,12 @@ passed with `75/75` deterministic tests green; the full-suite run id was `202606
 Details are recorded in `dev/active/productization/RELEASE-EVIDENCE-2026-06-11.md`. External service
 open remains No-Go because the full P0 acceptance checklist is still open.
 
+Additional local external-runner execution on 2026-06-11 passed from a clean `origin/master` worktree:
+`node bin/local-external-runner-smoke.mjs` returned `ok: true`, `status: succeeded`,
+`workerId: runner-local`, and `auditSinkWritten: true`; the focused runner/rehearsal tests and
+`bash tests/security-p0-gate.test.sh` also passed. This is local deterministic contract evidence only,
+not proof of a deployed production external runner or production audit webhook delivery.
+
 The readiness matrix is intentionally conservative: current sections are still release-blocking because
 real IdP, KMS, noVNC, DNS-at-connection, runner deployment, webhook audit, export, and live-like
 acceptance remain external/operator-owned.
@@ -170,8 +176,8 @@ Closed or partially closed for pre-serverization:
 - P0-F: local WebUI jobs have persisted state, idempotent cancel, runner claim/heartbeat leases,
   redacted result/audit, retry-aware restart reconciliation, worker metadata, retention metadata,
   artifact hashes, local audit hash-chain verification, deterministic JSONL audit-sink validation, and
-  audit outbox metadata; production runner identity/deployment and webhook audit delivery are still
-  open.
+  audit outbox metadata. Local external-runner execution was reconfirmed on 2026-06-11; production
+  runner identity/deployment and webhook audit delivery are still open.
 - P0-G: export/retention helpers block known secret paths, raw secret patterns, unknown scan/redaction
   status, cross-tenant reuse, missing policy approval, expired/invalid signed refs, legal holds, and
   tombstoned artifacts. A production export service and tenant deletion workflow are still open.

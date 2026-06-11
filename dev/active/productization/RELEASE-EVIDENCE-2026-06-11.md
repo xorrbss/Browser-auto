@@ -31,6 +31,27 @@ Latest clean-clone full-suite run:
 - Skipped by default: `approval_office_hiworks_com_ibizsoftware_net_approval`, `ianatour`, `login`, `nav-roundtrip`.
 - Reason for skips: app-bound/operator-owned auth or non-local lane; run only by explicit operator action with the matching auth, run mode, and target allowlist.
 
+## External Runner Local Execution
+
+Executed from a clean `origin/master` worktree on 2026-06-11 before this documentation update. Scope is
+local deterministic external-mode contract evidence only: loopback WebUI, authenticated runner API,
+durable job store, outbound `runner-worker`, local JSONL audit sink, and fixture job execution. This is
+not evidence of a deployed production external runner topology or production audit webhook delivery.
+
+| Command | Result | Evidence |
+| --- | --- | --- |
+| `node bin/local-external-runner-smoke.mjs` | PASS | `{"ok":true,"jobId":"j1781148278874","port":49195,"status":"succeeded","workerId":"runner-local","auditSinkWritten":true}` |
+| `bash tests/local-external-runner-e2e.test.sh` | PASS | Local external-mode WebUI plus outbound runner worker smoke completed. |
+| `bash tests/runner-worker-unit.test.sh` | PASS | Worker claim, execution, cancellation, and log-redaction contract remained green. |
+| `bash tests/runner-contract-unit.test.sh` | PASS | External runner contract and audit outbox helper coverage remained green. |
+| `bash tests/runner-api-unit.test.sh` | PASS | Runner API helper coverage remained green. |
+| `bash tests/runner-api-route-unit.test.sh` | PASS | Runner API route adapter coverage remained green. |
+| `bash tests/jobs-durable-unit.test.sh` | PASS | Durable job store coverage remained green. |
+| `bash tests/audit-outbox-worker-unit.test.sh` | PASS | Audit outbox worker coverage remained green. |
+| `bash tests/audit-outbox-scheduler-unit.test.sh` | PASS | Audit outbox scheduler coverage remained green. |
+| `bash tests/local-external-rehearsal-unit.test.sh` | PASS | Local external-mode rehearsal wrapper configuration checks remained green. |
+| `bash tests/security-p0-gate.test.sh` | PASS | Fixture-only P0 gate passed, including `local-external-runner-e2e` and runner contract/API/worker tests. |
+
 ## Release Checklist Decision
 
 `node bin/release-checklist.mjs --markdown --artifacts-dir artifacts` reports `Decision: No-Go`.
