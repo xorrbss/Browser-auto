@@ -283,26 +283,45 @@ function extractRecipeRows(snapshotText, recipe) {
 
 	const rows = aria.rowsOf(lines, hits[0], rowRole);
 	const header = rows.find((r) => r.children.some((c) => c.role === 'columnheader'));
-	if (!header) throw new Error('no header row found in snapshot');
-	const headers = header.children.filter((c) => c.role === 'columnheader').map((c) => aria.norm(c.name));
-	const headerCount = headers.length;
 	const idx = {};
-	for (const [field, label] of Object.entries(recipe.columns)) {
-		const want = aria.norm(label);
-		const found = [];
-		headers.forEach((h, i) => { if (h === want) found.push(i); });
-		if (found.length === 0) throw new Error(`column "${label}" (${field}) not found in snapshot`);
-		if (found.length > 1) throw new Error(`column "${label}" (${field}) is ambiguous in snapshot`);
-		idx[field] = found[0];
+	const fields = Object.keys(recipe.columns);
+	let headerCount = null;
+	let headerlessIndexMode = false;
+	if (header) {
+		const headers = header.children.filter((c) => c.role === 'columnheader').map((c) => aria.norm(c.name));
+		headerCount = headers.length;
+		for (const [field, label] of Object.entries(recipe.columns)) {
+			const want = aria.norm(label);
+			const found = [];
+			headers.forEach((h, i) => { if (h === want) found.push(i); });
+			if (found.length === 0) throw new Error(`column "${label}" (${field}) not found in snapshot`);
+			if (found.length > 1) throw new Error(`column "${label}" (${field}) is ambiguous in snapshot`);
+			idx[field] = found[0];
+		}
+	} else if (recipe.columnIndexes && typeof recipe.columnIndexes === 'object' && !Array.isArray(recipe.columnIndexes)) {
+		const seen = new Set();
+		for (const field of fields) {
+			const n = recipe.columnIndexes[field];
+			if (!Number.isInteger(n) || n < 0) throw new Error(`columnIndexes.${field} must be a non-negative integer`);
+			if (seen.has(n)) throw new Error(`duplicate column index ${n}`);
+			seen.add(n);
+			idx[field] = n;
+		}
+		headerlessIndexMode = true;
+	} else {
+		throw new Error('no header row found in snapshot');
 	}
 
 	const strip = recipe.strip || {};
-	const fields = Object.keys(recipe.columns);
+	const maxIdx = Math.max(...fields.map((field) => idx[field]));
 	const items = [];
 	for (const r of rows) {
 		const cells = r.children.filter((c) => c.role === 'cell');
 		if (!cells.length) continue;
-		if (cells.length !== headerCount) {
+		if (headerlessIndexMode) {
+			if (cells.length <= maxIdx) throw new Error(`row has ${cells.length} cells but recipe needs index ${maxIdx}`);
+			if (fields.every((field) => aria.norm(cells[idx[field]].name) === aria.norm(recipe.columns[field]))) continue;
+		} else if (cells.length !== headerCount) {
 			throw new Error(`row has ${cells.length} cells but header has ${headerCount}`);
 		}
 		const data = {};
@@ -373,6 +392,50 @@ function inferClickedRowIndex(rows, step) {
 	if (contains.length === 1) return contains[0];
 	if (contains.length > 1) throw new Error(`locator values match multiple rows by contains: ${contains.join(', ')}`);
 	throw new Error(`locator values did not match any recipe row: ${targets.join(' / ')}`);
+}
+
+function preferredRecordField(recipe, requestedField = '') {
+	if (requestedField) return requestedField;
+	for (const field of ['title', 'subject', 'name']) {
+		if (Object.prototype.hasOwnProperty.call(recipe.columns || {}, field)) return field;
+	}
+	return recipe.key;
+}
+
+function capturedUniqueRecordValue(step) {
+	const candidates = Array.isArray(step?.candidates) ? step.candidates : [];
+	const values = [];
+	const add = (value) => {
+		if (typeof value !== 'string') return;
+		const s = value.trim();
+		if (s) values.push(s);
+	};
+	for (const c of candidates) {
+		if (Number(c?.count) !== 1) continue;
+		if (c.by === 'role' && c.name) add(c.name);
+		else if (['text', 'title', 'label', 'alt'].includes(c.by)) add(c.value);
+	}
+	if (!values.length) {
+		if (step?.by === 'role' && step?.name) add(step.name);
+		else if (['text', 'title', 'label', 'alt'].includes(step?.by)) add(step.value);
+	}
+	return [...new Set(values)][0] || '';
+}
+
+function fieldValueOpenRecordStep(recipeJson, step, recipe, field = '') {
+	const resolvedField = preferredRecordField(recipeJson, field);
+	if (!resolvedField || !Object.prototype.hasOwnProperty.call(recipeJson.columns || {}, resolvedField)) {
+		throw new Error(`field "${resolvedField || field}" is not in recipe columns`);
+	}
+	const value = capturedUniqueRecordValue(step);
+	if (!value) throw new Error('no capture-unique text/link candidate is available');
+	return {
+		kind: 'open_record',
+		source: 'field_value',
+		recipe,
+		field: resolvedField,
+		value,
+	};
 }
 
 export async function listFlows() {
@@ -530,7 +593,6 @@ async function resolveClickedRecordStepInner(name, stepIndex, recipe, field = ''
 	if (!validName(recipe)) return { ok: false, error: 'invalid recipe name' };
 	if (field && !validName(field)) return { ok: false, error: 'invalid field name' };
 	if (!existsSync(recipePath(recipe))) return { ok: false, error: `missing recipe recipes/${recipe}.json` };
-	if (!existsSync(snapshotPath(name))) return { ok: false, error: `missing snapshot flows/${name}.snapshot.txt; cannot infer clicked row position` };
 	const flow = await readJsonFile(flowPath(name));
 	if (!flow) return { ok: false, error: 'no such flow' };
 	const steps = Array.isArray(flow.steps) ? flow.steps : [];
@@ -539,25 +601,37 @@ async function resolveClickedRecordStepInner(name, stepIndex, recipe, field = ''
 	if (step.kind !== 'find' || (step.action || 'click') !== 'click') {
 		return { ok: false, error: 'only click steps can become open_record' };
 	}
-	const snapshotText = await readTextFile(snapshotPath(name));
-	if (!snapshotText) return { ok: false, error: `empty snapshot flows/${name}.snapshot.txt; cannot infer clicked row position` };
 	const recipeJson = await readJsonFile(recipePath(recipe));
 	if (!recipeJson) return { ok: false, error: `invalid recipe recipes/${recipe}.json` };
-	let rowIndex;
-	try {
-		rowIndex = inferClickedRowIndex(extractRecipeRows(snapshotText, recipeJson), step);
-	} catch (e) {
-		return { ok: false, error: `cannot infer clicked row position: ${e.message}` };
+	let nextStep = null;
+	const snapshotText = await readTextFile(snapshotPath(name));
+	if (snapshotText) {
+		try {
+			const rowIndex = inferClickedRowIndex(extractRecipeRows(snapshotText, recipeJson), step);
+			nextStep = {
+				kind: 'open_record',
+				source: 'row_index',
+				rowIndex,
+				recipe,
+				...(field ? { field } : {}),
+			};
+		} catch (e) {
+			try {
+				nextStep = fieldValueOpenRecordStep(recipeJson, step, recipe, field);
+			} catch {
+				return { ok: false, error: `cannot infer clicked row position: ${e.message}` };
+			}
+		}
+	} else {
+		try {
+			nextStep = fieldValueOpenRecordStep(recipeJson, step, recipe, field);
+		} catch (e) {
+			return { ok: false, error: `missing snapshot flows/${name}.snapshot.txt; cannot infer clicked row position; ${e.message}` };
+		}
 	}
-	steps[stepIndex] = {
-		kind: 'open_record',
-		source: 'row_index',
-		rowIndex,
-		recipe,
-		...(field ? { field } : {}),
-	};
+	steps[stepIndex] = nextStep;
 	await writeFile(flowPath(name), JSON.stringify(flow, null, 2) + '\n', 'utf8');
-	return { ok: true, rowIndex };
+	return { ok: true, rowIndex: nextStep.rowIndex, source: nextStep.source, field: nextStep.field, value: nextStep.value };
 }
 
 // saveValues: merge {input_N: string} into the gitignored values sidecar.

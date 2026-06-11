@@ -365,18 +365,44 @@ async function waitForOpenRecordRows(page, recipe, rowIndex) {
 	throw last;
 }
 
+function openRecordFieldValue(row, recipe, field) {
+	return field === 'key' ? row.key : row.data[field];
+}
+
+async function waitForOpenRecordRowByFieldValue(page, recipe, field, value) {
+	const deadline = Date.now() + 20000;
+	let last = null;
+	const want = aria.norm(value);
+	while (Date.now() <= deadline) {
+		const live = await extractLiveRecipeRows(page, recipe);
+		const matches = [];
+		for (const [rowIndex, row] of live.rows.entries()) {
+			if (aria.norm(openRecordFieldValue(row, recipe, field)) === want) matches.push({ rowIndex, row });
+		}
+		if (matches.length === 1) return { ...live, rowIndex: matches[0].rowIndex };
+		last = new Error(matches.length > 1
+			? `open_record: field "${field}" value "${value}" matched ${matches.length} rows (need exactly 1)`
+			: `open_record: field "${field}" value "${value}" matched no rows`);
+		await page.waitForTimeout(500);
+	}
+	throw last;
+}
+
 async function openRecord(page, step) {
 	const recipe = readOpenRecordRecipe(step.recipe);
 	const source = step.source || 'first';
-	const rowIndex = source === 'row_index' ? step.rowIndex : (step.rowIndex ?? 0);
 	const field = step.field || recipe.key;
 	if (field !== 'key' && !Object.prototype.hasOwnProperty.call(recipe.columns, field)) throw new Error(`open_record: field "${field}" is not in recipe columns`);
-	const { rows } = await waitForOpenRecordRows(page, recipe, rowIndex);
+	const live = source === 'field_value'
+		? await waitForOpenRecordRowByFieldValue(page, recipe, field, step.value)
+		: await waitForOpenRecordRows(page, recipe, source === 'row_index' ? step.rowIndex : (step.rowIndex ?? 0));
+	const { rows, rowIndex } = live;
 	const row = rows[rowIndex];
-	const clickValue = field === 'key' ? row.key : row.data[field];
+	const clickValue = openRecordFieldValue(row, recipe, field);
 	const cell = field === 'key' ? row.cellByField[recipe.key] : row.cellByField[field];
 	if (!clickValue || !cell) throw new Error(`open_record: rowIndex ${rowIndex} field "${field}" is empty`);
-	console.error(`[play-flow] open_record:${source === 'row_index' ? `row_index:${rowIndex}` : 'first'} recipe=${step.recipe} field=${field} key=${row.key} value=${clickValue}`);
+	const sourceLabel = source === 'field_value' ? `field_value:${field}` : source === 'row_index' ? `row_index:${rowIndex}` : 'first';
+	console.error(`[play-flow] open_record:${sourceLabel} recipe=${step.recipe} field=${field} key=${row.key} value=${clickValue}`);
 	return clickOpenRecordCell(cell, clickValue);
 }
 

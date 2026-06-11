@@ -7,25 +7,43 @@ fail(){ echo "  x webui-flows-unit: $1" >&2; exit 1; }
 
 FLOW_NAME="_webui_row_index_unit_$$"
 MISSING_NAME="_webui_missing_snapshot_unit_$$"
+FALLBACK_NAME="_webui_field_value_unit_$$"
+NO_FALLBACK_NAME="_webui_no_field_value_unit_$$"
+HEADERLESS_NAME="_webui_headerless_row_unit_$$"
 SECRET_NAME="_webui_secret_values_unit_$$"
 RECIPE_NAME="_webui_row_recipe_$$"
+HEADERLESS_RECIPE_NAME="_webui_headerless_recipe_$$"
 RUN_OLD="20990101-000000-$((100000 + $$))"
 RUN_NEW="20990101-000000-$((100001 + $$))"
 FLOW="$DIR/flows/${FLOW_NAME}.flow.json"
 MISSING_FLOW="$DIR/flows/${MISSING_NAME}.flow.json"
+FALLBACK_FLOW="$DIR/flows/${FALLBACK_NAME}.flow.json"
+NO_FALLBACK_FLOW="$DIR/flows/${NO_FALLBACK_NAME}.flow.json"
+HEADERLESS_FLOW="$DIR/flows/${HEADERLESS_NAME}.flow.json"
 SECRET_FLOW="$DIR/flows/${SECRET_NAME}.flow.json"
 SECRET_VALUES="$DIR/flows/${SECRET_NAME}.values.json"
 SNAP="$DIR/flows/${FLOW_NAME}.snapshot.txt"
+HEADERLESS_SNAP="$DIR/flows/${HEADERLESS_NAME}.snapshot.txt"
 RECIPE="$DIR/recipes/${RECIPE_NAME}.json"
+HEADERLESS_RECIPE="$DIR/recipes/${HEADERLESS_RECIPE_NAME}.json"
 ART_OLD="$DIR/artifacts/$RUN_OLD"
 ART_NEW="$DIR/artifacts/$RUN_NEW"
-trap 'rm -f "$FLOW" "$MISSING_FLOW" "$SECRET_FLOW" "$SECRET_VALUES" "$SNAP" "$RECIPE"; rm -rf "$ART_OLD" "$ART_NEW"' EXIT
+trap 'rm -f "$FLOW" "$MISSING_FLOW" "$FALLBACK_FLOW" "$NO_FALLBACK_FLOW" "$HEADERLESS_FLOW" "$SECRET_FLOW" "$SECRET_VALUES" "$SNAP" "$HEADERLESS_SNAP" "$RECIPE" "$HEADERLESS_RECIPE"; rm -rf "$ART_OLD" "$ART_NEW"' EXIT
 
 cat > "$RECIPE" <<'JSON'
 {
   "collection": { "name": "Tickets" },
   "key": "id",
   "columns": { "id": "id", "subject": "subject", "owner": "owner" }
+}
+JSON
+
+cat > "$HEADERLESS_RECIPE" <<'JSON'
+{
+  "collection": { "name": "Tickets" },
+  "key": "id",
+  "columns": { "id": "id", "subject": "subject", "owner": "owner" },
+  "columnIndexes": { "id": 0, "subject": 1, "owner": 2 }
 }
 JSON
 
@@ -36,6 +54,23 @@ cat > "$SNAP" <<'TREE'
       - columnheader "id"
       - columnheader "subject"
       - columnheader "owner"
+    - row
+      - cell "T-1"
+      - cell "Login bug"
+      - cell "Alice"
+    - row
+      - cell "T-2"
+      - cell "Slow page"
+      - cell "Bob"
+TREE
+
+cat > "$HEADERLESS_SNAP" <<'TREE'
+- table "Tickets"
+  - rowgroup
+    - row
+      - cell "id"
+      - cell "subject"
+      - cell "owner"
     - row
       - cell "T-1"
       - cell "Login bug"
@@ -81,6 +116,70 @@ cat > "$MISSING_FLOW" <<JSON
 }
 JSON
 
+cat > "$FALLBACK_FLOW" <<JSON
+{
+  "name": "$FALLBACK_NAME",
+  "engine": "playwright",
+  "environment": "staging",
+  "riskClass": "read",
+  "startUrl": "https://example.test/tickets",
+  "steps": [
+    {
+      "kind": "find",
+      "needs_review": true,
+      "action": "click",
+      "candidates": [
+        { "by": "role", "value": "link", "name": "Slow page", "count": 1 },
+        { "by": "text", "value": "Slow page", "count": 0 }
+      ]
+    }
+  ],
+  "asserts": []
+}
+JSON
+
+cat > "$NO_FALLBACK_FLOW" <<JSON
+{
+  "name": "$NO_FALLBACK_NAME",
+  "engine": "playwright",
+  "environment": "staging",
+  "riskClass": "read",
+  "startUrl": "https://example.test/tickets",
+  "steps": [
+    {
+      "kind": "find",
+      "needs_review": true,
+      "action": "click",
+      "candidates": [
+        { "by": "text", "value": "Edit", "count": 3 }
+      ]
+    }
+  ],
+  "asserts": []
+}
+JSON
+
+cat > "$HEADERLESS_FLOW" <<JSON
+{
+  "name": "$HEADERLESS_NAME",
+  "engine": "playwright",
+  "environment": "staging",
+  "riskClass": "read",
+  "startUrl": "https://example.test/tickets",
+  "steps": [
+    {
+      "kind": "find",
+      "needs_review": true,
+      "action": "click",
+      "candidates": [
+        { "by": "title", "value": "Slow page", "count": 1 }
+      ]
+    }
+  ],
+  "asserts": []
+}
+JSON
+
 cat > "$SECRET_FLOW" <<JSON
 {
   "name": "$SECRET_NAME",
@@ -112,7 +211,7 @@ cat > "$ART_NEW/report.json" <<JSON
 ]
 JSON
 
-FLOW_NAME="$FLOW_NAME" MISSING_NAME="$MISSING_NAME" SECRET_NAME="$SECRET_NAME" RECIPE_NAME="$RECIPE_NAME" RUN_NEW="$RUN_NEW" node --input-type=module <<'NODE'
+FLOW_NAME="$FLOW_NAME" MISSING_NAME="$MISSING_NAME" FALLBACK_NAME="$FALLBACK_NAME" NO_FALLBACK_NAME="$NO_FALLBACK_NAME" HEADERLESS_NAME="$HEADERLESS_NAME" SECRET_NAME="$SECRET_NAME" RECIPE_NAME="$RECIPE_NAME" HEADERLESS_RECIPE_NAME="$HEADERLESS_RECIPE_NAME" RUN_NEW="$RUN_NEW" node --input-type=module <<'NODE'
 import { readFile } from 'node:fs/promises';
 import { getFlow, listFlows, resolveClickedRecordStep } from './webui/flows.js';
 
@@ -128,9 +227,23 @@ if (step.kind !== 'open_record') die(`expected open_record, got ${step.kind}`);
 if (step.source !== 'row_index') die(`expected source=row_index, got ${step.source}`);
 if (step.rowIndex !== 1) die(`expected persisted rowIndex=1, got ${step.rowIndex}`);
 
-const missing = await resolveClickedRecordStep(process.env.MISSING_NAME, 0, process.env.RECIPE_NAME);
-if (missing.ok) die('expected missing snapshot resolve to fail');
-if (!/missing snapshot/.test(missing.error || '')) die(`missing snapshot error was unclear: ${missing.error}`);
+const fallback = await resolveClickedRecordStep(process.env.FALLBACK_NAME, 0, process.env.RECIPE_NAME);
+if (!fallback.ok) die(`expected missing-snapshot field_value fallback to pass, got: ${fallback.error}`);
+const fallbackFlow = JSON.parse(await readFile(`flows/${process.env.FALLBACK_NAME}.flow.json`, 'utf8'));
+const fallbackStep = fallbackFlow.steps[0];
+if (fallbackStep.source !== 'field_value') die(`expected source=field_value, got ${fallbackStep.source}`);
+if (fallbackStep.field !== 'subject') die(`expected fallback field=subject, got ${fallbackStep.field}`);
+if (fallbackStep.value !== 'Slow page') die(`expected fallback value=Slow page, got ${fallbackStep.value}`);
+
+const noFallback = await resolveClickedRecordStep(process.env.NO_FALLBACK_NAME, 0, process.env.RECIPE_NAME);
+if (noFallback.ok) die('expected missing snapshot without a unique captured value to fail');
+if (!/missing snapshot/.test(noFallback.error || '') || !/capture-unique/.test(noFallback.error || '')) die(`missing snapshot fallback error was unclear: ${noFallback.error}`);
+
+const headerless = await resolveClickedRecordStep(process.env.HEADERLESS_NAME, 0, process.env.HEADERLESS_RECIPE_NAME);
+if (!headerless.ok) die(`expected headerless columnIndexes resolve to pass, got: ${headerless.error}`);
+if (headerless.rowIndex !== 1) die(`expected headerless rowIndex=1, got ${headerless.rowIndex}`);
+const headerlessFlow = JSON.parse(await readFile(`flows/${process.env.HEADERLESS_NAME}.flow.json`, 'utf8'));
+if (headerlessFlow.steps[0].source !== 'row_index') die(`expected headerless source=row_index, got ${headerlessFlow.steps[0].source}`);
 
 const statusFlow = await getFlow(process.env.MISSING_NAME);
 if (!statusFlow.missingValues.includes('input_1')) die('expected input_1 to be reported missing');

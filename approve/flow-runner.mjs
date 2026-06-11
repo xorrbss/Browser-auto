@@ -18,7 +18,7 @@ const WAIT_UNTIL = new Set(['url', 'text', 'load']);
 const SCROLL_DIR = new Set(['up', 'down', 'left', 'right']);
 const FRAME_BY = new Set(['id', 'name', 'title', 'urlGlob', 'index']); // iframe-step scope (same-origin recording)
 const EFFECTFUL = new Set(['click', 'fill', 'type', 'select', 'check', 'uncheck']); // hover is non-effectful
-const OPEN_RECORD_SOURCE = new Set(['first', 'row_index']);
+const OPEN_RECORD_SOURCE = new Set(['first', 'row_index', 'field_value']);
 const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_STEP_TIMEOUT_MS = 20000;
 const MAX_STEP_TIMEOUT_MS = 10 * 60 * 1000;
@@ -76,6 +76,8 @@ export function validateSteps(steps) {
 			if (s.field != null && s.field !== '' && (typeof s.field !== 'string' || !SAFE_NAME.test(s.field))) return { ok: false, reason: `step ${i}: open_record.field invalid` };
 			if (source === 'row_index') {
 				if (!(Number.isInteger(s.rowIndex) && s.rowIndex >= 0)) return { ok: false, reason: `step ${i}: open_record.rowIndex must be a non-negative integer` };
+			} else if (source === 'field_value') {
+				if (!(typeof s.value === 'string' && s.value.trim() !== '')) return { ok: false, reason: `step ${i}: open_record.value required for field_value` };
 			} else if (s.rowIndex != null && !(Number.isInteger(s.rowIndex) && s.rowIndex >= 0)) {
 				return { ok: false, reason: `step ${i}: open_record.rowIndex must be a non-negative integer` };
 			}

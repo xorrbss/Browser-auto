@@ -23,6 +23,7 @@ const startUrl = opt('--url');
 const app = opt('--app', '');
 const seconds = Number(opt('--seconds', process.env.AQA_CAPTURE_SECONDS || '0')) || 0;
 const stopFile = opt('--stop-file', process.env.AQA_CAPTURE_STOPFILE || '');
+const SAFE_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 function wait(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,6 +71,28 @@ function runBuilder(recordsPath) {
 		windowsHide: true,
 	});
 	if (r.status !== 0) process.exit(r.status || 1);
+}
+
+function snapshotPath() {
+	return path.join(PROBE_ROOT, 'flows', `${name}.snapshot.txt`);
+}
+
+async function captureStartSnapshot(page) {
+	try {
+		const snapshot = await page.locator('body').ariaSnapshot({ timeout: 10000 });
+		return typeof snapshot === 'string' && snapshot.trim() ? snapshot : '';
+	} catch (e) {
+		console.error(`[pw-record] WARN: could not capture start snapshot: ${String(e && e.message || e)}`);
+		return '';
+	}
+}
+
+function writeStartSnapshot(snapshot) {
+	if (!snapshot) return;
+	const snap = snapshotPath();
+	fs.mkdirSync(path.dirname(snap), { recursive: true });
+	fs.writeFileSync(snap, snapshot + '\n');
+	console.error(`[pw-record] snapshot -> ${snap}`);
 }
 
 async function drainCaptureBuffers(page) {
@@ -141,6 +164,10 @@ async function main() {
 		console.error('usage: node bin/pw-record.mjs --name <name> --url <startUrl> [--app app] [--seconds N] [--stop-file path]');
 		process.exit(2);
 	}
+	if (!SAFE_NAME_RE.test(name)) {
+		console.error('[pw-record] invalid --name (use [A-Za-z0-9_-])');
+		process.exit(2);
+	}
 	const capjs = path.join(PROBE_ROOT, 'bin', 'capture.js');
 	if (!fs.existsSync(capjs)) {
 		console.error(`[pw-record] missing ${capjs}`);
@@ -159,6 +186,7 @@ async function main() {
 	const launch = { headless: process.env.AQA_PW_RECORD_HEADLESS === '1', channel: process.env.AQA_PW_CHANNEL || 'chrome' };
 	const browser = await chromium.launch(launch);
 	let recPath = null;
+	let startSnapshot = '';
 	try {
 		const contextOpts = {};
 		if (app) {
@@ -189,6 +217,7 @@ async function main() {
 			sessionStorage.setItem('__aqa_seq', '0');
 			sessionStorage.setItem('__aqa_prevurl', location.href);
 		});
+		startSnapshot = await captureStartSnapshot(page);
 		console.error(`[pw-record] engine=playwright; opened ${startUrl}. Drive the browser journey now.`);
 		await waitForStop(scopeViolations);
 		if (scopeViolations.length) throw new Error(`${scopeViolations[0]}; recording not written`);
@@ -206,6 +235,7 @@ async function main() {
 		await ctx.close();
 		await browser.close();
 		runBuilder(recPath);
+		writeStartSnapshot(startSnapshot);
 	} catch (e) {
 		console.error('[pw-record] FATAL: ' + String(e && e.message || e));
 		process.exitCode = 1;

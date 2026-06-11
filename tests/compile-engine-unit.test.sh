@@ -11,11 +11,12 @@ assert_no_bom(){
 
 PW="_eng_pw_frame_$$"
 PWOPEN="_eng_pw_open_record_$$"
+PWFIELD="_eng_pw_open_record_field_$$"
 OMIT="_eng_pw_omit_$$"
 BADENGINE="_eng_badengine_$$"
 VAL="_eng_pw_values_$$"
 RECIPE="_eng_recipe_$$"
-NAMES="$PW $PWOPEN $OMIT $BADENGINE $VAL"
+NAMES="$PW $PWOPEN $PWFIELD $OMIT $BADENGINE $VAL"
 cleanup(){ for n in $NAMES; do rm -f "$DIR/flows/$n.flow.json" "$DIR/flows/$n.values.json" "$DIR/tests/$n.test.sh"; done; rm -f "$DIR/recipes/$RECIPE.json"; }
 trap cleanup EXIT
 cleanup
@@ -52,6 +53,12 @@ cat > "$DIR/flows/$PWOPEN.flow.json" <<JSON
 JSON
 bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$PWOPEN.flow.json" >/dev/null 2>&1 || fail "playwright open_record flow compile failed"
 node "$DIR/bin/play-flow.mjs" --flow "$DIR/flows/$PWOPEN.flow.json" --validate-only >/dev/null 2>&1 || fail "play-flow validate-only rejected open_record flow"
+
+cat > "$DIR/flows/$PWFIELD.flow.json" <<JSON
+{"name":"$PWFIELD","engine":"playwright","environment":"local","riskClass":"read","startUrl":"http://127.0.0.1:9","steps":[{"kind":"open_record","source":"field_value","recipe":"$RECIPE","field":"subject","value":"Slow page"}],"asserts":[]}
+JSON
+bash "$DIR/bin/probe-record.sh" compile "$DIR/flows/$PWFIELD.flow.json" >/dev/null 2>&1 || fail "playwright open_record field_value flow compile failed"
+node "$DIR/bin/play-flow.mjs" --flow "$DIR/flows/$PWFIELD.flow.json" --validate-only >/dev/null 2>&1 || fail "play-flow validate-only rejected open_record field_value flow"
 
 cat > "$DIR/flows/$VAL.flow.json" <<JSON
 {"name":"$VAL","engine":"playwright","environment":"local","riskClass":"read","startUrl":"http://127.0.0.1:9","steps":[{"kind":"find","by":"label","value":"Email","action":"fill","text":"{{input_1}}"}],"asserts":[]}

@@ -24,9 +24,11 @@ const STEPS = [
   { kind: "find", by: "role", value: "button", name: "확인", action: "click" },
 ];
 assert(validateSteps([{ kind: "open_record", source: "row_index", recipe: "tickets", rowIndex: 1 }]).ok === true, "open_record row_index validates");
+assert(validateSteps([{ kind: "open_record", source: "field_value", recipe: "tickets", field: "subject", value: "Slow page" }]).ok === true, "open_record field_value validates");
 assert(validateSteps([{ kind: "open_record", recipe: "tickets" }]).ok === true, "open_record first shorthand validates");
 assert(validateSteps([{ kind: "open_record", source: "nth", recipe: "tickets", rowIndex: 1 }]).ok === false, "bad open_record.source refused");
 assert(validateSteps([{ kind: "open_record", source: "row_index", recipe: "tickets", rowIndex: -1 }]).ok === false, "bad open_record.rowIndex refused");
+assert(validateSteps([{ kind: "open_record", source: "field_value", recipe: "tickets", field: "subject" }]).ok === false, "field_value without value refused");
 assert(validateSteps([{ kind: "open_record", source: "row_index", recipe: "../tickets", rowIndex: 0 }]).ok === false, "bad open_record.recipe refused");
 assert(validateSteps(STEPS).ok === true, "a valid step sequence validates");
 assert(validateSteps([]).ok === false, "empty steps ⇒ refused");

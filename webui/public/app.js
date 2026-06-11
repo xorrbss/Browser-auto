@@ -802,7 +802,9 @@ function flowRecipeSuggestion(flow) {
 function flowStepSummary(s) {
 	if (!s || typeof s !== 'object') return '-';
 	if (s.kind === 'open_record') {
-		const row = s.source === 'row_index' && Number.isInteger(s.rowIndex) ? `${s.rowIndex + 1}번째 행` : '첫 번째 행';
+		const row = s.source === 'field_value'
+			? `${s.field || 'key'}="${s.value || ''}"`
+			: s.source === 'row_index' && Number.isInteger(s.rowIndex) ? `${s.rowIndex + 1}번째 행` : '첫 번째 행';
 		return `클릭한 행 위치로 열기: ${row} / ${s.recipe || '?'}${s.field ? ` / ${s.field}` : ''}`;
 	}
 	if (s.kind === 'wait') return `대기: ${s.until || ''} ${s.value || ''}`.trim();

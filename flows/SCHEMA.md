@@ -99,6 +99,12 @@ with headed `setup/auth.sh` instead.
 - `scroll`: page scroll captured as `{ "dir": "up|down|left|right", "px": 300 }`.
 - `press`: non-text keyboard action, such as `Enter`, `Escape`, `Tab`, or arrow keys.
 - `open_record`: recipe-driven dynamic row open for RPA/detail flows.
+  - `source`: optional; `first`, `row_index`, or `field_value`.
+  - `rowIndex`: required when `source:"row_index"`; zero-based recipe row index captured from a snapshot.
+  - `field`: optional recipe column to click; defaults to the recipe key. Use `title`/`subject` for
+    list rows whose clickable cell is not the key column.
+  - `value`: required when `source:"field_value"`; replay extracts live recipe rows and clicks only if
+    exactly one row has that field value.
   - `timeoutMs`: optional per-step timeout override for runner-controlled work where supported.
 
 Locator priority when authoring: **testid > role+name > label > exact-text > placeholder > title**.
