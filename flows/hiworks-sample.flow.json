@@ -1,0 +1,17 @@
+{
+  "name": "hiworks-sample",
+  "engine": "playwright",
+  "environment": "local",
+  "riskClass": "read",
+  "startUrl": "data:text/html;charset=utf-8,%3C!doctype%20html%3E%0A%3Chtml%20lang%3D%22en%22%3E%0A%3Cmeta%20charset%3D%22utf-8%22%3E%0A%3Ctitle%3EHiworks%20Approval%20Sample%3C%2Ftitle%3E%0A%3Cbody%3E%0A%20%20%3Cmain%3E%0A%20%20%20%20%3Ch1%3EHiworks%20Approval%20Sample%3C%2Fh1%3E%0A%20%20%20%20%3Csection%20id%3D%22list%22%20aria-label%3D%22Waiting%20approval%20list%22%3E%0A%20%20%20%20%20%20%3Ch2%3EWaiting%20approval%20list%3C%2Fh2%3E%0A%20%20%20%20%20%20%3Cp%20id%3D%22status%22%3EList%20ready%3C%2Fp%3E%0A%20%20%20%20%20%20%3Cbutton%20type%3D%22button%22%20onclick%3D%22openDoc()%22%3EOpen%20first%20approval%3C%2Fbutton%3E%0A%20%20%20%20%3C%2Fsection%3E%0A%20%20%20%20%3Csection%20id%3D%22detail%22%20aria-label%3D%22Approval%20detail%22%20hidden%3E%0A%20%20%20%20%20%20%3Ch2%3EApproval%20detail%3C%2Fh2%3E%0A%20%20%20%20%20%20%3Cp%3EDocument%20number%3A%20IB-20260611-0001%3C%2Fp%3E%0A%20%20%20%20%20%20%3Cp%3ETitle%3A%20Sample%20expense%20approval%3C%2Fp%3E%0A%20%20%20%20%20%20%3Cp%3EAmount%3A%20120000%20KRW%3C%2Fp%3E%0A%20%20%20%20%20%20%3Cp%20id%3D%22detail-status%22%3ERead-only%20detail%20loaded%3C%2Fp%3E%0A%20%20%20%20%20%20%3Cbutton%20type%3D%22button%22%20onclick%3D%22backToList()%22%3EBack%20to%20list%3C%2Fbutton%3E%0A%20%20%20%20%3C%2Fsection%3E%0A%20%20%3C%2Fmain%3E%0A%20%20%3Cscript%3E%0A%20%20%20%20function%20openDoc()%20%7B%0A%20%20%20%20%20%20history.pushState(%7B%7D%2C%20''%2C%20'%23%2Fapproval%2FIB-20260611-0001')%3B%0A%20%20%20%20%20%20document.getElementById('list').hidden%20%3D%20true%3B%0A%20%20%20%20%20%20document.getElementById('detail').hidden%20%3D%20false%3B%0A%20%20%20%20%7D%0A%20%20%20%20function%20backToList()%20%7B%0A%20%20%20%20%20%20history.pushState(%7B%7D%2C%20''%2C%20'%23%2Fapproval%2Flist%2FW')%3B%0A%20%20%20%20%20%20document.getElementById('detail').hidden%20%3D%20true%3B%0A%20%20%20%20%20%20document.getElementById('list').hidden%20%3D%20false%3B%0A%20%20%20%20%20%20document.getElementById('status').textContent%20%3D%20'Returned%20to%20waiting%20approval%20list'%3B%0A%20%20%20%20%7D%0A%20%20%3C%2Fscript%3E%0A%3C%2Fbody%3E%0A%3C%2Fhtml%3E",
+  "steps": [
+    { "kind": "find", "by": "role", "value": "button", "name": "Open first approval", "action": "click" },
+    { "kind": "wait", "until": "text", "value": "Read-only detail loaded" },
+    { "kind": "find", "by": "role", "value": "button", "name": "Back to list", "action": "click" },
+    { "kind": "wait", "until": "text", "value": "Returned to waiting approval list" }
+  ],
+  "asserts": [
+    { "kind": "text", "value": "Hiworks Approval Sample" },
+    { "kind": "text", "value": "Waiting approval list" }
+  ]
+}

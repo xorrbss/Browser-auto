@@ -9,6 +9,11 @@ blocks service open.
 
 ## Operator Handoff Pack
 
+- `OPEN-PREP-ACTION-PACK.md` is the immediate owner/operator input sheet for choosing the first
+  staging/live-readonly opening scope and collecting non-secret deployment metadata.
+- `HIWORKS-STAGING-READONLY-ENV-PACK.md` gives the first real Hiworks read-only acceptance env and
+  command template for `approval_office_hiworks_com_ibizsoftware_net_approval`.
+- `HIWORKS-SAMPLE-RUNBOOK.md` documents the local Hiworks fixture sample and its test commands.
 - `OPERATOR-HANDOFF-PACK.md` defines owner/operator evidence checklists for IdP, KMS/secret broker,
   noVNC, external runner, and audit webhook production handoff.
 - `PRODUCTION-CONFIG-TEMPLATES.md` provides ref-only connector/deployment templates for audit webhook,
