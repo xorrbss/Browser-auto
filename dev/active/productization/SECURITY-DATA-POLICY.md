@@ -221,6 +221,9 @@ Internal pilot is go only when:
   metadata, egress resolver/runtime evidence/control-plane blocking, noVNC scoped-root
   entrypoint/route-stub, durable job/runner route/audit outbox scheduler, release checklist API, CI
   lane guards, artifact, and readiness checks.
+- That fixture-only gate is local contract evidence only. It does not prove real production IdP/SSO,
+  KMS/secret-broker storage, noVNC proxy/browser isolation, external runner deployment, production
+  audit webhook delivery, or live/non-local target acceptance.
 - The readiness matrix reports local implementation, contract-only controls, and external blockers
   separately so release review cannot mistake local metadata checks for external-service approval.
 

@@ -1,6 +1,6 @@
 # web-ui — Tasks
 
-Last Updated: 2026-06-03
+Last Updated: 2026-06-11
 
 Legend: [ ] todo · [~] in progress · [x] done · [!] blocked
 
@@ -64,6 +64,9 @@ auto-opens in the dashboard. Serial queue proven; cancel + watchdog + graceful s
 - [x] Acceptance (autonomous parts PROVEN): list/get/resolve/values; compile refusal(unresolved)
       + success(resolved)→tests/<name>.test.sh; verify nav-roundtrip browser job exit 0;
       frontend modules render; view switch; **candidate radio click → resolve mutated flow.json**
+- [x] getFlow values redaction: `GET /api/flows/:name` reports `{{input_N}}` presence metadata and
+      missing-value status, but does not return raw `.values.json` bytes. Covered by
+      `tests/webui-flows-unit.test.sh` and `tests/webui-external-secret-mode-unit.test.sh`.
 - [x] WF-Review-P2 (30 agents, 25 findings/24 confirmed) → fixes all re-verified:
       **CRITICAL cmd.exe arg-injection via startUrl → RCE** (recordCmd used `cmd.exe /c
       record.cmd`; cmd.exe re-parses args) → **fixed: recordCmd now spawns Git-Bash directly on
@@ -100,6 +103,12 @@ auto-opens in the dashboard. Serial queue proven; cancel + watchdog + graceful s
 P0+P1+P2+P3 all merged to master; scheduling deferred (YAGNI, documented). Whole web UI is
 demoable: `node webui/server.js` → http://127.0.0.1:4310. Existing CLI untouched, `bash run.sh`
 7/7 GREEN. Remaining = the two HUMAN-only steps below.
+
+## Current productization status additions
+- [x] P0 readiness API and UI surface are implemented as metadata-only, No-Go-by-default status:
+      `/api/readiness`, `/api/release-checklist`, diagnostics/readiness UI, and blocked-flow metadata.
+      Covered by `tests/webui-readiness-unit.test.sh`,
+      `tests/webui-blocked-flow-route-unit.test.sh`, and `tests/webui-release-checklist-unit.test.sh`.
 
 ## Open questions / blockers
 

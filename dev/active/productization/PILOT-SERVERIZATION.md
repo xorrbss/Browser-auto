@@ -254,11 +254,21 @@ Acceptance:
 
 P1:
 
-- Implement Playwright `open_record` or document it as unsupported.
-- Add iframe/cross-origin recorder regression coverage for Playwright.
-- Make approval extraction duplicate-key handling fail closed.
-- Make pagination settle failures fail the sync or mark it incomplete, not partially green.
-- Add real UI for pilot runbooks and P0 readiness status.
+- [x] Implement Playwright `open_record` for recipe-driven row/detail opens. Local coverage:
+  `tests/flow-runner-unit.test.sh` and `tests/webui-flows-unit.test.sh`.
+- [x] Add Playwright iframe recorder regression coverage: same-origin iframe actions compile with a
+  frame locator, while cross-origin iframe actions become `needs_review` and fail closed. Local
+  coverage: `tests/capture-e2e.test.sh` and `tests/rpa-local-fixture-e2e.test.sh`.
+- [x] Make approval extraction and DB batch duplicate-key handling fail closed. Local coverage:
+  `tests/extract-approvals.test.sh` and `tests/db-unit.test.sh`.
+- [x] Make RPA pagination/list duplicate keys fail closed before save/upsert. Local coverage:
+  `tests/pw-rpa-pagination-unit.test.sh`.
+- [x] Make RPA pagination settle failures fail the sync/enrich path instead of storing partial green
+  results. Local coverage: `tests/pw-rpa-pagination-unit.test.sh`.
+- [x] Add P0 readiness UI/API status with machine-readable No-Go matrix and release-checklist
+  metadata. Local coverage: `tests/webui-readiness-unit.test.sh` and
+  `tests/webui-blocked-flow-route-unit.test.sh`.
+- Add first-class UI links/views for pilot runbooks if operators need them beyond committed docs.
 
 P2:
 

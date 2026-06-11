@@ -11,6 +11,12 @@ Synthesized from a 3-lens design workflow (criteria schema · adversarial safety
 grounded in `approve/approve-run.mjs`, `recipes/SCHEMA.md`, `bin/scheduled-task.sh`, DESIGN.md (§14) and
 `REDTEAM-AUTO-APPROVE.md`.
 
+**Current repo state (2026-06-11):** the built code is still Step 1 shadow-only evaluation
+(`lib/policy.js`, `bin/shadow-eval.js`, `tests/policy-eval-unit.test.sh`). The Step 2 items named below
+(`policy-ticks.jsonl`, the WebUI Policy Health card, anomaly monitor/alert, and session-freshness probe)
+are design/TODO items in this document only, not implemented runtime gates. Step 3 sampled/unattended live
+execution remains No-Go until Step 2 exists and the operator evidence in section 9 is complete.
+
 ## 0. The question
 When may the machine approve an item with **no human in the loop**? Today: never (fail-closed). The two
 built modes both have a human or a strong gate: **reviewed** (the operator checks each item) and **typed
@@ -153,9 +159,13 @@ anomalies/reconcile-uncertain · anything the operator hasn't soaked in shadow. 
   **NEVER** a browser/click/approve; REFUSES any non-`shadow` phase, exit 3) + `tests/policy-eval-unit.test.sh`
   + `policy.example.json`. Read-only ⇒ schedulable via `bin/scheduled-task.sh`. NO LLM on the path. The
   per-`approve-audit.jsonl` `policyId`/`eligibility`-stage tagging stays for when the leaf consumes a policy (Step 3).
-- **Step 2:** `policy-ticks.jsonl` + the Policy Health card + anomaly monitor/alert + session-freshness probe.
-- **Step 3 (gated):** sampled-live + monitoring; then bounded unattended via the scheduler — each behind the
-  §9 prerequisites + an owner sign-off, re-red-teamed before live.
+- **Step 2 (TODO/design only; NOT BUILT):** `policy-ticks.jsonl` + the Policy Health card + anomaly
+  monitor/alert + session-freshness probe. Until these are implemented and tested locally, tick caps,
+  health visibility, anomaly stop/alert, and pre-tick auth/session freshness are not available runtime
+  controls for live policy execution.
+- **Step 3 (NO-GO/gated):** sampled-live + monitoring; then bounded unattended via the scheduler — each behind
+  Step 2, the §9 prerequisites, owner sign-off, and a re-red-team before live. Do not add sampled/unattended
+  phase execution as part of Step 1/Step 2 documentation cleanup; keep `shadow-eval` shadow-only.
 
 **Net:** the SAFEST and immediately-buildable slice is **SHADOW eligibility + the human-reviewed click**
 (unattended for triage, human for the irreversible action). Actual unattended *clicks* are earned through

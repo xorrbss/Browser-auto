@@ -7,7 +7,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ( cd "$DIR" && node --input-type=module -e '
-import { assertPageSettled, paginationSettleFailureMessage, waitListSettled } from "./bin/pw-rpa.mjs";
+import { assertPageSettled, paginationSettleFailureMessage, sync, waitListSettled } from "./bin/pw-rpa.mjs";
 const assert = (c, m) => { if (!c) { console.error("  x pw-rpa-pagination: " + m); process.exit(1); } };
 
 const ok = { items: [{ key: "A" }], sig: "A" };
@@ -31,6 +31,42 @@ assert(msg.includes("extract-list failed"), "enrich message preserves cause");
 // ---- waitListSettled: the change-then-stable rule (browser-free via injected getList) ----
 const list = (...keys) => ({ items: keys.map((k) => ({ key: k })), sig: keys.sort().join(",") });
 const seq = (reads) => { let i = 0; return () => { const r = reads[Math.min(i++, reads.length - 1)]; if (r instanceof Error) throw r; return r; }; };
+
+// duplicate keys across settled paginated pages are ambiguous and must fail before storage
+{
+  const rawSensitiveKey = "PRIVATE-CUSTOMER-ALPHA-DO-NOT-LOG";
+  const browser = { closed: false, async close() { this.closed = true; } };
+  const page = { waitForTimeout: async () => {} };
+  let currentPage = 1;
+  let upsertCalls = 0;
+  let dualWriteCalls = 0;
+  let duplicateMessage = "";
+  try {
+    await sync({ name: "tickets", target_url: "https://example.test/tickets", recipe: { ready: { text: "ready" }, pagination: { mode: "combobox" } } }, "recipe.json", {
+      newPage: async () => ({ browser, page }),
+      gotoTarget: async () => {},
+      waitText: async () => {},
+      snapshotList: async () => currentPage === 1 ? list(rawSensitiveKey) : list(rawSensitiveKey, "NEXT-1"),
+      pagerInfo: async () => ({ locator: {}, total: 2 }),
+      selectPage: async (pager, p) => { currentPage = p; },
+      settleWait: async () => {},
+      settleTries: 8,
+      upsert: () => { upsertCalls++; },
+      approvalsDualWrite: () => { dualWriteCalls++; },
+    });
+  } catch (e) {
+    duplicateMessage = e.message;
+  }
+  assert(duplicateMessage.includes("sync pagination/list aggregation produced a duplicate record key"), "duplicate message names safe scope");
+  assert(duplicateMessage.includes("before save/upsert"), "duplicate message refuses before save/upsert");
+  assert(duplicateMessage.includes("fail-closed"), "duplicate message says fail-closed");
+  assert(duplicateMessage.includes("fingerprint=sha256:"), "duplicate message includes a non-raw fingerprint");
+  assert(!duplicateMessage.includes(rawSensitiveKey), "duplicate message does not expose raw key");
+  assert(!duplicateMessage.includes("DO-NOT-LOG"), "duplicate message does not expose sensitive key fragment");
+  assert(upsertCalls === 0, "duplicate key fails before upsert");
+  assert(dualWriteCalls === 0, "duplicate key fails before approvals dual-write");
+  assert(browser.closed, "duplicate-key sync closes browser");
+}
 
 // half-render closed: first CHANGED read is a loading intermediate — must settle on the STABLE full page
 let r = await waitListSettled(seq([list("P1a", "P1b"), list("X1"), list("X1", "X2", "X3"), list("X1", "X2", "X3")]), { prevSig: list("P1a", "P1b").sig, tries: 10 });

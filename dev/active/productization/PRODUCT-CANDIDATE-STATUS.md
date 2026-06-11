@@ -35,6 +35,8 @@ blocks service open.
   only; they do not expose cookie values, local storage values, or auth-state file paths.
 - Flow values are write-only through the WebUI API. `GET /api/flows/:name` returns token presence
   metadata, not raw `.values.json` content.
+- Flow schema/replay now supports Playwright `open_record` for recipe-driven row/detail opens, and
+  WebUI can resolve clicked-row review steps into `open_record` without committing transient refs.
 - Secret storage now has explicit policy states for forbidden plaintext, encrypted-local, and
   external-broker/KMS mode. Broker contracts validate provider, KMS key, tenant scoping, encrypted
   at-rest, rotation, and deletion declarations; deterministic fake brokers are test-only, raw reads
@@ -72,6 +74,10 @@ blocks service open.
   loopback is otherwise permitted.
   The runtime egress adapter is wired into `play-flow` and `pw-rpa` so explicit deterministic resolver
   evidence can feed the same `validateUrlEgress` checks without OS DNS fallback.
+- Recorder regression coverage now pins same-origin iframe capture as runnable frame-scoped locators
+  and cross-origin iframe capture as `needs_review` / fail-closed.
+- RPA pagination sync/enrich now refuses unsettled pages instead of storing partial pagination results
+  as green, and refuses duplicate list keys before save/upsert.
 - Docker entrypoint refuses passwordless noVNC in external/service/durable production modes unless
   noVNC is disabled or an explicit authenticated proxy boundary with TLS and tenant-session auth is declared.
 - noVNC WebUI route stubs model unguessable tenant/job-scoped sessions, hard/idle expiry,
@@ -129,7 +135,7 @@ passed with `75/75` deterministic tests green; the full-suite run id was `202606
 Details are recorded in `dev/active/productization/RELEASE-EVIDENCE-2026-06-11.md`. External service
 open remains No-Go because the full P0 acceptance checklist is still open.
 
-Additional local external-runner execution on 2026-06-11 passed from a clean `origin/master` worktree:
+Additional local outbound-worker execution on 2026-06-11 passed from a clean `origin/master` worktree:
 `node bin/local-external-runner-smoke.mjs` returned `ok: true`, `status: succeeded`,
 `workerId: runner-local`, and `auditSinkWritten: true`; the focused runner/rehearsal tests and
 `bash tests/security-p0-gate.test.sh` also passed. This is local deterministic contract evidence only,
@@ -184,9 +190,9 @@ Closed or partially closed for pre-serverization:
 - P0-F: local WebUI jobs have persisted state, idempotent cancel, runner claim/heartbeat leases,
   redacted result/audit, retry-aware restart reconciliation, worker metadata, retention metadata,
   artifact hashes, local audit hash-chain verification, deterministic JSONL audit-sink validation, and
-  audit outbox metadata. Local external-runner execution and fake-connector audit webhook delivery were
-  reconfirmed on 2026-06-11; production runner identity/deployment and webhook audit delivery are still
-  open.
+  audit outbox metadata. Local outbound-worker fixture execution and fake-connector audit webhook
+  delivery were reconfirmed on 2026-06-11; production runner identity/deployment and webhook audit
+  delivery are still open.
 - P0-G: export/retention helpers block known secret paths, raw secret patterns, unknown scan/redaction
   status, cross-tenant reuse, missing policy approval, expired/invalid signed refs, legal holds, and
   tombstoned artifacts. A production export service and tenant deletion workflow are still open.

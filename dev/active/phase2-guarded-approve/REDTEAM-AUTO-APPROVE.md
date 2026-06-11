@@ -1,12 +1,14 @@
 # P4 — red-team of the BUILT auto-approve code (verdict: REVISE-FIRST → fixed)
 
-Adversarial red-team (5 lenses + adjudicator) of the actual auto-approve implementation after the owner
-released the per-item-human gate (`approve-gate-override`). 23 findings, **all confirmed-real, 0 refuted**.
+Adversarial red-team (5 lenses + adjudicator) of the historical full-auto approve branch, before the
+current reviewed/supervised batch posture. The old `approve-gate-override` language below is retained
+as design history only; it is not a release approval for unattended live approval. 23 findings,
+**all confirmed-real, 0 refuted**.
 
 ## Verdict: REVISE-FIRST — 1 CRITICAL + 8 HIGH (+ 10 medium, 4 low)
-The owner's removal of the human gate is accepted; "no human review" is NOT itself a finding. But the
-deterministic guardrails that were supposed to be the SOLE safety net were insufficient / partly
-false-advertised. Decision rule: NOT safe-to-rely-on-live until 0 critical/0 high.
+The historical full-auto design assumed deterministic guardrails would be the sole safety net. That
+assumption was insufficient / partly false-advertised. Current live use is reviewed, supervised,
+bounded, and fail-closed; unattended live approval remains out of scope.
 
 ## CRITICAL (fixed)
 - **F1 — approval by bare doc_id; no content/amount/title/value-ceiling.** A 1만원 and a 1억원 doc were
@@ -154,10 +156,10 @@ capture** for a reliable value ceiling. Until those, run **supervised + bounded*
 
 ---
 
-## Hardening review — (1) marker + (2) reconcile + (3) kill-switch implemented; reviewed (4 lenses + refute) → SAFE-TO-RELY-ON (0C/0H) → reliability mediums fixed
-The 3 unattended hardenings were adversarially reviewed: **0 critical, 0 high, 10 medium, 5 low, 0 refuted —
+## Hardening review - supervised bounded approval guardrails (0C/0H)
+The 3 guardrail hardenings were adversarially reviewed: **0 critical, 0 high, 10 medium, 5 low, 0 refuted —
 and NO regression to any v1/v2/v3-fixed item.** All mediums are **money-SAFE-direction** (false-negative /
-audit-correctness; no false-positive `approved`, no money movement). The unattended-load-bearing ones were fixed:
+audit-correctness; no false-positive `approved`, no money movement). The approval-safety load-bearing ones were fixed:
 - **TZ (STAMP-TZ-1):** `TODAY` was UTC; the 결재선 stamp renders **KST** dates, so the marker false-negatived
   during KST 00:00–08:59 and mis-audited a real overnight approval `failed`. Now `TODAY` = Asia/Seoul date.
   (Proven at fix time: KST 2026-06-08 ≠ UTC 2026-06-07 — the bug was active.)
@@ -215,7 +217,8 @@ immediately.** It also resolves the two LOW carry-forwards just above: actor ide
   equals-form variants are money-safe via the leaf's exact `flag('--live')`).
 
 **Still operator-accompanied (this batch cannot do them):** a **live end-to-end** approval verification, a
-**Gate B amount-cell capture** (exact value ceiling vs heuristic), and agreed **auto-approve criteria**.
+**Gate B amount-cell capture** (exact value ceiling vs heuristic), and agreed reviewed/supervised
+approve criteria.
 Until those clear, **unattended LIVE approve stays fail-closed** (the scheduler refuses `--live`); run
 **supervised + bounded**.
 
@@ -244,7 +247,7 @@ docs stay `fetched` (no approval). **Adversarial refute workflow (4 agents — s
 regression + adjudicator) → SAFE-TO-COMMIT, 0 confirmed findings** (no guard lost, no unchecked/wrong-doc
 approve, no access bypass, no full-auto regression).
 
-**Net effect on the unattended prereqs:** the "Gate B amount-cell capture" prereq is now **MOOT for the
+**Net effect on the full-auto prereqs:** the "Gate B amount-cell capture" prereq is now **MOOT for the
 recommended (reviewed) flow** — the human reviews the summary instead. What remains before live use is a
 **live end-to-end test of the reviewed batch** (one real approval through 확인 verifying the positive
 승인-stamp marker) + agreed criteria. Still no real financial approval in any automated test.

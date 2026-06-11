@@ -1,62 +1,70 @@
-# Human-headed verification checklist — replay-fallback (#1) + icon-only (#3)
+# Human-headed verification checklist - verify-time locator repair + icon-only
 
-Both merged tracks carry a HUMAN-ONLY flag: their autonomous tests use synthetic / example.com
-fixtures, so live behaviour on a real app needs a person to do the *headed capture*. Everything after
-the capture (inspect / resolve / compile / replay) is autonomous — paste the flow back and I run it.
+Both tracks carry a HUMAN-ONLY flag: autonomous tests use synthetic or localhost fixtures, so live
+behaviour on a real app needs a person to do the headed capture. Everything after capture (inspect,
+verify-time repair, resolve, compile, replay) can be handled autonomously from the resulting flow and
+sidecars.
 
-`record.cmd` = the only PowerShell entry point. It opens a HEADED browser; with `--seconds N` it
-auto-stops after N seconds (no Enter needed), builds `flows/<name>.flow.json` (+ gitignored
-`values`/`candidates` sidecars). Run it from this session with the `!` prefix, e.g.
-`! .\record.cmd iconverify https://example.com --seconds 60`.
+`record.cmd` is the PowerShell entry point. It opens a headed browser; with `--seconds N` it
+auto-stops after N seconds, builds `flows/<name>.flow.json`, and writes gitignored values/candidates
+sidecars. Run it from this session with the `!` prefix, for example:
 
-Target rules (capture scope): **single origin, no login** (or use `--app <cached>`), drive a real
-journey, prefer clicking **short labelled / icon** controls.
+```powershell
+! .\record.cmd iconverify https://example.com --seconds 60
+```
 
----
+Target rules for capture: single origin, no login unless using `--app <cached>`, idempotent journey,
+and preferably short labelled or icon controls.
 
-## A. icon-only (#3) — the primary, most directly verifiable
+## A. icon-only
 
-GOAL: confirm a real app's icon-only `aria-label` buttons capture as CLEAN `role button --name … --exact`
-steps (not `needs_review`) and replay.
+GOAL: confirm a real app's icon-only `aria-label` buttons capture as clean `role button` steps with a
+stable accessible name, not `needs_review`, and replay after compile.
 
-1. Pick a public, single-origin page with **icon-only buttons** (no visible text, just an icon, with a
-   tooltip/aria-label): e.g. a docs site's copy/search/menu icons, a player's play/mute icons, your
-   own app's toolbar. (If it needs login, run `setup/auth.sh` once and add `--app <name>`.)
-2. Capture, clicking 3–6 icon-only buttons:
-   `! .\record.cmd iconverify <url> --seconds 60`
-3. Paste me the result (or just say done) — I will:
-   - list each captured step; **expect icon buttons → `by:role value:button name:"…"`, `needs_review:false`**;
-   - confirm icon **links** / native checkbox/radio / aria-labelledby / auto-labels stayed `needs_review`
-     (correct — the engine won't resolve those as a primary);
-   - resolve any leftover `needs_review`, `compile`, and `run.sh iconverify` — **expect GREEN**
-     (the `role …--exact` primaries resolve on the real page).
+1. Pick a public, single-origin page with icon-only buttons: for example copy/search/menu icons, player
+   controls, or your own app toolbar. If it needs login, run `setup/auth.sh` once and add
+   `--app <name>`.
+2. Capture, clicking three icon-only buttons:
 
-PASS = ≥1 icon-only button captured as a clean role primary AND the compiled test replays green.
+```powershell
+! .\record.cmd iconverify <url> --seconds 60
+```
 
----
+3. Paste me the result, or just say done. I will:
+   - list each captured step and expect icon buttons to be `by:role`, `value:button`, with `name`;
+   - confirm unsupported icon links, native checkbox/radio, or ambiguous auto-labels stayed
+     `needs_review`;
+   - resolve any leftover `needs_review`, compile, and run `bash run.sh iconverify`.
 
-## B. replay-fallback (#1) — secondary, on a real multi-step flow
+PASS = icon-only buttons capture as clean role primaries and the compiled test replays green.
 
-GOAL: confirm the fallback ladder is built from real capture candidates, and a fallback actually FIRES
-(loud) on a real flow when the primary is made to fail — and an all-fail step still goes RED.
+## B. verify-time locator repair
 
-1. Capture a real, **idempotent**, single-origin journey (a few clicks/inputs, ideally ending on a
-   stable URL): `! .\record.cmd fbverify <url> --seconds 60`
-2. Paste me the result — I will (autonomous):
-   - resolve any `needs_review`, set `"replayFallback": true`, `compile`, `run.sh fbverify` → baseline
-     GREEN (ladder baked, no fallback fires because the primary still works);
-   - count how many steps got a `_find_fb` ladder (`grep -c '^_find_fb '`);
-   - **induce a fire**: on one step that has a count==1 fallback, corrupt its PRIMARY locator to a bogus
-     value, recompile, `run.sh fbverify` → expect a loud `⚠ FALLBACK` line + still GREEN (the unique
-     fallback rescues it on a REAL flow, not just the synthetic test);
-   - corrupt the fallback too → expect RED with `no locator resolved` (no false-green).
+GOAL: confirm locator repair happens only during `probe-record.sh verify`. Replay has no locator
+fallback: compiled tests run the committed locators exactly and fail closed.
 
-PASS = real flow compiles with ≥1 fallback ladder; induced-failure run logs `⚠ FALLBACK` and stays
-green; all-fail variant goes red.
+1. Capture a real, idempotent, single-origin journey:
 
----
+```powershell
+! .\record.cmd fbverify <url> --seconds 60
+```
 
-## Results (filled after the captures)
+2. Paste me the result. I will:
+   - inspect committed `find` locators and the gitignored candidates sidecar;
+   - resolve any existing `needs_review`;
+   - run `node bin/play-flow.mjs --flow flows/fbverify.flow.json --validate-only`;
+   - intentionally corrupt one repairable primary locator in the flow, then run
+     `bash bin/probe-record.sh verify flows/fbverify.flow.json`;
+   - expect verify to either swap in a capture-time-unique candidate or promote the step to
+     `needs_review`;
+   - compile and replay only after the flow has no `needs_review` steps;
+   - confirm a replay with a still-bogus committed locator goes red instead of silently trying another
+     locator.
+
+PASS = verify repairs a broken locator or marks it `needs_review`, and replay never uses fallback
+locators at pass/fail time.
+
+## Results
 
 - A (icon-only): _pending capture_
-- B (replay-fallback): _pending capture_
+- B (verify-time locator repair): _pending capture_

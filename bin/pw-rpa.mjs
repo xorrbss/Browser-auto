@@ -2,6 +2,7 @@
 'use strict';
 
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -314,10 +315,22 @@ export function assertPageSettled(result, scope, pageNumber, totalPages) {
 	return result;
 }
 
-function uniqueByKey(items) {
+function duplicateKeyFingerprint(value) {
+	return crypto.createHash('sha256').update(String(value ?? '')).digest('hex').slice(0, 12);
+}
+
+function duplicateKeyFailureMessage(scope, key, firstIndex, duplicateIndex, totalItems) {
+	return `${scope} produced a duplicate record key (fingerprint=sha256:${duplicateKeyFingerprint(key)}, firstIndex=${firstIndex}, duplicateIndex=${duplicateIndex}, totalItems=${totalItems}); refusing to store ambiguous list results before save/upsert (fail-closed)`;
+}
+
+function uniqueByKey(items, scope = 'list aggregation') {
 	const m = new Map();
-	for (const item of items) if (!m.has(item.key)) m.set(item.key, item);
-	return [...m.values()];
+	for (let i = 0; i < items.length; i++) {
+		const item = items[i];
+		if (m.has(item.key)) throw new Error(duplicateKeyFailureMessage(scope, item.key, m.get(item.key).index, i, items.length));
+		m.set(item.key, { item, index: i });
+	}
+	return [...m.values()].map((entry) => entry.item);
 }
 
 function upsert(system, items, prefix) {
@@ -428,7 +441,7 @@ export async function sync(system, recipePath, deps = {}) {
 			prevSig = cur.sig;
 			log(prefix, `  page ${p}: ${cur.items.length} rows`);
 		}
-		const all = uniqueByKey(pages.flat());
+		const all = uniqueByKey(pages.flat(), 'sync pagination/list aggregation');
 		log(prefix, `total unique: ${all.length}`);
 		upsertFn(system.name, all, prefix);
 		approvalsDualWriteFn(system.name, all, prefix);
