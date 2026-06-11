@@ -828,6 +828,7 @@ function isContainerScrollReview(item) {
 
 function flowReadyReason(flow) {
 	if (!flow) return '녹화된 플로우가 없습니다.';
+	if (unsupportedReviewCount(flow)) return automationBlockedReason(flow);
 	if (flow.scenarioStatus?.unrunnableReason) return flow.scenarioStatus.unrunnableReason;
 	if (flow.scenarioStatus?.lastFailureReason) return `last run failed: ${flow.scenarioStatus.lastFailureReason}`;
 	if (flow.scenarioStatus?.lastRun?.status === 'pass') return 'last run passed';
@@ -835,6 +836,35 @@ function flowReadyReason(flow) {
 	if (flow.missingValues?.length) return `입력값 누락: ${flow.missingValues.join(', ')}`;
 	if (!flow.compiled) return '컴파일 전';
 	return '실행 가능';
+}
+
+function unsupportedReviewCount(flow) {
+	return (flow?.needsReviewSteps || []).filter(isContainerScrollReview).length;
+}
+
+function automationBlockedReason(flow) {
+	if (!flow) return '녹화가 끝나면 검증/컴파일/실행할 수 있습니다.';
+	const unsupported = unsupportedReviewCount(flow);
+	if (unsupported) return `지원되지 않는 컨테이너 스크롤 ${unsupported}개가 남아 있습니다. 재녹화하거나 flow.json에 결정적 대체 단계를 수동 작성해야 합니다.`;
+	if (flow.needsReviewSteps?.length) return `${flow.needsReviewSteps.length}개 검토 항목을 먼저 해결해야 합니다.`;
+	if (flow.missingValues?.length) return `입력값 ${flow.missingValues.join(', ')}을 먼저 저장해야 합니다.`;
+	if (flow.valuesBlockedReason) return flow.valuesBlockedReason;
+	if (flow.engineError) return flow.engineError;
+	if (flow.scenarioStatus?.unrunnableReason) return flow.scenarioStatus.unrunnableReason;
+	if (!flow.compiled) return '컴파일하면 실행할 수 있습니다.';
+	return '';
+}
+
+function updateAutomationLogPlaceholder(flow) {
+	const log = $('#auto-run-log');
+	if (!log) return;
+	if (state.automation.verifyJob || state.automation.runJob) return;
+	if (log.textContent.trim() && log.dataset.placeholder !== 'true') return;
+	const blocked = automationBlockedReason(flow);
+	log.dataset.placeholder = 'true';
+	log.textContent = blocked
+		? `[준비]\n아직 검증/컴파일/실행이 시작되지 않았습니다.\n현재 상태: ${blocked}\n`
+		: '[준비]\n검증, 컴파일 또는 실행을 누르면 여기서 진행 로그를 볼 수 있습니다.\n';
 }
 
 function scenarioReason(flow) {
@@ -1188,20 +1218,20 @@ function renderAutomation() {
 	const verifyBtn = $('#auto-verify');
 	if (verifyBtn) {
 		const needsReview = !!(flow && flow.needsReviewSteps?.length);
-		verifyBtn.disabled = !flow || needsReview || activeRecord || activeVerify || activeRun || busy || !verifyAccess.allowed;
-		verifyBtn.textContent = !verifyAccess.allowed ? '권한 제한' : needsReview ? '후보 선택 필요' : activeVerify ? '검증 중' : '검증';
-		verifyBtn.title = accessTitle(verifyAccess, needsReview ? '아래 후보를 먼저 선택해야 검증할 수 있습니다.' : '');
+		verifyBtn.disabled = !flow || activeRecord || activeVerify || activeRun || busy || !verifyAccess.allowed;
+		verifyBtn.textContent = !verifyAccess.allowed ? '권한 제한' : needsReview ? (unsupportedReviewCount(flow) ? '재녹화 필요' : '후보 선택 필요') : activeVerify ? '검증 중' : '검증';
+		verifyBtn.title = accessTitle(verifyAccess, needsReview ? automationBlockedReason(flow) : '');
 	}
 	const compileBtn = $('#auto-compile');
 	if (compileBtn) {
 		compileBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun || !compileAccess.allowed;
-		compileBtn.title = accessTitle(compileAccess, flow && !flow.compilable ? flowReadyReason(flow) : '');
+		compileBtn.title = accessTitle(compileAccess, flow && !flow.compilable ? automationBlockedReason(flow) : '');
 	}
 	const runBtn = $('#auto-run');
 	if (runBtn) {
 		runBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun || busy || !runAccess.allowed;
 		runBtn.textContent = !runAccess.allowed ? '권한 제한' : flow && !flow.compiled ? '컴파일 후 실행' : '실행';
-		runBtn.title = accessTitle(runAccess);
+		runBtn.title = accessTitle(runAccess, flow && !flow.compilable ? automationBlockedReason(flow) : '');
 	}
 	const previewBtn = $('#auto-preview');
 	if (previewBtn) {
@@ -1210,6 +1240,7 @@ function renderAutomation() {
 	}
 	renderAutomationPreview(form.goal);
 	renderAutomationFlow(flow);
+	updateAutomationLogPlaceholder(flow);
 }
 
 function renderAutomationPreview(goal) {
@@ -1301,7 +1332,12 @@ function renderAutomationFlow(flow) {
 		);
 	});
 	const reviewNotice = flow.needsReviewSteps.length
-		? warnBox(`${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요. 선택 후 검증 버튼이 켜집니다.`)
+		? warnBox(unsupportedReviewCount(flow)
+			? `${unsupportedReviewCount(flow)}개 컨테이너 스크롤은 자동 재현할 수 없어 검증/컴파일이 막혀 있습니다. 스크롤 없이 같은 경로로 다시 녹화하거나 flow.json에 결정적 대체 단계를 수동 작성하세요.`
+			: `${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요. 선택 후 검증 버튼이 켜집니다.`)
+		: null;
+	const blockedNotice = !flow.compilable && !flow.needsReviewSteps.length
+		? warnBox(`컴파일 대기: ${automationBlockedReason(flow)}`)
 		: null;
 	let valuesBlock = null;
 	if (flow.inputTokens.length) {
@@ -1331,6 +1367,7 @@ function renderAutomationFlow(flow) {
 		renderScenarioStatus(flow),
 		renderBlockedFlowMetadata(flow),
 		reviewNotice,
+		blockedNotice,
 		el('div', { class: 'flow-body' }, steps),
 		...reviewBlocks,
 		valuesBlock,
@@ -1576,6 +1613,7 @@ async function verifyAutomationFlow() {
 	const flow = state.automation.flow;
 	if (!flow) return;
 	const log = $('#auto-run-log');
+	log.dataset.placeholder = 'false';
 	if (flow.needsReviewSteps?.length) {
 		const unsupported = flow.needsReviewSteps.filter(isContainerScrollReview);
 		setAutomationJobBadge(unsupported.length ? '재녹화 필요' : '후보 선택 필요', 'warning');
@@ -1613,15 +1651,32 @@ async function compileAutomationFlow() {
 	if (!requireAccess('compile', '컴파일')) return false;
 	const flow = state.automation.flow;
 	if (!flow) return false;
+	const log = $('#auto-run-log');
+	if (!flow.compilable) {
+		const reason = automationBlockedReason(flow);
+		state.automation.compileOutput = `컴파일 대기: ${reason}`;
+		if (log) {
+			log.dataset.placeholder = 'false';
+			log.textContent = `[컴파일 대기]\n${reason}\n`;
+		}
+		renderAutomation();
+		return false;
+	}
+	if (log) {
+		log.dataset.placeholder = 'false';
+		log.textContent = '컴파일 요청 중...\n';
+	}
 	state.automation.compileOutput = '컴파일 중...';
 	renderAutomation();
 	try {
 		const data = await postJson('/api/compile', { name: flow.name });
 		state.automation.compileOutput = (data.ok ? `컴파일됨: ${data.testFile}` : `컴파일 실패 (${data.code})`) + (data.output ? `\n\n${data.output}` : '');
+		if (log) log.textContent += state.automation.compileOutput + '\n';
 		await loadAutomationFlow(flow.name);
 		return !!data.ok;
 	} catch (e) {
 		state.automation.compileOutput = `컴파일 실패: ${e.message}`;
+		if (log) log.textContent += `${state.automation.compileOutput}\n`;
 		renderAutomation();
 		return false;
 	}
@@ -1631,12 +1686,22 @@ async function runAutomationFlow() {
 	if (!requireAccess('run', '실행')) return;
 	let flow = state.automation.flow;
 	if (!flow) return;
+	if (!flow.compilable) {
+		const log = $('#auto-run-log');
+		const reason = automationBlockedReason(flow);
+		log.dataset.placeholder = 'false';
+		log.textContent = `[실행 대기]\n${reason}\n`;
+		setAutomationJobBadge('실행 대기', 'warning');
+		renderAutomation();
+		return;
+	}
 	if (!flow.compiled) {
 		const ok = await compileAutomationFlow();
 		if (!ok) return;
 		flow = state.automation.flow;
 	}
 	const log = $('#auto-run-log');
+	log.dataset.placeholder = 'false';
 	log.textContent = '실행 요청 중...\n';
 	setAutomationJobBadge('실행', 'info');
 	try {

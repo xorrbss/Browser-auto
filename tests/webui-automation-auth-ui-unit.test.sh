@@ -44,6 +44,16 @@ assert.match(appJs, /item\?\.kind === 'find' && \(item\.action \|\| 'click'\) ==
 assert.match(appJs, /function isContainerScrollReview\(item\)/, 'flow review UI recognizes container-scroll review steps');
 assert.doesNotMatch(appJs, /omitAutomationContainerScrolls/, 'unsupported container-scroll review steps must not be silently omitted');
 assert.doesNotMatch(appJs, /omit-review-step/, 'WebUI must not expose a route that ignores needs_review steps');
+assert.match(appJs, /function automationBlockedReason\(flow\)/, 'automation UI has a visible blocked reason helper');
+assert.match(appJs, /지원되지 않는 컨테이너 스크롤/, 'automation blocked reason names unsupported container scrolls');
+assert.match(appJs, /function updateAutomationLogPlaceholder\(flow\)/, 'execution log shows a placeholder before jobs start');
+assert.match(appJs, /아직 검증\/컴파일\/실행이 시작되지 않았습니다/, 'execution log placeholder explains why no log has appeared yet');
+assert.match(appJs, /verifyBtn\.disabled = !flow \|\| activeRecord \|\| activeVerify \|\| activeRun \|\| busy \|\| !verifyAccess\.allowed;/, 'verify button remains clickable for needs_review preflight explanations');
+assert.match(appJs, /compileBtn\.title = accessTitle\(compileAccess, flow && !flow\.compilable \? automationBlockedReason\(flow\) : ''\)/, 'compile button title exposes blocked reason');
+assert.match(appJs, /runBtn\.title = accessTitle\(runAccess, flow && !flow\.compilable \? automationBlockedReason\(flow\) : ''\)/, 'run button title exposes blocked reason');
+assert.match(appJs, /컴파일 대기: \$\{reason\}/, 'programmatic compile attempts surface the blocked reason');
+assert.match(appJs, /\[실행 대기\]/, 'programmatic run attempts surface the blocked reason');
+assert.match(appJs, /log\.textContent = '컴파일 요청 중/, 'compile action writes to the execution log');
 NODE
 
 echo "  webui-automation-auth-ui-unit: auth controls remain refreshable"
