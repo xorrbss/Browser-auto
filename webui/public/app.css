@@ -359,8 +359,13 @@ pre, code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; }
 .scenario-reason {
 	display: block;
 	font-size: 13px;
+	font-weight: 700;
 	line-height: 1.35;
 	overflow-wrap: anywhere;
+}
+.scenario-status-item.wide .scenario-reason {
+	font-size: 12px;
+	font-weight: 700;
 }
 .scenario-reason.warning { color: var(--amber); }
 .scenario-reason.danger { color: var(--red); }
@@ -570,6 +575,11 @@ input:focus, textarea:focus, select:focus {
 }
 .metric span { color: var(--muted); font-size: 12px; font-weight: 800; }
 .metric strong { font-size: 22px; line-height: 1.1; overflow-wrap: anywhere; }
+.metric strong.compact {
+	font-size: 14px;
+	line-height: 1.3;
+	white-space: normal;
+}
 .metric em { color: var(--muted); font-size: 12px; font-style: normal; }
 .kv-grid {
 	display: grid;

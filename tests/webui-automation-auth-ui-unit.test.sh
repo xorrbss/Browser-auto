@@ -47,7 +47,13 @@ assert.match(appJs, /function isContainerScrollReview\(item\)/, 'flow review UI 
 assert.doesNotMatch(appJs, /omitAutomationContainerScrolls/, 'unsupported container-scroll review steps must not be silently omitted');
 assert.doesNotMatch(appJs, /omit-review-step/, 'WebUI must not expose a route that ignores needs_review steps');
 assert.match(appJs, /function automationBlockedReason\(flow\)/, 'automation UI has a visible blocked reason helper');
-assert.match(appJs, /지원되지 않는 컨테이너 스크롤/, 'automation blocked reason names unsupported container scrolls');
+assert.match(appJs, /페이지 휠 스크롤은 지원되지만, 내부 목록\/테이블 컨테이너 스크롤/, 'automation blocked reason distinguishes page wheel scroll from container scroll');
+assert.match(appJs, /function flowSummaryState\(flow\)/, 'flow summary uses a short status label helper');
+assert.match(appJs, /metric\('상태', flowSummaryState\(flow\), flowSummaryDetail\(flow\)\)/, 'status metric does not render a long blocked reason as the large value');
+assert.match(appJs, /const compact = text\.length > 24 \|\| \/\\s\/\.test\(text\) && text\.length > 16;/, 'long metric values are compacted defensively');
+assert.match(appCss, /\.metric strong\.compact\s*\{[\s\S]*font-size: 14px;/, 'compact metric values use smaller text');
+assert.doesNotMatch(appJs, /el\('strong', \{ class: `scenario-reason/, 'long scenario reasons are not rendered as strong metric-like text');
+assert.match(appCss, /\.scenario-status-item\.wide \.scenario-reason\s*\{[\s\S]*font-size: 12px;/, 'wide scenario reasons use compact text');
 assert.match(appJs, /function updateAutomationLogPlaceholder\(flow\)/, 'execution log shows a placeholder before jobs start');
 assert.match(appJs, /아직 검증\/컴파일\/실행이 시작되지 않았습니다/, 'execution log placeholder explains why no log has appeared yet');
 assert.match(appJs, /verifyBtn\.disabled = !flow \|\| activeRecord \|\| activeVerify \|\| activeRun \|\| busy \|\| !verifyAccess\.allowed;/, 'verify button remains clickable for needs_review preflight explanations');

@@ -845,7 +845,7 @@ function unsupportedReviewCount(flow) {
 function automationBlockedReason(flow) {
 	if (!flow) return '녹화가 끝나면 검증/컴파일/실행할 수 있습니다.';
 	const unsupported = unsupportedReviewCount(flow);
-	if (unsupported) return `지원되지 않는 컨테이너 스크롤 ${unsupported}개가 남아 있습니다. 재녹화하거나 flow.json에 결정적 대체 단계를 수동 작성해야 합니다.`;
+	if (unsupported) return `페이지 휠 스크롤은 지원되지만, 내부 목록/테이블 컨테이너 스크롤 ${unsupported}개는 아직 자동 재현할 수 없습니다. 스크롤 후 보이는 버튼이나 행을 직접 클릭해 다시 녹화하거나 flow.json에 안정적인 대체 단계를 작성하세요.`;
 	if (flow.needsReviewSteps?.length) return `${flow.needsReviewSteps.length}개 검토 항목을 먼저 해결해야 합니다.`;
 	if (flow.missingValues?.length) return `입력값 ${flow.missingValues.join(', ')}을 먼저 저장해야 합니다.`;
 	if (flow.valuesBlockedReason) return flow.valuesBlockedReason;
@@ -853,6 +853,23 @@ function automationBlockedReason(flow) {
 	if (flow.scenarioStatus?.unrunnableReason) return flow.scenarioStatus.unrunnableReason;
 	if (!flow.compiled) return '컴파일하면 실행할 수 있습니다.';
 	return '';
+}
+
+function flowSummaryState(flow) {
+	if (!flow) return '-';
+	if (unsupportedReviewCount(flow)) return '재녹화 필요';
+	if (flow.needsReviewSteps?.length) return '후보 선택 필요';
+	if (flow.missingValues?.length) return '입력값 필요';
+	if (flow.engineError || flow.valuesBlockedReason || flow.scenarioStatus?.unrunnableReason) return 'blocked';
+	if (flow.compiled) return 'compiled';
+	return '컴파일 필요';
+}
+
+function flowSummaryDetail(flow) {
+	if (!flow) return '';
+	const reason = flowReadyReason(flow);
+	const engine = flow.engine || DEFAULT_ENGINE;
+	return reason ? `${engine} / ${reason}` : engine;
 }
 
 function updateAutomationLogPlaceholder(flow) {
@@ -1104,7 +1121,7 @@ function renderScenarioStatus(flow) {
 		scenarioStatusItem('disabled reason', disabled.label, disabled.kind, disabled.detail),
 		scenarioStatusItem('last run', last ? last.status : 'never-run', last ? statusKind(last.status) : 'neutral', last?.runId || ''),
 		scenarioStatusItem('artifacts / deep links', last ? 'available' : 'none', last ? 'info' : 'neutral', scenarioArtifactLinks(last), true),
-		scenarioStatusItem(status.unrunnableReason ? 'unrunnable reason' : status.lastFailureReason ? 'last failure reason' : 'reason', el('strong', { class: `scenario-reason ${reasonKind}` }, scenarioReason(flow)), reasonKind, null, true),
+		scenarioStatusItem(status.unrunnableReason ? 'unrunnable reason' : status.lastFailureReason ? 'last failure reason' : 'reason', el('span', { class: `scenario-reason ${reasonKind}` }, scenarioReason(flow)), reasonKind, null, true),
 	);
 }
 
@@ -1291,7 +1308,7 @@ function renderAutomationFlow(flow) {
 		metric('단계', flow.steps.length, flow.startUrl || ''),
 		metric('검토', flow.needsReviewSteps.length, 'locator 후보 선택'),
 		metric('입력값', flow.inputTokens.length, flow.missingValues.length ? '누락 있음' : '준비됨'),
-		metric('상태', flow.compiled ? 'compiled' : flowReadyReason(flow), flow.engine),
+		metric('상태', flowSummaryState(flow), flowSummaryDetail(flow)),
 	);
 	const recordAccess = accessDecision('record');
 	const steps = el('div', { class: 'step-list' });
@@ -1318,7 +1335,7 @@ function renderAutomationFlow(flow) {
 				onclick: () => resolveAutomationClickedRecord(flow.name, item.index),
 			}, '클릭한 행 위치로 열기'));
 		} else if (isContainerScrollReview(item)) {
-			actions.append(el('span', { class: 'muted' }, `${item.reason || '컨테이너 스크롤은 아직 재현할 수 없습니다.'}${item.recordedDir ? ` (${item.recordedDir}${item.recordedPx ? ` ${item.recordedPx}px` : ''})` : ''}`));
+			actions.append(el('span', { class: 'muted' }, `${item.reason || '내부 목록/테이블 컨테이너 스크롤은 아직 자동 재현할 수 없습니다. 페이지 전체 마우스 휠 스크롤은 지원됩니다.'}${item.recordedDir ? ` (${item.recordedDir}${item.recordedPx ? ` ${item.recordedPx}px` : ''})` : ''}`));
 		}
 		for (const [ci, c] of (item.candidates || []).entries()) {
 			actions.append(el('button', {
@@ -1341,7 +1358,7 @@ function renderAutomationFlow(flow) {
 	});
 	const reviewNotice = flow.needsReviewSteps.length
 		? warnBox(unsupportedReviewCount(flow)
-			? `${unsupportedReviewCount(flow)}개 컨테이너 스크롤은 자동 재현할 수 없어 검증/컴파일이 막혀 있습니다. 스크롤 없이 같은 경로로 다시 녹화하거나 flow.json에 결정적 대체 단계를 수동 작성하세요.`
+			? `${unsupportedReviewCount(flow)}개 내부 컨테이너 스크롤은 자동 재현할 수 없어 검증/컴파일이 막혀 있습니다. 페이지 전체 휠 스크롤은 지원됩니다. 내부 스크롤 뒤에 보이는 버튼이나 행을 직접 클릭해 다시 녹화하세요.`
 			: `${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요. 선택 후 검증 버튼이 켜집니다.`)
 		: null;
 	const blockedNotice = !flow.compilable && !flow.needsReviewSteps.length
@@ -1626,7 +1643,7 @@ async function verifyAutomationFlow() {
 		const unsupported = flow.needsReviewSteps.filter(isContainerScrollReview);
 		setAutomationJobBadge(unsupported.length ? '재녹화 필요' : '후보 선택 필요', 'warning');
 		log.textContent = unsupported.length
-			? `검증 전에 지원되지 않는 컨테이너 스크롤 ${unsupported.length}개를 해결해야 합니다.\n해당 스크롤이 업무 동작에 필요하면 안정적인 방식으로 다시 녹화하거나 flow.json에 결정적 대체 단계를 수동 작성하세요.\n`
+			? `검증 전에 내부 컨테이너 스크롤 ${unsupported.length}개를 해결해야 합니다.\n페이지 전체 마우스 휠 스크롤은 지원됩니다. 내부 스크롤이 필요하면 스크롤 뒤에 보이는 버튼이나 행을 직접 클릭해 다시 녹화하거나 flow.json에 안정적인 대체 단계를 수동 작성하세요.\n`
 			: `검증 전에 ${flow.needsReviewSteps.length}개 단계의 후보를 먼저 선택하세요.\n녹화 결과 아래의 [이 후보 사용] 버튼을 누른 뒤 다시 검증하면 됩니다.\n`;
 		const firstAction = document.querySelector('.review-required .candidate-button') || document.querySelector('.review-required');
 		firstAction?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -1782,7 +1799,9 @@ function renderPlanSummary(selector, includeMetrics = false) {
 }
 
 function metric(label, value, sub) {
-	return el('div', { class: 'metric' }, el('span', {}, label), el('strong', {}, safeText(value, '-')), el('em', {}, sub || ''));
+	const text = safeText(value, '-');
+	const compact = text.length > 24 || /\s/.test(text) && text.length > 16;
+	return el('div', { class: 'metric' }, el('span', {}, label), el('strong', { class: compact ? 'compact' : '' }, text), el('em', {}, sub || ''));
 }
 
 function compactCountMap(map, limit = 4) {
