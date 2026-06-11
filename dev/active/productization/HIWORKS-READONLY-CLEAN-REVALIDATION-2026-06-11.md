@@ -72,4 +72,4 @@ Attachable evidence:
 - clean replay `report.json`
 - clean replay `report.junit.xml`
 - clean replay `results.tsv`
-- owner approval request after signature
+- owner approval request after signature, only if the lane is later promoted to production-open

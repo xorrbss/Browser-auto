@@ -1,8 +1,11 @@
 # Hiworks Read-Only Evidence Submission
 
-Submission status: ready for owner review, pending actual owner signature
+Submission status: production-open template; development integration evidence already recorded
 Date: 2026-06-11
 Scope: limited owner review for the Hiworks read-only operator lane
+
+Policy note: this packet is not required for ongoing read-only development integration. Use it only if
+the Hiworks lane is promoted from technical validation into a supported production-open lane.
 
 This evidence pack is submitted for owner review of only
 `approval_office_hiworks_com_ibizsoftware_net_approval` in `live-readonly` mode. It does not request
@@ -180,6 +183,6 @@ Do not attach, paste, commit, or transmit:
 
 ## Submission Result
 
-This pack is ready for owner review, but the lane remains pending actual owner signature. Until the
-owner signs the exact scope and read-only origin set, the status is technically validated but not
-production-open.
+This pack is a production-open template. The read-only development integration result is already
+recorded and can be used for engineering progress without owner signature. If this lane is later
+promoted to production-open, complete this packet with the production owner decision.

@@ -59,5 +59,6 @@ hiworks-sample: pass
 ## Boundary
 
 This sample is only a local fixture. To test the real Hiworks approval target, use the operator-only
-staging/live-readonly lane with explicit owner approval, target allowlist, resolver evidence, and fresh
-operator-owned auth state.
+staging/live-readonly lane with exact target allowlist, resolver evidence, and fresh operator-owned
+auth state. Per-system owner approval is not required for read-only development integration; it is
+reserved for production open or write/unattended operation.

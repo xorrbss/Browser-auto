@@ -5,8 +5,10 @@ Date: 2026-06-11
 Scope: first operator-owned Hiworks read-only acceptance for
 `approval_office_hiworks_com_ibizsoftware_net_approval`.
 
-This pack prepares the real Hiworks read-only lane without exposing secrets. It does not authorize
-`hiworks01`, `guest_samsungdisplay_com_argos_main_do`, unattended approval, or any live-action flow.
+This pack prepares the real Hiworks read-only lane without exposing secrets. Under
+`RPA-DEVELOPMENT-INTEGRATION-POLICY.md`, it may be used as a development integration template without
+an owner approval packet. It does not authorize `hiworks01`, `guest_samsungdisplay_com_argos_main_do`,
+unattended approval, production open, or any live-action flow.
 
 ## Flow Boundary
 
@@ -116,7 +118,8 @@ Expected preflight state:
 
 - blocked-flow report classifies the flow as `operator-only`, not blocked.
 - `security-p0-gate` passes locally.
-- release checklist remains `Decision: No-Go` until real operator evidence is attached.
+- release checklist remains `Decision: No-Go` for production open until real operator evidence is
+  attached.
 
 Do not run bare `node bin/play-flow.mjs --flow
 flows/approval_office_hiworks_com_ibizsoftware_net_approval.flow.json --validate-only` without the
@@ -170,7 +173,10 @@ Attach redacted evidence only:
 - Commit hash and clean worktree status.
 - Local gate transcript: `security-p0-gate`, `run.sh`, and the flow `validate-only`.
 - Blocked-flow report showing this flow is operator-only and read-only.
-- Owner approval ticket, target origin, run window, operator identity, and stop contact.
+- For development integration: flow, command, commit, target origin set, `RUN_ID`, result, and artifact
+  paths.
+- For production open: owner approval ticket, target origin, run window, operator identity, and stop
+  contact.
 - Auth freshness metadata for `app:r45`; never attach `fixtures/auth/playwright/r45.state.json`.
 - Exact env values except secret material; resolver and connection-IP evidence may be attached if
   redacted and owner-approved.
@@ -182,7 +188,8 @@ Attach redacted evidence only:
 Do not run if any of these are true:
 
 - `AQA_RUN_MODE` is not `live-readonly`.
-- `AQA_TARGET_ALLOWLIST` is broader than the owner-approved Hiworks read-only origin set above.
+- `AQA_TARGET_ALLOWLIST` is broader than the tested Hiworks read-only origin set above. For production
+  open, this set must also be owner-approved.
 - Resolver or connection-IP evidence is stale, missing, or mismatched.
 - Auth state is missing/stale, reaches MFA/OTP, or belongs to the wrong account or tenant.
 - The journey exposes a write, approve, reject, delete, save, upload, download, or irreversible action.

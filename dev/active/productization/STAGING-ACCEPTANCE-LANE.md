@@ -2,17 +2,28 @@
 
 Status: active
 Date: 2026-06-11
-Scope: operator-run staging and production read-only acceptance for Browser-auto.
+Scope: operator-run development integration, staging, and production read-only acceptance for
+Browser-auto.
 
-This lane is separate from fixture CI. It is the operator handoff path for named
-`environment:"staging"` and `environment:"live-readonly"` flows after local fixture gates are green.
-It does not authorize live-action work, OTP automation, borrowed sessions, or model-driven pass/fail
-decisions. Replay stays deterministic: one compiled bash test remains one user journey.
+This lane is separate from fixture CI. It supports two different uses:
+
+- fast development integration for trying many business systems with operator-owned access
+- production read-only acceptance when a validated lane is being opened as an operational service
+
+Development integration must not be blocked on per-system owner approval packets. Production open still
+requires owner/operator handoff. Neither use authorizes live-action work, OTP automation, borrowed
+sessions, or model-driven pass/fail decisions. Replay stays deterministic: one compiled bash test
+remains one user journey.
 
 ## Lane Boundary
 
-Use this lane when a target owner has approved a specific non-local target and an operator is ready to
-run a read-only acceptance journey against that target.
+Use this lane for named `environment:"staging"` and `environment:"live-readonly"` flows when an
+operator is ready to run a read-only journey against a non-local target.
+
+Development integration is allowed without a formal target-owner packet when the human tester/operator
+has legitimate access, the run is read-only, and the target origins are explicit. Owner approval is
+reserved for production open, unattended execution, live-action/write behavior, or customer-owned
+accounts outside the tester's authority.
 
 Do not use it for:
 
@@ -20,7 +31,7 @@ Do not use it for:
 - First-time auth, SSO, OTP, MFA, or account recovery. Operators do headed auth separately.
 - `riskClass:"effectful"` or `riskClass:"destructive"` flows.
 - `environment:"live-action"` flows or any flow with `irreversibleAt`.
-- Locator repair against a real target without explicit operator approval.
+- Locator repair that requires write actions or unauthorized target access.
 
 The required wrapper is:
 
@@ -44,13 +55,28 @@ bash run.sh
 browser-free checks, localhost or file fixtures, deterministic negative tests, and compiled local
 journeys. They must not require target-system auth, OTP, public network access, or live business data.
 
-Staging and production read-only acceptance are different: they are operator-only, named-flow runs
-against an approved non-local origin. A green fixture gate is required before handoff, but it is not
-proof that a production or staging target has accepted the journey.
+Development integration, staging acceptance, and production read-only acceptance are different. A green
+fixture gate is required before handoff, but it is not proof that a production or staging target has
+accepted the journey.
 
-## Operator Prerequisites
+## Development Integration Prerequisites
 
-Before running this lane, the operator records:
+For fast multi-system development, record only:
+
+- Flow name and flow file: `flows/<name>.flow.json`.
+- Compiled wrapper: `tests/<name>.test.sh`.
+- Intended environment: `staging` or `live-readonly`.
+- Human tester/operator account or auth-state alias, without exposing secret material.
+- Exact target allowlist and fresh resolver/connection-IP evidence for every non-local origin the flow
+  can open.
+- `RUN_ID`, pass/fail result, and artifact paths.
+
+Do not create per-system owner approval packets during development integration. Use
+`RPA-DEVELOPMENT-INTEGRATION-POLICY.md` as the governing policy.
+
+## Production Acceptance Prerequisites
+
+Before calling a lane production-open, the operator records:
 
 - Flow name and flow file: `flows/<name>.flow.json`.
 - Compiled wrapper: `tests/<name>.test.sh`.
@@ -101,9 +127,12 @@ Do not set live-action variables in this lane:
 
 ## Target Evidence
 
-`AQA_TARGET_ALLOWLIST` must match the exact origin approved by the target owner. Include additional
-origins only when the flow is expected to navigate or redirect there and each origin has separate
-approval.
+For development integration, `AQA_TARGET_ALLOWLIST` must match the exact origins being tested. Include
+additional origins only when the flow is expected to navigate, redirect, or load required same-product
+support assets there.
+
+For production open, `AQA_TARGET_ALLOWLIST` must match the exact origin set approved for that
+operational lane.
 
 Resolver evidence should be fresh and host-keyed. Example shape only:
 
@@ -127,9 +156,10 @@ If connection IPs are supplied separately, use:
 }
 ```
 
-Attach the evidence JSON used for the run, the command environment, and the target-owner approval.
-If evidence is stale, missing, mismatched, or points to a blocked metadata/private endpoint under the
-wrong profile, the acceptance attempt fails closed.
+For development integration, keep the non-secret command environment and `RUN_ID`; do not create a
+formal owner evidence pack. For production open, attach the evidence JSON used for the run, the command
+environment, and the target-owner approval. If evidence is stale, missing, mismatched, or points to a
+blocked metadata/private endpoint under the wrong profile, the acceptance attempt fails closed.
 
 ## Auth Freshness
 
@@ -211,9 +241,16 @@ If a staging or live-readonly flow needs to submit, approve, delete, transfer, s
 or cross an `irreversibleAt` boundary, stop. Reclassify it into the live-action runbook instead of
 weakening this lane.
 
-## Evidence To Attach
+## Evidence To Keep
 
-Attach enough evidence for release review to replay the decision without exposing secrets:
+For development integration, keep lightweight technical evidence without exposing secrets:
+
+- Flow name, command, commit hash, `RUN_ID`, result, and artifact paths.
+- Exact target allowlist and run mode.
+- Redacted failure reason and next engineering action.
+
+For production open, attach enough evidence for release review to replay the decision without exposing
+secrets:
 
 - Fixture gate results: `tests/security-p0-gate.test.sh`, `run.sh`, and relevant CI links or logs.
 - Static prep: blocked-flow report entry for the flow and `validate-only` output.
@@ -229,22 +266,23 @@ Attach enough evidence for release review to replay the decision without exposin
   revision or checksum.
 
 Do not attach auth state, cookies, `.values.json`, OTPs, raw credentials, unredacted live business
-data, or screenshots/downloads unless an owner has explicitly approved and redacted them.
+data, or screenshots/downloads in development integration. Production-open packages may include
+additional artifacts only when explicitly approved and redacted.
 
 ## Pass Criteria
 
-Staging or production read-only acceptance passes only when all are true:
+Development integration or production read-only acceptance passes only when all are true:
 
 - Fixture gates were green before the operator run.
 - The flow is `environment:"staging"` or `environment:"live-readonly"` and `riskClass:"read"`.
 - The flow has no `needs_review`, transient refs, unresolved values, missing compiled wrapper, or
   missing transition gates.
 - `AQA_RUN_MODE` exactly matches the flow environment.
-- `AQA_TARGET_ALLOWLIST` and resolver/connection-IP evidence match the approved target origins.
+- `AQA_TARGET_ALLOWLIST` and resolver/connection-IP evidence match the tested target origins.
 - Auth freshness is ready for any declared `app`, and the operator owns the session.
 - `bash bin/operator-staging-readonly.sh --validate-only <name>` succeeds.
 - `bash bin/operator-staging-readonly.sh <name>` exits 0 and writes passing artifacts.
-- Attached evidence is complete and contains no secret material.
+- Kept evidence is complete enough to reproduce the engineering result and contains no secret material.
 
 ## Fail Criteria
 

@@ -98,9 +98,10 @@ Acceptable evidence:
 - redacted command transcript
 - operator identity, run window, target owner approval ticket, and stop contact
 
-## Owner Approval Needed
+## Production Promotion Approval
 
-Before calling this lane open, the target owner should explicitly approve the expanded read-only origin
+This owner approval is not required for continued read-only development integration. Before promoting
+this lane to production-open, the target owner should explicitly approve the expanded read-only origin
 set above, especially the external support origins:
 
 ```text
@@ -108,4 +109,5 @@ https://static.gabia.com
 https://cdn.jsdelivr.net
 ```
 
-Until that owner approval is attached, the lane is technically validated but not production-open.
+Until that production approval is attached, the lane remains a development integration proof and is not
+production-open.

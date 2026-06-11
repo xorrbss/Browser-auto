@@ -9,6 +9,8 @@ blocks service open.
 
 ## Operator Handoff Pack
 
+- `RPA-DEVELOPMENT-INTEGRATION-POLICY.md` is now the active policy for fast multi-system development
+  testing: per-system owner approval packets are not required for read-only development integration.
 - `OPEN-PREP-ACTION-PACK.md` is the immediate owner/operator input sheet for choosing the first
   staging/live-readonly opening scope and collecting non-secret deployment metadata.
 - `HIWORKS-STAGING-READONLY-ENV-PACK.md` gives the first real Hiworks read-only acceptance env and
@@ -27,6 +29,11 @@ blocks service open.
 
 These documents prepare handoff and acceptance evidence; they do not change the external-service
 No-Go status.
+
+Development integration policy update: owner approval is not a blocker for testing many systems during
+product development. Keep lightweight technical run records (`commit`, `command`, `RUN_ID`, result,
+artifact paths, redacted issue notes). Reserve owner approval/evidence packs for production open,
+unattended/scheduled operation, external-runner deployment, or any write/live-action workflow.
 
 ## Implemented In This Pass
 
@@ -173,8 +180,8 @@ delivery.
 Additional Hiworks read-only operator acceptance on 2026-06-11 passed for
 `approval_office_hiworks_com_ibizsoftware_net_approval` at commit `d849140` with
 `RUN_ID=20260611-153636-1422`, `1/1 passed`, and `durationMs=5960`. This is limited read-only
-operator evidence only. Owner approval is still required for the expanded read-only origin set before
-the lane is called open.
+development integration evidence only. Owner approval is not required to continue development testing
+against Hiworks or other read-only systems.
 
 Clean revalidation from a separate `origin/master` checkout at commit `8b8deb5` also passed on
 2026-06-11. `auth-r45.cmd` dry-run, `bash tests/security-p0-gate.test.sh` via Git Bash,
@@ -192,7 +199,7 @@ acceptance remain external/operator-owned.
 | `login` | Runnable local data URL test | `local/read` data URL; safe for fixture lane. |
 | `nav-roundtrip` | Playwright, operator-only; replay PASS evidence | `live-readonly` non-local target `https://example.com`; recorded pass evidence exists in artifact run `20260610-125235-1542`. Future replay still requires operator-selected allowlist and must not run unattended. |
 | `ianatour` | Playwright, operator-only; replay PASS evidence | `live-readonly` non-local target `https://www.iana.org/domains`; recorded pass evidence exists in artifact run `20260610-125235-1542`. Future replay still requires operator-selected allowlist and must not run unattended. |
-| `approval_office_hiworks_com_ibizsoftware_net_approval` | Playwright, operator-only; read-only replay PASS, owner approval pending | App-bound external business URL. Local operator acceptance passed with `RUN_ID=20260611-153636-1422`; limited open still requires owner approval for the exact read-only origin set in `HIWORKS-READONLY-OWNER-APPROVAL-REQUEST-2026-06-11.md`. |
+| `approval_office_hiworks_com_ibizsoftware_net_approval` | Playwright, operator-only; development integration PASS | App-bound external business URL. Local operator acceptance passed with `RUN_ID=20260611-153636-1422`; clean revalidation passed with `RUN_ID=20260611-163741-963`. Continue using it as a read-only development integration proof. Owner approval is only needed if this lane is promoted to production-open. |
 | `guest_samsungdisplay_com_argos_main_do` | Blocked | `live-action` effectful flow with `needs_review` steps 3 and 4, no captured candidates, and no reviewed `irreversibleAt`; compile/replay are blocked until repair plus dry-run/owner gates. |
 | `hiworks01` | Blocked | Playwright-scoped destructive live-action with `needs_review` steps 0 and 2, candidate summaries in the blocked-flow report, and `irreversibleAt:6` warning; compile/replay are blocked until repair, dry-run evidence, and owner approval. |
 

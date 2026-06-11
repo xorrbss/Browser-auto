@@ -1,8 +1,12 @@
 # Hiworks Read-Only Owner Approval Request
 
-Status: ready for owner review; awaiting owner decision
+Status: production-open template; not required for development integration
 Date: 2026-06-11
 Requested scope: limited open for the Hiworks read-only operator lane
+
+Policy note: this document is kept for a future production-open decision. It is not required for
+read-only development integration or for testing additional business systems under
+`RPA-DEVELOPMENT-INTEGRATION-POLICY.md`.
 
 This request asks the target owner to approve only the read-only operator lane for
 `approval_office_hiworks_com_ibizsoftware_net_approval`. It does not request approval for unattended
