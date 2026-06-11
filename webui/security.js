@@ -943,7 +943,9 @@ function requestedTenant(req) {
 // Delegate to the canonical secret-path classifier in secrets.js so the URL-route gate and the
 // static-file gate (staticFilePolicy) block exactly the same set; a single source prevents drift.
 export function secretPathBlocked(pathname) {
-	return isSecretBearingPath(pathname);
+	const path = String(pathname || '').split('?')[0];
+	if (path === '/api' || path.startsWith('/api/')) return false;
+	return isSecretBearingPath(path);
 }
 
 export function authenticateRequestContext(req, { env = process.env, now = Date.now() } = {}) {

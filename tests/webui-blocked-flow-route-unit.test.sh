@@ -112,6 +112,20 @@ body = await r.json();
 assert.equal(body.blockedFlows.staticAnalysisOnly, true, 'readiness route includes static blocked-flow report');
 assert(body.releaseChecklist.blockedFlows.blocked.includes('guest_samsungdisplay_com_argos_main_do'), 'readiness route includes blocked flow names');
 
+r = await fetch(`${base}/api/auth`, {
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	body: JSON.stringify({
+		app: 'bad app',
+		loginUrl: 'https://example.com/login',
+		successUrl: 'https://example.com/dashboard',
+		engine: 'playwright',
+	}),
+});
+assert.equal(r.status, 400, 'auth setup route is handled before static secret-path fallback');
+body = await r.json();
+assert.match(body.error || '', /invalid app name/, 'auth setup route returns validation errors, not static not found');
+
 r = await fetch(`${base}/api/flows`);
 assert.equal(r.status, 200, 'flows route returns 200');
 body = await r.json();

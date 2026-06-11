@@ -119,6 +119,7 @@ const duplicateProxyHeaderEnv = {
 assert.equal(secretPathBlocked('/fixtures/auth/playwright/app.state.json'), true, 'auth state path is blocked');
 assert.equal(secretPathBlocked('/flows/demo.values.json'), true, 'values sidecar path is blocked');
 assert.equal(secretPathBlocked('/data/approvals.db'), true, 'local DB path is blocked');
+assert.equal(secretPathBlocked('/api/auth'), false, 'auth API route is not mistaken for an auth-state file path');
 assert.equal(secretPathBlocked('/artifacts/20990101-000000-1/report.json'), false, 'normal report path is allowed by path gate');
 // The route gate now delegates to the canonical classifier, so it blocks the same superset as the
 // static-file gate (these were previously blocked only by staticFilePolicy, not the URL route).
@@ -128,6 +129,7 @@ assert.equal(secretPathBlocked('/data/webui-jobs.jsonl'), true, 'durable jobs jo
 assert.equal(secretPathBlocked('/exports/storage-state.json'), true, 'storage-state file is blocked at the route gate');
 
 assert.equal(authorizeHttpRequest(req('GET'), '/api/runs', { allowedHosts }).ok, true, 'local mode allows existing localhost behavior');
+assert.equal(authorizeHttpRequest(req('POST'), '/api/auth', { allowedHosts }).ok, true, 'local mode allows auth API route through HTTP gate');
 assert.equal(sessionCookieOptions({ WEBUI_EXTERNAL_MODE: '1', WEBUI_SESSION_SECURE: '0' }).secure, true, 'external cookies stay Secure even if env tries to disable it');
 let cookiePreflight = sessionCookieDeploymentPreflight(authUsersEnv);
 assert.equal(cookiePreflight.ok, true, 'external cookie sessions pass with an HTTPS public URL');
