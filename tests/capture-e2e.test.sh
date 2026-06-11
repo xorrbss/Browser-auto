@@ -257,8 +257,8 @@ await page.click('#after');
 	ok(iScroll >= 0 && iClick >= 0 && iScroll < iClick, 'scroll: scroll-then-click order preserved');
 }
 
-// 7) container scroll: not silently ignored and not promoted to a runnable page scroll. It records an
-//    unsupported capability that build-flow turns into needs_review.
+// 7) container scroll: not silently ignored and not promoted to a page scroll. When the container has a
+//    capture-unique semantic locator, build-flow promotes it to a locator-scoped scroll.container step.
 await openCase('/container-scroll');
 await page.locator('#box').hover();
 await page.mouse.wheel(0, 320);
@@ -269,18 +269,20 @@ await page.click('#after');
 	const unsupported = byType(buf, 'unsupported');
 	ok(unsupported.length === 1, `container-scroll: one unsupported record (got ${unsupported.length})`);
 	const ev = unsupported[0];
-	ok(!!ev && ev.capability === 'container-scroll' && ev.insufficient === true, 'container-scroll: capability flagged insufficient');
+	ok(!!ev && ev.capability === 'container-scroll', 'container-scroll: capability recorded');
 	ok(!!ev && ev.dir === 'down' && ev.px > 0, 'container-scroll: recorded direction and px evidence');
+	ok(!!ev && ev.primary && ev.primary.by === 'testid' && ev.primary.value === 'scrollbox', 'container-scroll: semantic container primary retained');
+	ok(!!ev && Array.isArray(ev.candidates) && ev.candidates.some((c) => c.by === 'testid' && c.value === 'scrollbox' && c.count === 1), 'container-scroll: candidate ladder retained');
 	ok(byType(buf, 'scroll').length === 0, 'container-scroll: no runnable page-scroll record emitted');
 	const iUnsupported = idxOf(buf, (e) => e.action_type === 'unsupported' && e.capability === 'container-scroll');
 	const iClick = idxOf(buf, (e) => e.action_type === 'click');
 	ok(iUnsupported >= 0 && iClick >= 0 && iUnsupported < iClick, 'container-scroll: unsupported record ordered before following click');
 	const built = buildFlowFromRecords('container_scroll_flow', ORIGIN + '/container-scroll', buf);
-	const step = built.flow.steps.find((s) => s.unsupported === 'container-scroll');
-	ok(step && step.needs_review === true, 'container-scroll: built step is needs_review');
-	ok(step && step.kind === 'scroll' && step.recordedDir === 'down' && step.recordedPx > 0, 'container-scroll: review step retains scroll evidence');
-	const invalid = spawnSync(process.execPath, ['bin/play-flow.mjs', '--flow', built.flowPath, '--validate-only'], { cwd: ROOT, encoding: 'utf8' });
-	ok(invalid.status !== 0 && /needs_review/.test(`${invalid.stdout || ''}${invalid.stderr || ''}`), 'container-scroll: validate/replay refuses needs_review flow');
+	const step = built.flow.steps.find((s) => s.kind === 'scroll' && s.container);
+	ok(step && step.needs_review !== true, 'container-scroll: built step is runnable');
+	ok(step && step.dir === 'down' && step.px > 0 && step.container.by === 'testid' && step.container.value === 'scrollbox', 'container-scroll: built scroll.container retains locator and scroll evidence');
+	const valid = spawnSync(process.execPath, ['bin/play-flow.mjs', '--flow', built.flowPath, '--validate-only'], { cwd: ROOT, encoding: 'utf8' });
+	ok(valid.status === 0, 'container-scroll: validate-only accepts scroll.container flow');
 }
 
 // 8) dom_settle: a click that swaps a large subtree WITHOUT a URL change records a settle marker.

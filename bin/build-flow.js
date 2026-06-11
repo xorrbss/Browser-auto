@@ -139,9 +139,24 @@ function actionFind(rec, action, extra) {
 }
 
 function unsupportedReview(rec) {
-  needsReview++;
   const capability = rec.capability || 'unsupported';
   const reason = rec.reason || 'recorded capability is not replayable by the current flow schema';
+  if (capability === 'container-scroll') {
+    const px = Math.round(Number(rec.px));
+    const fl = frameLoc(rec.frame_ref);
+    const reviewReason = primaryReviewReason(rec);
+    if (['up', 'down', 'left', 'right'].includes(rec.dir) && Number.isFinite(px) && px > 0 && rec.primary && !reviewReason && !(fl && fl._unreplayable)) {
+      const p = rec.primary;
+      const container = { by: p.by, value: p.value };
+      if (p.name) container.name = p.name;
+      const step = { kind: 'scroll', dir: rec.dir, px, container };
+      if (fl) step.frame = fl;
+      steps.push(step);
+      candidatesByStep[steps.length - 1] = ladderOf(rec);
+      return;
+    }
+  }
+  needsReview++;
   const step = {
     kind: capability === 'container-scroll' ? 'scroll' : 'find',
     needs_review: true,

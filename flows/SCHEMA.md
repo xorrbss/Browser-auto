@@ -97,6 +97,9 @@ with headed `setup/auth.sh` instead.
   - `value`: URL glob/text/load state as appropriate.
   - `timeoutMs`: optional per-step timeout override, positive integer up to 600000.
 - `scroll`: page scroll captured as `{ "dir": "up|down|left|right", "px": 300 }`.
+  A scrollable container may include a semantic locator:
+  `{ "dir": "up|down|left|right", "px": 300, "container": { "by": "testid", "value": "scrollbox" } }`.
+  `frame` is allowed only with `container` and follows the same same-origin iframe rules as `find`.
 - `press`: non-text keyboard action, such as `Enter`, `Escape`, `Tab`, or arrow keys.
 - `open_record`: recipe-driven dynamic row open for RPA/detail flows.
   - `source`: optional; `first`, `row_index`, or `field_value`.
@@ -123,8 +126,9 @@ Playwright steps, marked `needs_review`, or refused before a flow is produced.
 | Cross-origin iframe action | `needs_review` with captured candidates/evidence | Unsupported, fail-closed |
 | File upload input | `needs_review`; local file path is never captured | Unsupported, fail-closed |
 | Download link | `needs_review`; no runnable click fallback is emitted | Unsupported, fail-closed |
-| Page scroll | `{ "kind": "scroll", "dir": "...", "px": N }` | Supported for page scroll only |
-| Scrollable container gesture | `needs_review` with `unsupported:"container-scroll"` and recorded direction/px | Unsupported, fail-closed |
+| Page scroll | `{ "kind": "scroll", "dir": "...", "px": N }` | Supported |
+| Scrollable container gesture with a capture-unique semantic container locator | `{ "kind": "scroll", "dir": "...", "px": N, "container": { "by": "...", "value": "..." } }` | Supported; replay fails closed if the locator is not unique or the container does not move |
+| Scrollable container gesture without a stable container locator | `needs_review` with `unsupported:"container-scroll"` and recorded direction/px | Unsupported, fail-closed |
 | `Enter`, `Escape`, `Tab`, arrow keys | `press` step | Supported with drift warnings for arrows |
 | `Ctrl`/`Meta`/`Alt` shortcuts such as `Control+s` | `press` step plus build warning | Partial; human must review app-specific effects |
 | Popup/new tab or top-level cross-origin recording boundary | Recorder refuses/fails loud | Unsupported, fail-closed |

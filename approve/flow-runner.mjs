@@ -39,6 +39,7 @@ export function validateSteps(steps) {
 		const s = steps[i];
 		if (!s || typeof s !== 'object') return { ok: false, reason: `step ${i}: not an object` };
 		if (s.needs_review) return { ok: false, reason: `step ${i}: needs_review (unresolved locator) — refuse` };
+		if (s.unsupported) return { ok: false, reason: `step ${i}: unsupported "${s.unsupported}" must remain needs_review` };
 		if (s.timeoutMs != null && !(Number.isInteger(s.timeoutMs) && s.timeoutMs > 0 && s.timeoutMs <= MAX_STEP_TIMEOUT_MS)) {
 			return { ok: false, reason: `step ${i}: timeoutMs must be an integer from 1 to ${MAX_STEP_TIMEOUT_MS}` };
 		}
@@ -69,6 +70,20 @@ export function validateSteps(steps) {
 			if (!SCROLL_DIR.has(s.dir)) return { ok: false, reason: `step ${i}: scroll.dir "${s.dir}" invalid` };
 			const px = Number(s.px);
 			if (!(Number.isFinite(px) && px > 0)) return { ok: false, reason: `step ${i}: scroll.px must be a positive number` };
+			if (s.container !== undefined) {
+				const c = s.container;
+				if (!c || typeof c !== 'object' || !FIND_BY.has(c.by)) return { ok: false, reason: `step ${i}: scroll.container invalid` };
+				if (typeof c.value !== 'string' || !c.value) return { ok: false, reason: `step ${i}: scroll.container.value required` };
+				if (c.name != null && typeof c.name !== 'string') return { ok: false, reason: `step ${i}: scroll.container.name must be a string` };
+				if (s.frame !== undefined) {
+					const f = s.frame;
+					if (!f || typeof f !== 'object' || !FRAME_BY.has(f.by) || f.value == null) return { ok: false, reason: `step ${i}: invalid frame locator` };
+					if (typeof f.value === 'string' && /["\\]/.test(f.value)) return { ok: false, reason: `step ${i}: frame value has unsafe chars` };
+					if (f.by === 'index' && !(Number.isInteger(f.value) && f.value >= 0)) return { ok: false, reason: `step ${i}: frame index must be a non-negative integer` };
+				}
+			} else if (s.frame !== undefined) {
+				return { ok: false, reason: `step ${i}: scroll.frame requires scroll.container` };
+			}
 		} else if (s.kind === 'open_record') {
 			const source = s.source || 'first';
 			if (!OPEN_RECORD_SOURCE.has(source)) return { ok: false, reason: `step ${i}: open_record.source "${source}" invalid` };
@@ -132,6 +147,22 @@ async function runStep(page, s, opts) {
 	if (s.kind === 'scroll') {
 		const px = Math.abs(parseInt(s.px, 10) || 0);
 		const d = { up: [0, -px], down: [0, px], left: [-px, 0], right: [px, 0] }[s.dir] || [0, 0];
+		if (s.container) {
+			const loc = buildLocator(page, { ...s.container, frame: s.frame });
+			const c = await loc.count();
+			if (c !== 1) throw new Error(`scroll.container ${s.container.by}:${s.container.value} matched ${c} elements (need exactly 1) fail-closed`);
+			const moved = await loc.first().evaluate((el, delta) => {
+				const beforeX = Math.round(el.scrollLeft || 0);
+				const beforeY = Math.round(el.scrollTop || 0);
+				el.scrollLeft = beforeX + delta.dx;
+				el.scrollTop = beforeY + delta.dy;
+				const afterX = Math.round(el.scrollLeft || 0);
+				const afterY = Math.round(el.scrollTop || 0);
+				return Math.abs(afterX - beforeX) > 0 || Math.abs(afterY - beforeY) > 0;
+			}, { dx: d[0], dy: d[1] });
+			if (!moved) throw new Error(`scroll.container ${s.container.by}:${s.container.value} did not move`);
+			return;
+		}
 		return page.mouse.wheel(d[0], d[1]);
 	}
 	if (s.kind === 'open_record') {

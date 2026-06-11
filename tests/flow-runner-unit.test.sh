@@ -45,6 +45,13 @@ assert(validateSteps([{ kind: "find", by: "label", value: "Name", action: "fill"
 assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "select" }]).ok === false, "select without val/text ⇒ refused");
 assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "select", val: "kr" }]).ok === true, "select WITH val ⇒ valid");
 
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100 }]).ok === true, "page scroll validates");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, container: { by: "testid", value: "scrollbox" } }]).ok === true, "container scroll validates");
+assert(validateSteps([{ kind: "scroll", dir: "sideways", px: 100, container: { by: "testid", value: "scrollbox" } }]).ok === false, "container scroll bad dir refused");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 0, container: { by: "testid", value: "scrollbox" } }]).ok === false, "container scroll bad px refused");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, container: { by: "css", value: ".box" } }]).ok === false, "container scroll bad locator refused");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, frame: { by: "id", value: "f" } }]).ok === false, "scroll frame without container refused");
+assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, unsupported: "container-scroll" }]).ok === false, "unsupported marker without needs_review refused");
 assert(validateSteps([{ kind: "wait", until: "load", timeoutMs: 45000 }]).ok === true, "per-step timeoutMs validates");
 assert(validateSteps([{ kind: "wait", until: "load", timeoutMs: 0 }]).ok === false, "bad timeoutMs refused");
 
@@ -87,6 +94,7 @@ function mockPage(calls, countVal = 1) {
     pressSequentially: async (t) => calls.push("type:" + t), selectOption: async (v) => calls.push("select:" + v),
     check: async () => calls.push("check"), uncheck: async () => calls.push("uncheck"),
     hover: async () => calls.push("hover"), waitFor: async () => calls.push("waitFor"),
+    evaluate: async (_fn, arg) => { calls.push("evaluate:" + arg.dx + "," + arg.dy); return true; },
   };
   const loc = () => node;
   return {
@@ -139,6 +147,18 @@ function mockPage(calls, countVal = 1) {
   let ok = true;
   try { await runSteps(mockPage([], 2), [{ kind: "find", by: "text", value: "x", action: "hover" }], { dryRun: false }); } catch { ok = false; }
   assert(ok, "hover (non-effectful) does NOT require uniqueness");
+}
+
+// container scroll is read-only but locator-scoped and still fails closed on non-unique locators.
+{
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "scroll", dir: "down", px: 120, container: { by: "testid", value: "scrollbox" } }], { dryRun: false, reversible: true });
+  assert(calls.includes("evaluate:0,120"), "container scroll moved the target element (got " + calls.join() + ")");
+}
+{
+  let threw = false;
+  try { await runSteps(mockPage([], 2), [{ kind: "scroll", dir: "down", px: 120, container: { by: "testid", value: "scrollbox" } }], { dryRun: false, reversible: true }); } catch { threw = true; }
+  assert(threw, "container scroll non-unique locator throws");
 }
 
 // --- open_record dispatches through the caller-provided Playwright recipe opener ---

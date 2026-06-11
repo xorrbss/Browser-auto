@@ -245,4 +245,18 @@ if node "$DIR/bin/play-flow.mjs" --flow "$FLOW9" --validate-only >/dev/null 2>&1
 	fail "unsupported: validate-only accepted a needs_review container scroll"
 fi
 
+REC10="$TMP/records10.json"; FLOWS10="$TMP/flows10"; mkdir -p "$FLOWS10"
+cat > "$REC10" <<'JSON'
+[
+ {"seq":1,"action_type":"unsupported","capability":"container-scroll","reason":"scrollable container gestures require a stable container locator","dir":"down","px":240,"primary":{"by":"testid","value":"scrollbox"},"candidates":[{"by":"testid","value":"scrollbox","count":1}],"insufficient":true,"is_navigation_boundary":false}
+]
+JSON
+node "$DIR/bin/build-flow.js" containerscroll "http://127.0.0.1/editor" "" "$REC10" "$FLOWS10" "$BF_ENGINE" 2>/dev/null \
+	|| fail "build-flow.js exited non-zero on unique container scroll"
+FLOW10="$FLOWS10/containerscroll.flow.json"
+eq "$(jq -rc '.steps[0]|[.kind,.dir,.px,.container.by,.container.value]' "$FLOW10")" '["scroll","down",240,"testid","scrollbox"]' "container-scroll: unique container locator promotes to scroll.container"
+eq "$(jq -r '.steps[0].needs_review // false' "$FLOW10")" 'false' "container-scroll: promoted step is runnable"
+node "$DIR/bin/play-flow.mjs" --flow "$FLOW10" --validate-only >/dev/null 2>&1 \
+	|| fail "container-scroll: validate-only rejected scroll.container step"
+
 echo "  ✓ build-flow-unit.test.sh passed"

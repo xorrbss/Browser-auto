@@ -1308,7 +1308,7 @@ function renderAutomationFlow(flow) {
 		metric('단계', flow.steps.length, flow.startUrl || ''),
 		metric('검토', flow.needsReviewSteps.length, 'locator 후보 선택'),
 		metric('입력값', flow.inputTokens.length, flow.missingValues.length ? '누락 있음' : '준비됨'),
-		metric('상태', flowSummaryState(flow), flowSummaryDetail(flow)),
+		metric('상태', flowSummaryState(flow), flowSummaryDetail(flow), { compact: true }),
 	);
 	const recordAccess = accessDecision('record');
 	const steps = el('div', { class: 'step-list' });
@@ -1798,9 +1798,9 @@ function renderPlanSummary(selector, includeMetrics = false) {
 	setChildren(box, metrics, kvs);
 }
 
-function metric(label, value, sub) {
+function metric(label, value, sub, options = {}) {
 	const text = safeText(value, '-');
-	const compact = text.length > 24 || /\s/.test(text) && text.length > 16;
+	const compact = options.compact === true || text.length > 24 || /\s/.test(text) && text.length > 16;
 	return el('div', { class: 'metric' }, el('span', {}, label), el('strong', { class: compact ? 'compact' : '' }, text), el('em', {}, sub || ''));
 }
 

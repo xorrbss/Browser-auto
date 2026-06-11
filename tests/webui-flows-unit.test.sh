@@ -204,7 +204,9 @@ cat > "$SCROLL_FLOW" <<JSON
       "needs_review": true,
       "unsupported": "container-scroll",
       "reason": "scrollable container gestures require a stable container locator and are not replayable as page scroll",
-      "candidates": [],
+      "candidates": [
+        { "by": "testid", "value": "scrollbox", "count": 1 }
+      ],
       "recordedDir": "up",
       "recordedPx": 120
     },
@@ -247,7 +249,7 @@ JSON
 
 FLOW_NAME="$FLOW_NAME" MISSING_NAME="$MISSING_NAME" FALLBACK_NAME="$FALLBACK_NAME" NO_FALLBACK_NAME="$NO_FALLBACK_NAME" HEADERLESS_NAME="$HEADERLESS_NAME" SCROLL_NAME="$SCROLL_NAME" SECRET_NAME="$SECRET_NAME" RECIPE_NAME="$RECIPE_NAME" HEADERLESS_RECIPE_NAME="$HEADERLESS_RECIPE_NAME" RUN_NEW="$RUN_NEW" node --input-type=module <<'NODE'
 import { readFile } from 'node:fs/promises';
-import { getFlow, listFlows, resolveClickedRecordStep } from './webui/flows.js';
+import { getFlow, listFlows, resolveClickedRecordStep, resolveStep } from './webui/flows.js';
 
 const die = (m) => { console.error(m); process.exit(1); };
 
@@ -287,8 +289,13 @@ if (scrollReview.action !== null) die(`expected scroll review action=null, got $
 if (scrollReview.recordedDir !== 'down' || scrollReview.recordedPx !== 240) die('expected scroll review evidence metadata');
 const scrollAsRecord = await resolveClickedRecordStep(process.env.SCROLL_NAME, 0, process.env.RECIPE_NAME);
 if (scrollAsRecord.ok || !/only click steps/.test(scrollAsRecord.error || '')) die(`expected scroll open_record conversion to be refused, got ${JSON.stringify(scrollAsRecord)}`);
+const scrollResolve = await resolveStep(process.env.SCROLL_NAME, 1, 0);
+if (!scrollResolve.ok) die(`expected scroll container candidate resolve to pass, got ${scrollResolve.error}`);
 scrollFlow = JSON.parse(await readFile(`flows/${process.env.SCROLL_NAME}.flow.json`, 'utf8'));
 if (scrollFlow.steps.length !== 3 || scrollFlow.steps[0].needs_review !== true) die('container-scroll review must remain fail-closed until re-recorded or manually authored');
+if (scrollFlow.steps[1].needs_review) die('resolved container scroll should no longer need review');
+if (scrollFlow.steps[1].kind !== 'scroll' || scrollFlow.steps[1].container?.by !== 'testid' || scrollFlow.steps[1].container?.value !== 'scrollbox') die(`resolved container scroll has wrong shape: ${JSON.stringify(scrollFlow.steps[1])}`);
+if (scrollFlow.steps[1].dir !== 'up' || scrollFlow.steps[1].px !== 120) die('resolved container scroll lost recorded direction/px');
 
 const statusFlow = await getFlow(process.env.MISSING_NAME);
 if (!statusFlow.missingValues.includes('input_1')) die('expected input_1 to be reported missing');

@@ -78,7 +78,10 @@ function describeStep(s) {
 	}
 	if (s.kind === 'wait') return `wait ${s.until}${s.value != null ? `:${s.value}` : ''}`;
 	if (s.kind === 'press') return `press ${s.value}`;
-	if (s.kind === 'scroll') return `scroll ${s.dir} ${s.px}`;
+	if (s.kind === 'scroll') {
+		const container = s.container ? ` container ${s.container.by}:${s.container.value}${s.container.name ? ` name="${s.container.name}"` : ''}` : '';
+		return `scroll ${s.dir} ${s.px}${container}`;
+	}
 	if (s.kind === 'open_record') return `open_record ${s.recipe || ''}`;
 	return String(s.kind || 'unknown');
 }

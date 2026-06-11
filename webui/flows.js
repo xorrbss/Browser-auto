@@ -575,10 +575,24 @@ async function resolveStepInner(name, stepIndex, candidateIndex) {
 	if (!step || step.needs_review !== true) return { ok: false, error: 'step is not needs_review' };
 	const cand = (Array.isArray(step.candidates) ? step.candidates : [])[candidateIndex];
 	if (!cand) return { ok: false, error: 'invalid candidate index' };
-	step.by = cand.by;
-	step.value = cand.value;
-	if (cand.name != null) step.name = cand.name;
-	else delete step.name;
+	if (step.kind === 'scroll' && step.unsupported === 'container-scroll') {
+		step.container = { by: cand.by, value: cand.value };
+		if (cand.name != null) step.container.name = cand.name;
+		step.dir = step.recordedDir || step.dir;
+		step.px = step.recordedPx || step.px;
+		delete step.by;
+		delete step.value;
+		delete step.name;
+		delete step.unsupported;
+		delete step.reason;
+		delete step.recordedDir;
+		delete step.recordedPx;
+	} else {
+		step.by = cand.by;
+		step.value = cand.value;
+		if (cand.name != null) step.name = cand.name;
+		else delete step.name;
+	}
 	delete step.needs_review;
 	delete step.candidates;
 	await writeFile(flowPath(name), JSON.stringify(flow, null, 2) + '\n', 'utf8');

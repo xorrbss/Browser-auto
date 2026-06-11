@@ -279,12 +279,13 @@ See `flows/SCHEMA.md` for all step kinds, iframe rules, `needs_review`, values s
 locator repair, and assert kinds.
 
 Recorder support is deliberately conservative. Same-tab semantic actions, same-origin iframe actions,
-page scrolls, and navigation keys compile to deterministic Playwright steps. Cross-origin iframe
-actions, uploads, downloads, and scrollable-container gestures are captured as review-only evidence and
-become `needs_review`; compile/replay refuse them until a human resolves the flow. Modifier shortcuts
-such as `Control+s` compile as explicit `press` steps but emit a warning because their effects are
-application-specific. Popup/new-tab and top-level cross-origin recording boundaries fail loud during
-recording.
+page scrolls, scrollable-container gestures with a capture-unique semantic container locator, and
+navigation keys compile to deterministic Playwright steps. Cross-origin iframe actions, uploads,
+downloads, and scrollable-container gestures without a stable locator are captured as review-only
+evidence and become `needs_review`; compile/replay refuse them until a human resolves the flow.
+Modifier shortcuts such as `Control+s` compile as explicit `press` steps but emit a warning because
+their effects are application-specific. Popup/new-tab and top-level cross-origin recording boundaries
+fail loud during recording.
 
 ## Correctness Rules
 

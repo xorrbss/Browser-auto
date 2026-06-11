@@ -278,8 +278,7 @@
     return normalize(attr(el, 'aria-label')) === c.name;
   }
 
-  // --- build + push a locator-bearing record ---
-  function emit(action_type, el, extra) {
+  function locatorPayload(el) {
     try {
       var cands = candidatesFor(el);
       for (var i = 0; i < cands.length; i++) { var r = countCandidate(cands[i], el); cands[i].count = r.count; cands[i]._count = r.count; cands[i]._hit = r.matchesTarget; }
@@ -298,13 +297,23 @@
         }
       }
       var top = cands.slice(0, Math.max(2, 0)).map(function (c) { var o = { by: c.by, value: c.value, count: c.count }; if (c.name) o.name = c.name; return o; });
-      var rec = { action_type: action_type, primary: primary, candidates: top, is_navigation_boundary: false };
       // needs_review (insufficient) keeps the conservative "<2 candidates" backstop, with ONE exception:
       // a lone aria-label-BUTTON role+name primary is engine-resolvable (compiled with --exact), unique,
       // and non-auto (roleAriaLabelButton gate), so it is sufficient by itself. Every OTHER single-
       // candidate step still goes needs_review so a fragile lone guess is never auto-promoted. A
       // primary-less step is needs_review via build-flow's `!p`; the ladder (top) stays non-empty (C1).
-      if (!primary || ((top.length < 2) && primary.by !== 'role')) rec.insufficient = true;
+      return { primary: primary, candidates: top, insufficient: !primary || ((top.length < 2) && primary.by !== 'role') };
+    } catch (e) {
+      return { primary: null, candidates: [], insufficient: true };
+    }
+  }
+
+  // --- build + push a locator-bearing record ---
+  function emit(action_type, el, extra) {
+    try {
+      var payload = locatorPayload(el);
+      var rec = { action_type: action_type, primary: payload.primary, candidates: payload.candidates, is_navigation_boundary: false };
+      if (payload.insufficient) rec.insufficient = true;
       if (extra) for (var k in extra) rec[k] = extra[k];
       record(rec);
     } catch (e) {}
@@ -443,15 +452,16 @@
     if (containerScrollLast && p.el) {
       try { containerScrollLast.set(p.el, { y: p.lastY, x: p.lastX }); } catch (e) {}
     }
+    var locator = locatorPayload(p.el);
     record({
       action_type: 'unsupported',
       capability: 'container-scroll',
       reason: 'scrollable container gestures require a stable container locator and are not replayable as page scroll',
       dir: dp.dir,
       px: dp.px,
-      primary: null,
-      candidates: [],
-      insufficient: true,
+      primary: locator.primary,
+      candidates: locator.candidates,
+      insufficient: locator.insufficient,
       is_navigation_boundary: false
     });
   }
