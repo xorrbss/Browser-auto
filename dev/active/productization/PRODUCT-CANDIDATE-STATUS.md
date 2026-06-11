@@ -122,12 +122,12 @@ production audit webhook delivery, or live/non-local acceptance.
 The fake connector coverage is a readiness contract only; it is not evidence that a deployed webhook
 connector, production secret broker, or external runner topology has delivered an audit event.
 
-Latest full recorded fixture-gate result in this workspace: Pass. Artifact evidence shows
-`security-p0-gate` passing on 2026-06-10. In the 2026-06-11 report/checklist pass, the focused tests for
-blocked-flow reporting, readiness, and release checklist wiring pass under Git Bash; a fresh full wrapper
-run did not complete in this tool session, so the June 10 full-gate artifact remains the latest complete
-full-gate evidence. External service open remains No-Go because the full P0 acceptance checklist is still
-open.
+Latest clean-checkout fixture evidence: Pass on 2026-06-11. A fresh clone of `origin/master` at
+commit `b3ee3b6` was prepared with `cd approve && npm ci`, then verified under
+`C:\Program Files\Git\bin\bash.exe`. `bash tests/security-p0-gate.test.sh` passed, and `bash run.sh`
+passed with `75/75` deterministic tests green; the full-suite run id was `20260611-121719-64`.
+Details are recorded in `dev/active/productization/RELEASE-EVIDENCE-2026-06-11.md`. External service
+open remains No-Go because the full P0 acceptance checklist is still open.
 
 The readiness matrix is intentionally conservative: current sections are still release-blocking because
 real IdP, KMS, noVNC, DNS-at-connection, runner deployment, webhook audit, export, and live-like
