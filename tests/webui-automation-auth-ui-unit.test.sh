@@ -12,7 +12,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const appJs = fs.readFileSync('webui/public/app.js', 'utf8');
+const authPw = fs.readFileSync('approve/auth-pw.mjs', 'utf8');
 
+assert.match(appJs, /MANUAL_AUTH_SAVE_NEEDLE = '__AQA_MANUAL_AUTH_SAVE_ONLY__'/, 'login-url-only auth uses a manual-save sentinel');
 assert.match(
 	appJs,
 	/const app = manualApp \|\| autoApp \|\| matchedApp;/,
@@ -35,6 +37,8 @@ assert.doesNotMatch(
 );
 assert.match(appJs, /loggedIn \? '로그인 갱신'/, 'saved auth presents a refresh action');
 assert.match(appJs, /저장된 로그인 있음/, 'saved auth badge is descriptive rather than a hard block');
+assert.match(authPw, /const initialUrl = page\.url\(\);/, 'auth driver records the initial login URL');
+assert.match(authPw, /currentUrl !== initialUrl && currentUrl\.includes\(successNeedle\)/, 'auth driver does not accept the initial login URL as success');
 NODE
 
 echo "  webui-automation-auth-ui-unit: auth controls remain refreshable"

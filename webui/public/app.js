@@ -5,6 +5,7 @@ import { $, el, getJson, fmtTime, streamJob, cancelJob, stopJob } from './util.j
 import { buildOpsDashboardModel } from './ops-dashboard.js';
 
 const DEFAULT_ENGINE = 'playwright';
+const MANUAL_AUTH_SAVE_NEEDLE = '__AQA_MANUAL_AUTH_SAVE_ONLY__';
 const FLOW_NAME_RE = /^[A-Za-z0-9_-]+$/;
 const RBAC_ENDPOINTS = ['/api/rbac', '/api/session'];
 const RBAC_PERMISSIONS = ['read', 'sync', 'enrich', 'auth', 'record', 'verify', 'compile', 'run', 'live-action', 'approve'];
@@ -680,14 +681,13 @@ function appSuggestion(form) {
 }
 
 function successNeedleSuggestion(form) {
-	// Prefer the record (post-login work screen) URL, but fall back to the login URL host so that
-	// registering login with ONLY a login URL still yields a non-empty needle — mirrors the
-	// `recordUrl || loginUrl` idiom used by flowNameSuggestion/appSuggestion. The login-host needle
-	// is by construction a substring of the login URL, so setup/auth.sh's got!=LOGIN_URL guard makes
-	// auto-detect fire only once the page navigates OFF the exact login URL; same-URL portals are
-	// covered by the [로그인 완료·저장] confirm-save fallback.
+	// Prefer the record URL because it is the post-login work screen. With only a login URL,
+	// use a never-matching sentinel so the headed login stays open until the operator presses
+	// [로그인 완료·저장]. Guessing from the login URL itself can auto-save before login.
 	try {
-		const u = new URL(form.recordUrl || form.loginUrl);
+		const rawRecordUrl = String(form.recordUrl || '').trim();
+		const u = new URL(rawRecordUrl || form.loginUrl);
+		if (!rawRecordUrl) return MANUAL_AUTH_SAVE_NEEDLE;
 		const firstPath = u.pathname.split('/').filter(Boolean)[0] || '';
 		const pathPart = firstPath ? `/${firstPath}` : '';
 		return `${u.hostname}${pathPart}`;
@@ -1087,6 +1087,7 @@ function renderAutomation() {
 	const activeVerify = !!state.automation.verifyJob;
 	const activeRun = !!state.automation.runJob;
 	const loggedIn = automationLoggedIn(form);
+	const manualAuthSave = form.successUrl === MANUAL_AUTH_SAVE_NEEDLE;
 	const busy = queueBusy();
 	const busyText = queueBusyText();
 	const authAccess = accessDecision('auth');
@@ -1163,7 +1164,9 @@ function renderAutomation() {
 		authHint.textContent = loggedIn
 			? '저장된 로그인이 있어도 [로그인 갱신]으로 새 창을 열어 다시 저장할 수 있습니다.'
 			: form.loginUrl
-				? '로그인 후 다른 화면으로 이동하면 자동 저장됩니다. 같은 화면에 머무르면 [로그인 완료·저장]을 누르세요.'
+				? manualAuthSave
+					? '로그인 URL만 입력한 경우 자동 저장하지 않습니다. 창에서 로그인 후 [로그인 완료·저장]을 누르세요.'
+					: '로그인 후 녹화 URL 화면으로 이동하면 자동 저장됩니다. 같은 화면에 머무르면 [로그인 완료·저장]을 누르세요.'
 				: '로그인 URL을 입력하면 로그인 등록을 시작할 수 있습니다.';
 	}
 	const recordHint = $('#auto-record-hint');
@@ -1450,7 +1453,10 @@ async function runAutomationAuth() {
 		renderAutomation();
 		return;
 	}
-	log.textContent = '로그인 창을 여는 중...\n로그인과 OTP를 완료하면 창이 자동으로 닫히고 상태가 저장됩니다.\n로그인 후 같은 화면에 머무르는 사이트는 [로그인 완료·저장]을 눌러 저장하세요.\n';
+	const manualAuthSave = form.successUrl === MANUAL_AUTH_SAVE_NEEDLE;
+	log.textContent = manualAuthSave
+		? '로그인 창을 여는 중...\n로그인과 OTP를 완료한 뒤 [로그인 완료·저장]을 눌러 저장하세요.\n로그인 URL만 입력한 경우 창은 자동으로 닫히지 않습니다.\n'
+		: '로그인 창을 여는 중...\n로그인과 OTP를 완료하면 녹화 URL 화면에서 자동으로 저장됩니다.\n같은 화면에 머무르는 사이트는 [로그인 완료·저장]을 눌러 저장하세요.\n';
 	setAutomationJobBadge('로그인 등록', 'info');
 	try {
 		const data = await postJson('/api/auth', {

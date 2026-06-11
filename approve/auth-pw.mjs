@@ -28,16 +28,18 @@ try {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
+  const initialUrl = page.url();
   console.error(`[auth-pw] Log in (incl. OTP) in the window. Waiting until the URL contains "${successNeedle}" (up to ${Math.round(TIMEOUT_MS / 1000)}s).`);
 
   let waited = 0;
   let matched = false;
   while (waited < TIMEOUT_MS) {
-    if (page.url().includes(successNeedle)) {
+    const currentUrl = page.url();
+    if (currentUrl && currentUrl !== initialUrl && currentUrl.includes(successNeedle)) {
       matched = true;
       break;
     }
-    if (STOPFILE && fs.existsSync(STOPFILE) && page.url()) {
+    if (STOPFILE && fs.existsSync(STOPFILE) && currentUrl) {
       console.error('[auth-pw] confirm-save requested; saving the current session.');
       matched = true;
       break;
