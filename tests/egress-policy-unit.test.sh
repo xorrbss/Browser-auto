@@ -51,6 +51,17 @@ const flow = (startUrl, extra = {}) => ({
 assert.equal(hostKind('169.254.169.254'), 'metadata', 'metadata IPv4 classified');
 assert.equal(hostKind('127.0.0.1'), 'loopback', 'loopback classified');
 assert.equal(hostKind('10.1.2.3'), 'private', 'RFC1918 classified');
+// IPv6 classification must be independent of text representation (compressed/expanded/mapped-hex).
+assert.equal(hostKind('::ffff:169.254.169.254'), 'metadata', 'IPv4-mapped metadata (dotted form) classified');
+assert.equal(hostKind('::ffff:a9fe:a9fe'), 'metadata', 'IPv4-mapped metadata (compressed-hex URL-parser form) classified');
+assert.equal(hostKind('::ffff:7f00:1'), 'loopback', 'IPv4-mapped loopback classified');
+assert.equal(hostKind('fd00:ec2::254'), 'metadata', 'compressed IPv6 metadata literal classified');
+assert.equal(hostKind('fd00:ec2:0:0:0:0:0:254'), 'metadata', 'expanded IPv6 metadata literal classified');
+assert.equal(hostKind('::1'), 'loopback', 'IPv6 loopback classified');
+assert.equal(hostKind('fe80::1'), 'link-local', 'IPv6 link-local classified');
+const mappedMeta = validateUrlEgress('http://[::ffff:169.254.169.254]/latest/meta-data/', { profile: 'public' });
+assert.equal(mappedMeta.ok, false, 'IPv4-mapped IPv6 metadata URL is blocked by default');
+assert.match(mappedMeta.reason, /metadata|cloud metadata/, 'mapped metadata refusal explains why');
 assert.equal(actors.tenantA.owner.role, 'owner', 'fixture actors include owner role');
 assert.equal(actors.tenantA.admin.role, 'admin', 'fixture actors include admin role');
 assert.equal(actors.tenantA.operator.role, 'operator', 'fixture actors include operator role');
