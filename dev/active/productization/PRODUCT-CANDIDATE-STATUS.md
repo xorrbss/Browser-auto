@@ -176,6 +176,11 @@ Additional Hiworks read-only operator acceptance on 2026-06-11 passed for
 operator evidence only. Owner approval is still required for the expanded read-only origin set before
 the lane is called open.
 
+Clean revalidation from a separate `origin/master` checkout at commit `8b8deb5` also passed on
+2026-06-11. `auth-r45.cmd` dry-run, `bash tests/security-p0-gate.test.sh` via Git Bash,
+`operator-staging-readonly --validate-only`, and the read-only replay all passed; replay
+`RUN_ID=20260611-163741-963`, `1/1 passed`, `durationMs=6963`.
+
 The readiness matrix is intentionally conservative: current sections are still release-blocking because
 real IdP, KMS, noVNC, DNS-at-connection, runner deployment, webhook audit, export, and live-like
 acceptance remain external/operator-owned.
