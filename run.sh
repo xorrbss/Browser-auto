@@ -56,8 +56,16 @@ if [ "$EXPLICIT_GLOB" -eq 0 ]; then
 	_skipped_live_auth=()
 	_skipped_nonlocal=()
 	_skipped_unreadable=()
+	_skipped_aggregate=()
 	for _t in "${TESTS[@]}"; do
 		_name="$(basename "$_t" .test.sh)"
+		# security-p0-gate is an aggregator that re-runs other suite tests; its members already run
+		# individually in the default suite, so running the bundle here would double-run ~48 tests.
+		# It stays available as an explicit standalone gate: `bash run.sh security-p0-gate`.
+		if [ "$_name" = "security-p0-gate" ]; then
+			_skipped_aggregate+=("$_name")
+			continue
+		fi
 		_flow="${PROBE_ROOT}/flows/${_name}.flow.json"
 		if [ -s "$_flow" ]; then
 			if ! _meta="$(jq -r '[ (.app // ""), (.environment // "local"), (.riskClass // "read") ] | @tsv' "$_flow" 2>/dev/null)"; then
@@ -89,6 +97,10 @@ EOF
 	if [ "${#_skipped_nonlocal[@]}" -gt 0 ]; then
 		printf '[run] skipped non-local flow test(s) from default suite: %s\n' "${_skipped_nonlocal[*]}"
 		echo "[run] set AQA_INCLUDE_NONLOCAL=1 plus the needed run-mode/auth env, or pass an explicit glob."
+	fi
+	if [ "${#_skipped_aggregate[@]}" -gt 0 ]; then
+		printf '[run] skipped aggregator test(s) whose members run individually: %s\n' "${_skipped_aggregate[*]}"
+		echo "[run] run the bundled gate explicitly with: bash run.sh security-p0-gate"
 	fi
 	TESTS=( ${_kept[@]+"${_kept[@]}"} )
 fi

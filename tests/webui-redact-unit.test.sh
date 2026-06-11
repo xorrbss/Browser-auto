@@ -64,6 +64,18 @@ for (const [label, sample] of [
 	assertFixtureArtifactClean(sample, label);
 }
 
+// Regression: a comma-joined cookie value must be fully redacted, not truncated at the first comma.
+const cookieComma = redactText('Cookie: theme=light, sid=SECRETSESSION12345');
+assert(!cookieComma.includes('SECRETSESSION12345'), 'comma-joined cookie value is fully redacted');
+assert(cookieComma.includes('[redacted]'), 'comma-joined cookie header reports redaction');
+// Diagnostic codes (HTTP status, error constants) must survive: "code" is not a blanket secret word.
+assert(redactText('status code: 404 detail').includes('404'), 'HTTP status code survives redaction');
+assert(redactText('result code: ECONNREFUSED at host').includes('ECONNREFUSED'), 'error code constant survives redaction');
+// preserveWhitespace keeps TSV/aligned columns intact while still redacting secrets.
+const tsvLine = redactText('login\tpass\t0.42\tok', '', 0, { preserveWhitespace: true });
+assert(tsvLine === 'login\tpass\t0.42\tok', 'preserveWhitespace leaves clean tab-delimited rows untouched');
+assert(redactText('user\tBearer abc.def-123\tok', '', 0, { preserveWhitespace: true }) === 'user\tBearer [redacted]\tok', 'preserveWhitespace redacts secrets without collapsing tabs');
+
 const obj = redactObject({
 	password: 'hunter2',
 	nested: {

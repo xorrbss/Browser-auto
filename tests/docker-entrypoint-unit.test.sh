@@ -124,6 +124,9 @@ assert_contains "$out" "shared browser profile/download roots are not allowed in
 out="$(assert_failure invalid-disable NOVNC_DISABLE=maybe)"
 assert_contains "$out" "NOVNC_DISABLE must be one of" "invalid NOVNC_DISABLE should fail closed"
 
+out="$(assert_failure invalid-external-mode WEBUI_EXTERNAL_MODE=enabled)"
+assert_contains "$out" "WEBUI_EXTERNAL_MODE must be one of" "malformed external-mode flag must fail closed, not silently disable external guards"
+
 out="$(assert_failure invalid-proxy-tls WEBUI_EXTERNAL_MODE=1 NOVNC_AUTH_BOUNDARY=authenticated-proxy NOVNC_PROXY_TLS=maybe NOVNC_PROXY_AUTH=tenant-session)"
 assert_contains "$out" "NOVNC_PROXY_TLS must be one of" "invalid NOVNC_PROXY_TLS should fail closed"
 

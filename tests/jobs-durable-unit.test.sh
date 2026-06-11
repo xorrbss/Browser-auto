@@ -27,7 +27,7 @@ process.env.WEBUI_AUDIT_SINK_PATH = path.join(path.dirname(process.env.AQA_DB_PA
 const require = createRequire(import.meta.url);
 const dbm = require('./lib/db.js');
 const auditSink = require('./lib/audit-sink.js');
-const { enqueue, cancel, jobStatus, jobResult, queueState, runnerContract, validateRunnerDeployment } = await import('./webui/jobs.js');
+const { enqueue, cancel, stop, jobStatus, jobResult, queueState, runnerContract, validateRunnerDeployment } = await import('./webui/jobs.js');
 
 const assert = (cond, msg) => { if (!cond) { console.error('  jobs-durable-unit: ' + msg); process.exit(1); } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -323,6 +323,23 @@ assert(cancel(scopedRunning.id, cancelACtx), 'tenant A canceller can cancel tena
 await waitDone(scopedRunning.id);
 const scopedCancelAudit = auditFor(scopedRunning.id).filter((e) => e.event === 'cancel');
 assert(scopedCancelAudit.length === 1 && scopedCancelAudit[0].actorId === 'canceller_a', 'cancel audit records requesting actor');
+
+// stop() (graceful recording finish) must enforce the same tenant access control as cancel().
+const stopFilePath = path.join(path.dirname(process.env.AQA_DB_PATH), 'stop-signal');
+const stoppable = enqueue({
+	kind: 'record',
+	label: 'tenant scoped stoppable job',
+	context: tenantACtx,
+	stopFile: stopFilePath,
+	spawnFn: () => longChild(),
+});
+await waitUntil(stoppable.id, (s) => s.status === 'running' && s.pid, 'stoppable running');
+assert(stop(stoppable.id, tenantBCtx) === false, 'tenant B cannot stop tenant A recording');
+assert(!fs.existsSync(stopFilePath), 'cross-tenant stop does not write the stop-file');
+assert(stop(stoppable.id, cancelACtx) === true, 'tenant A actor can stop tenant A recording');
+assert(fs.existsSync(stopFilePath), 'authorized stop writes the stop-file');
+assert(cancel(stoppable.id, cancelACtx), 'free the running slot after the stop test');
+await waitDone(stoppable.id);
 
 const durableCanceled = enqueue({
 	kind: 'unit',

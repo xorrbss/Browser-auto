@@ -19,18 +19,11 @@ lower() {
     printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
-is_true() {
-    case "$(lower "$1")" in
-        1|true|yes|on) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 is_production_like_mode() {
     local mode
-    if is_true "${WEBUI_EXTERNAL_MODE:-}" || is_true "${AQA_EXTERNAL_MODE:-}" || \
-       is_true "${WEBUI_SERVICE_MODE:-}" || is_true "${AQA_SERVICE_MODE:-}" || \
-       is_true "${WEBUI_REQUIRE_DURABLE_JOBS:-}"; then
+    if [ "$external_mode_flag" = "1" ] || [ "$aqa_external_mode_flag" = "1" ] || \
+       [ "$service_mode_flag" = "1" ] || [ "$aqa_service_mode_flag" = "1" ] || \
+       [ "$require_durable_flag" = "1" ]; then
         return 0
     fi
     for mode in "${WEBUI_MODE:-}" "${AQA_MODE:-}" "${WEBUI_DEPLOYMENT_MODE:-}"; do
@@ -106,6 +99,15 @@ validate_port NOVNC_PORT "$NOVNC_PORT"
 if [ "$VNC_PORT" = "$NOVNC_PORT" ]; then
     fail "VNC_PORT and NOVNC_PORT must be distinct"
 fi
+
+# Strictly validate boolean mode flags so a malformed value fails closed (FATAL) instead of
+# being silently treated as "not external" — these gate passwordless noVNC and WebUI auth.
+# (parse_bool exit-on-garbage propagates here because this is a top-level assignment under set -e.)
+external_mode_flag="$(parse_bool WEBUI_EXTERNAL_MODE 0)"
+aqa_external_mode_flag="$(parse_bool AQA_EXTERNAL_MODE 0)"
+service_mode_flag="$(parse_bool WEBUI_SERVICE_MODE 0)"
+aqa_service_mode_flag="$(parse_bool AQA_SERVICE_MODE 0)"
+require_durable_flag="$(parse_bool WEBUI_REQUIRE_DURABLE_JOBS 0)"
 
 external_mode=0
 if is_production_like_mode; then external_mode=1; fi

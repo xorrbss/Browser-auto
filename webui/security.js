@@ -6,6 +6,7 @@
 // or read anything.
 
 import crypto from 'node:crypto';
+import { isSecretBearingPath } from './secrets.js';
 export {
 	FIXTURE_IDP_SECRET,
 	createFixtureAuthProxyHeaders,
@@ -26,8 +27,6 @@ const SESSION_COOKIE = 'aqa_webui_token';
 const COOKIE_NAME_RE = /^[A-Za-z0-9_~-]{1,80}$/;
 const HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,80}$/;
 const DEFAULT_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
-const SECRET_PATH_RE = /(^|\/)(fixtures\/auth|fixtures|data|\.git|node_modules|approve\/[^/]+\.pw-state\.json|flows\/[^/]+\.values\.json)(\/|$)/i;
-const SECRET_FILE_RE = /\.(state\.json|values\.json|db|sqlite|sqlite3|cookie|cookies|env)$/i;
 const AUTH_PROVIDER_ALIASES = Object.freeze({
 	'local': 'local-pilot',
 	'local-pilot': 'local-pilot',
@@ -941,9 +940,10 @@ function requestedTenant(req) {
 	return cleanString(req?.headers?.['x-aqa-tenant'] || req?.headers?.['x-tenant-id'] || '');
 }
 
+// Delegate to the canonical secret-path classifier in secrets.js so the URL-route gate and the
+// static-file gate (staticFilePolicy) block exactly the same set; a single source prevents drift.
 export function secretPathBlocked(pathname) {
-	const p = String(pathname || '').replace(/\\/g, '/');
-	return SECRET_PATH_RE.test(p) || SECRET_FILE_RE.test(p);
+	return isSecretBearingPath(pathname);
 }
 
 export function authenticateRequestContext(req, { env = process.env, now = Date.now() } = {}) {

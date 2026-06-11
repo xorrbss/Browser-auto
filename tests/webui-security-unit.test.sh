@@ -120,6 +120,12 @@ assert.equal(secretPathBlocked('/fixtures/auth/playwright/app.state.json'), true
 assert.equal(secretPathBlocked('/flows/demo.values.json'), true, 'values sidecar path is blocked');
 assert.equal(secretPathBlocked('/data/approvals.db'), true, 'local DB path is blocked');
 assert.equal(secretPathBlocked('/artifacts/20990101-000000-1/report.json'), false, 'normal report path is allowed by path gate');
+// The route gate now delegates to the canonical classifier, so it blocks the same superset as the
+// static-file gate (these were previously blocked only by staticFilePolicy, not the URL route).
+assert.equal(secretPathBlocked('/browser-profiles/p1/cookies'), true, 'browser-profiles path is blocked at the route gate');
+assert.equal(secretPathBlocked('/runner-work/job1'), true, 'runner-work path is blocked at the route gate');
+assert.equal(secretPathBlocked('/data/webui-jobs.jsonl'), true, 'durable jobs journal is blocked at the route gate');
+assert.equal(secretPathBlocked('/exports/storage-state.json'), true, 'storage-state file is blocked at the route gate');
 
 assert.equal(authorizeHttpRequest(req('GET'), '/api/runs', { allowedHosts }).ok, true, 'local mode allows existing localhost behavior');
 assert.equal(sessionCookieOptions({ WEBUI_EXTERNAL_MODE: '1', WEBUI_SESSION_SECURE: '0' }).secure, true, 'external cookies stay Secure even if env tries to disable it');

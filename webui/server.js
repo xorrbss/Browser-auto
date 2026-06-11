@@ -367,7 +367,9 @@ function redactedTextBody(filePath) {
 			}
 		}).join('\n');
 	}
-	return raw.split(/\r?\n/).map((line) => redactText(line, '', 0)).join('\n');
+	// Whitespace-significant artifacts (results.tsv, aligned .txt/.log) must keep their column
+	// structure; preserveWhitespace redacts secrets without collapsing tabs/runs of spaces.
+	return raw.split(/\r?\n/).map((line) => redactText(line, '', 0, { preserveWhitespace: true })).join('\n');
 }
 
 function serveRedactedTextFile(req, res, filePath, type) {
@@ -618,7 +620,7 @@ const server = http.createServer(async (req, res) => {
 				// Body-less POST; sits after readJson, so the UI sends a "{}" body (see util.stopJob).
 				const mStop = /^\/api\/jobs\/([^/]+)\/stop$/.exec(p);
 				if (mStop) {
-					return stop(mStop[1]) ? sendJson(res, 200, { ok: true }) : sendJson(res, 409, { error: 'job not stoppable (not a running recording)' });
+					return stop(mStop[1], requestContext(req)) ? sendJson(res, 200, { ok: true }) : sendJson(res, 409, { error: 'job not stoppable (not a running recording)' });
 				}
 
 				if (p === '/api/verify') {

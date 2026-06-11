@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { gitBash, killTree, nodeLeaf } from './spawn.js';
 import { redactObject, redactText } from './redact.js';
+import { isSecretBearingPath } from './secrets.js';
 
 const require = createRequire(import.meta.url);
 const dbm = require('../lib/db.js');
@@ -33,7 +34,6 @@ const JOB_JOURNAL = process.env.WEBUI_JOB_JOURNAL || path.join(PROBE_ROOT, 'data
 const TERMINAL_STATUSES = new Set(['done', 'failed', 'cancelled', 'interrupted']);
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const TEST_GLOB_RE = /^[A-Za-z0-9_*?-]+$/;
-const SECRET_ARTIFACT_RE = /(^|\/)(fixtures\/auth|fixtures|data|\.git|node_modules|flows\/[^/]+\.values\.json)(\/|$)|\.(state\.json|values\.json|db|sqlite|sqlite3|cookie|cookies|env)$/i;
 const RUN_ARTIFACTS = [
 	{ rel: 'report.json', kind: 'report', redaction: 'text-redacted-on-read' },
 	{ rel: 'report.junit.xml', kind: 'junit', redaction: 'text-redacted-on-read' },
@@ -108,7 +108,7 @@ function recordJobArtifacts(job) {
 		dbCall((db) => {
 			for (const item of RUN_ARTIFACTS) {
 				const relPath = `artifacts/${job.runId}/${item.rel}`;
-				if (SECRET_ARTIFACT_RE.test(relPath)) continue;
+				if (isSecretBearingPath(relPath)) continue;
 				const full = path.join(PROBE_ROOT, relPath);
 				let st;
 				try { st = fs.statSync(full); } catch { continue; }
@@ -673,7 +673,10 @@ function pushLine(job, line, opts = {}) {
 		const m = /RUN_ID=(\d{8}-\d{6}-\d+)/.exec(rawLine);
 		if (m) { job.runId = m[1]; capturedRunId = true; }
 	}
-	if (capturedResult || capturedRunId) persistJob(job);
+	// Opportunistic mid-stream persist: best-effort only. This runs inside the child stream
+	// 'data' handler, so a fail-closed throw here would escape as an uncaughtException and crash
+	// the server. Durability is enforced authoritatively at terminal persist (runJob finally).
+	if (capturedResult || capturedRunId) { try { persistJob(job, { required: false }); } catch {} }
 	for (const res of job.subscribers) writeSse(res, 'line', { line: safeLine });
 }
 
@@ -1073,9 +1076,10 @@ export function cancel(id, context = null) {
 // watch loop breaks into the SAME drain path as --seconds auto-stop (a COMPLETE flow), unlike
 // cancel()'s tree-kill (a partial/degraded capture). No-op unless the job has a stopFile and is the
 // one currently running. Returns true only when a stop signal was actually written.
-export function stop(id) {
+export function stop(id, context = null) {
 	const job = jobs.get(id);
 	if (!job || !job.stopFile) return false;
+	if (!canAccessJob(job, context)) return false;
 	if (id !== runningId || job.status !== 'running') return false;
 	try {
 		fs.writeFileSync(job.stopFile, '');
@@ -1271,8 +1275,8 @@ function queueMetrics(recent, scopedJobs = [...jobs.values()]) {
 	const now = Date.now();
 	const diagnostics = all.map((j) => jobDiagnostics(j, now));
 	return {
-		queued: pending.length,
-		running: runningId ? 1 : 0,
+		queued: all.filter((j) => j.status === 'queued').length,
+		running: all.filter((j) => j.status === 'running').length,
 		recent: recent.length,
 		avgDurationMs: terminalWithDuration.length ? Math.round(totalDuration / terminalWithDuration.length) : null,
 		lastFailureReason: safeFailureReason(lastFailed),
