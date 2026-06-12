@@ -363,7 +363,7 @@ async function waitForOpenRecordRows(page, recipe, rowIndex) {
 	let last = null;
 	while (Date.now() <= deadline) {
 		const live = await extractLiveRecipeRows(page, recipe);
-		if (live.rows[rowIndex]) return live;
+		if (live.rows[rowIndex]) return { ...live, rowIndex };
 		last = new Error(`open_record: rowIndex ${rowIndex} is out of range (rows=${live.rows.length})`);
 		await page.waitForTimeout(500);
 	}

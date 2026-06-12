@@ -8,10 +8,9 @@
   "steps": [
     {
       "kind": "open_record",
-      "source": "field_value",
-      "recipe": "hiworks",
-      "field": "title",
-      "value": "퇴사자 정산내역_이연서(전략기획팀)_(퇴사일 2026.04.09)"
+      "source": "row_index",
+      "rowIndex": 7,
+      "recipe": "hiworks"
     },
     {
       "kind": "wait",
@@ -21,32 +20,52 @@
     {
       "kind": "scroll",
       "dir": "down",
-      "px": 500
+      "px": 200
     },
     {
       "kind": "scroll",
       "dir": "down",
-      "px": 500
+      "px": 200
     },
     {
       "kind": "scroll",
       "dir": "down",
-      "px": 488
+      "px": 600
     },
     {
       "kind": "scroll",
       "dir": "down",
-      "px": 488
+      "px": 600
+    },
+    {
+      "kind": "scroll",
+      "dir": "down",
+      "px": 134
+    },
+    {
+      "kind": "scroll",
+      "dir": "down",
+      "px": 134
     },
     {
       "kind": "scroll",
       "dir": "up",
-      "px": 988
+      "px": 600
     },
     {
       "kind": "scroll",
       "dir": "up",
-      "px": 988
+      "px": 600
+    },
+    {
+      "kind": "scroll",
+      "dir": "up",
+      "px": 334
+    },
+    {
+      "kind": "scroll",
+      "dir": "up",
+      "px": 334
     },
     {
       "kind": "find",
@@ -56,28 +75,8 @@
     },
     {
       "kind": "wait",
-      "until": "text",
-      "value": "퇴사자 정산내역_이연서(전략기획팀)_(퇴사일 2026.04.09)"
-    },
-    {
-      "kind": "scroll",
-      "dir": "down",
-      "px": 111,
-      "anchor": {
-        "by": "role",
-        "value": "table",
-        "name": "대기 문서 리스트"
-      }
-    },
-    {
-      "kind": "scroll",
-      "dir": "down",
-      "px": 111,
-      "anchor": {
-        "by": "role",
-        "value": "table",
-        "name": "대기 문서 리스트"
-      }
+      "until": "load",
+      "value": "networkidle"
     }
   ],
   "asserts": [
