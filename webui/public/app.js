@@ -615,6 +615,7 @@ function automationForm() {
 	const manualName = $('#auto-name')?.value.trim() || '';
 	const manualApp = $('#auto-app')?.value.trim() || '';
 	const manualSuccessUrl = $('#auto-success-url')?.value.trim() || '';
+	const manualAllowlist = $('#auto-target-allowlist')?.value.trim() || '';
 	const autoApp = appSuggestion({ recordUrl, loginUrl });
 	const matchedApp = matchedAuthApp({ recordUrl, loginUrl });
 	const app = manualApp || autoApp || matchedApp;
@@ -629,6 +630,7 @@ function automationForm() {
 		manualName,
 		manualApp,
 		manualSuccessUrl,
+		targetAllowlist: manualAllowlist,
 		autoName,
 		autoApp,
 		matchedApp,
@@ -708,7 +710,7 @@ function exactOriginFor(value) {
 }
 
 function developmentAllowlistFor(flow, form = automationForm()) {
-	return exactOriginFor(flow?.startUrl || form.recordUrl);
+	return form?.targetAllowlist || exactOriginFor(flow?.startUrl || form.recordUrl);
 }
 
 function isDevelopmentReadonlyFlow(flow) {
@@ -1792,7 +1794,12 @@ async function verifyAutomationFlow() {
 	log.textContent = '검증 요청 중...\n';
 	setAutomationJobBadge('검증', 'info');
 	try {
-		const data = await postJson('/api/verify', { name: flow.name });
+		const allowlist = developmentAllowlistFor(flow);
+		if (isDevelopmentReadonlyFlow(flow) && allowlist) log.textContent += `allowlist=${allowlist}\n`;
+		const body = { name: flow.name };
+		if (isDevelopmentReadonlyFlow(flow) && allowlist) body.allowlist = allowlist;
+		const data = await postJson('/api/verify', body);
+		if (data.mode) log.textContent += `mode=${data.mode}${data.allowlist ? ` allowlist=${data.allowlist}` : ''}\n`;
 		state.automation.verifyJob = data.job?.id || null;
 		renderAutomation();
 		if (data.job) {
@@ -2960,7 +2967,7 @@ function bindEvents() {
 	$('#auto-verify').addEventListener('click', verifyAutomationFlow);
 	$('#auto-compile').addEventListener('click', compileAutomationFlow);
 	$('#auto-run').addEventListener('click', runAutomationFlow);
-	['#auto-record-url', '#auto-login-url', '#auto-success-url', '#auto-app', '#auto-goal'].forEach((sel) => $(sel)?.addEventListener('input', renderAutomation));
+	['#auto-record-url', '#auto-login-url', '#auto-success-url', '#auto-app', '#auto-target-allowlist', '#auto-goal'].forEach((sel) => $(sel)?.addEventListener('input', renderAutomation));
 	$('#cc-sync').addEventListener('click', runApprovalsSync);
 	$('#cc-create-plan').addEventListener('click', () => makePlan($('#cc-command').value));
 	$('#cc-dry-run').addEventListener('click', runDryRun);

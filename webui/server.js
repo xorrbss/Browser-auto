@@ -361,7 +361,7 @@ function startUrlOrigin(value) {
 	return '';
 }
 
-function developmentReadonlyCompileContext(flow) {
+function developmentReadonlyCompileContext(flow, allowlistValue = '') {
 	const environment = String(flow?.environment || '').trim();
 	const riskClass = String(flow?.riskClass || '').trim();
 	if (!['staging', 'live-readonly'].includes(environment) || riskClass !== 'read') {
@@ -369,7 +369,7 @@ function developmentReadonlyCompileContext(flow) {
 	}
 	const origin = startUrlOrigin(flow.startUrl);
 	if (!origin) return { env: null, mode: '', allowlist: '' };
-	const allowlist = normalizeExactTargetAllowlist('', origin);
+	const allowlist = normalizeExactTargetAllowlist(allowlistValue, origin);
 	return {
 		mode: 'development-integration-readonly',
 		allowlist,
@@ -770,14 +770,40 @@ const server = http.createServer(async (req, res) => {
 					if (flow.engineError) return sendJson(res, 400, { error: flow.engineError });
 					const engine = flow.engine;
 					if (engine !== 'playwright') return sendJson(res, 400, { error: `flow '${name}' is ${engine}; WebUI verify is Playwright-only` });
-				const job = requestScopedEnqueue({
-					kind: 'verify',
-					label: `verify ${name} (${engine})`,
-					commandSpec: { runner: 'nodeLeaf', script: 'bin/play-flow.mjs', args: ['--flow', `flows/${name}.flow.json`, '--verify'] },
-					spawnFn: () => requestNodeLeaf('bin/play-flow.mjs', ['--flow', `flows/${name}.flow.json`, '--verify']),
-				});
-				return sendJson(res, 202, { job });
-			}
+					let verifyContext;
+					try {
+						verifyContext = developmentReadonlyCompileContext(flow, bodyJson.allowlist || bodyJson.targetAllowlist || '');
+					} catch (e) {
+						return sendJson(res, 400, { error: e.message });
+					}
+					const job = requestScopedEnqueue({
+						kind: 'verify',
+						label: `verify ${name} (${engine})`,
+						commandSpec: { runner: 'nodeLeaf', script: 'bin/play-flow.mjs', args: ['--flow', `flows/${name}.flow.json`, '--verify'], env: verifyContext.env || null },
+						spawnFn: () => requestNodeLeaf('bin/play-flow.mjs', ['--flow', `flows/${name}.flow.json`, '--verify'], verifyContext.env),
+						meta: verifyContext.mode ? {
+							workflow: 'development-integration',
+							run_mode: String(flow.environment || '').trim(),
+							allowlist: verifyContext.allowlist,
+							result: 'pending',
+							next_action: 'compile and run development read-only replay after verify passes',
+							flow: name,
+							system: flow.app || null,
+							riskClass: flow.riskClass || null,
+							productionOpenApprovalRequired: false,
+							evidencePackRequired: false,
+							retention: 'ephemeral-debug',
+						} : undefined,
+					});
+					return sendJson(res, 202, {
+						job,
+						mode: verifyContext.mode || undefined,
+						run_mode: verifyContext.mode ? String(flow.environment || '').trim() : undefined,
+						allowlist: verifyContext.allowlist || undefined,
+						approvalRequired: verifyContext.mode ? false : undefined,
+						evidencePackRequired: verifyContext.mode ? false : undefined,
+					});
+				}
 
 			if (p === '/api/compile') {
 					const name = String(bodyJson.name || '').trim();
