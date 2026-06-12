@@ -105,12 +105,15 @@ Use the development wrapper for this loop:
 ```bash
 bash bin/dev-integration-readonly.sh --validate-only <flow-name>
 bash bin/dev-integration-readonly.sh --allowlist https://host[:port][,...] <flow-name>
+bash bin/dev-integration-readonly.sh --headed --keep-open-ms 600000 --allowlist https://host[:port][,...] <flow-name>
 ```
 
 If `--allowlist` is omitted, the wrapper derives the exact origin from `startUrl`. Add a comma-separated
 exact-origin allowlist only when the read-only flow is expected to navigate across known product
 origins. The wrapper prints `RUN_ID`, the effective allowlist, and
 `artifacts/<RUN_ID>/dev-integration-readonly.json`.
+Use `--headed --keep-open-ms <milliseconds>` when you want to watch the browser state after a
+development replay; closing the browser window finishes the job sooner.
 
 The Hiworks approval/evidence documents under `dev/active/productization/` are production-open
 templates, not development integration gates. The current Hiworks read-only lane remains a

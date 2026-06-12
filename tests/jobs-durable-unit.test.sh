@@ -331,6 +331,43 @@ await waitDone(devVerify.id);
 const devVerifyCommand = dbJob(devVerify.id).command;
 assert(devVerifyCommand?.runner === 'nodeLeaf' && devVerifyCommand.env?.AQA_DEV_INTEGRATION_READONLY === '1', 'development read-only verify command spec is WebUI-safe');
 assert(devVerifyCommand.env.AQA_TARGET_ALLOWLIST === 'https://example.test', 'development read-only verify keeps exact allowlist');
+
+const devRunHeaded = enqueue({
+	kind: 'run',
+	label: 'dev readonly headed run command',
+	context: tenantACtx,
+	commandSpec: {
+		runner: 'gitBash',
+		script: 'bin/dev-integration-readonly.sh',
+		args: ['--headed', '--keep-open-ms', '600000', '--allowlist', 'https://example.test', 'tenant_unit'],
+		env: {
+			AQA_TARGET_ALLOWLIST: 'https://example.test',
+		},
+	},
+	spawnFn: () => spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: ['ignore', 'pipe', 'pipe'] }),
+});
+await waitDone(devRunHeaded.id);
+const devRunHeadedCommand = dbJob(devRunHeaded.id).command;
+assert(devRunHeadedCommand?.runner === 'gitBash' && devRunHeadedCommand.args.includes('--keep-open-ms'), 'development read-only headed run command spec is WebUI-safe');
+assert(devRunHeadedCommand.args.includes('600000'), 'development read-only headed run keeps finite keep-open timeout');
+
+assertThrows(
+	() => enqueue({
+		kind: 'run',
+		label: 'bad dev readonly keep open',
+		commandSpec: {
+			runner: 'gitBash',
+			script: 'bin/dev-integration-readonly.sh',
+			args: ['--headed', '--keep-open-ms', '3600001', '--allowlist', 'https://example.test', 'tenant_unit'],
+			env: {
+				AQA_TARGET_ALLOWLIST: 'https://example.test',
+			},
+		},
+		spawnFn: () => spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: ['ignore', 'pipe', 'pipe'] }),
+	}),
+	/WebUI-safe/,
+	'development read-only keep-open timeout is capped',
+);
 assertThrows(
 	() => enqueue({
 		kind: 'verify',

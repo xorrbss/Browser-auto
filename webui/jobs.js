@@ -301,11 +301,29 @@ function normalizeJsonEnv(value, label) {
 
 function devReadonlyFlowArg(args, allowlist) {
 	if (!allowlist) return '';
-	if (args.length === 1 && NAME_RE.test(args[0])) return args[0];
-	if (args.length === 2 && args[0] === '--validate-only' && NAME_RE.test(args[1])) return args[1];
-	if (args.length === 3 && args[0] === '--allowlist' && normalizeExactTargetAllowlist(args[1]) === allowlist && NAME_RE.test(args[2])) return args[2];
-	if (args.length === 4 && args[0] === '--validate-only' && args[1] === '--allowlist' && normalizeExactTargetAllowlist(args[2]) === allowlist && NAME_RE.test(args[3])) return args[3];
-	return '';
+	let flow = '';
+	let sawAllowlist = false;
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === '--validate-only' || arg === '--headed') continue;
+		if (arg === '--allowlist') {
+			const value = args[++i] || '';
+			if (normalizeExactTargetAllowlist(value) !== allowlist) return '';
+			sawAllowlist = true;
+			continue;
+		}
+		if (arg === '--keep-open-ms') {
+			const raw = String(args[++i] || '').trim();
+			if (!/^\d+$/.test(raw) || Number(raw) > 3600000) return '';
+			continue;
+		}
+		if (!flow && NAME_RE.test(arg)) {
+			flow = arg;
+			continue;
+		}
+		return '';
+	}
+	return flow && (sawAllowlist || args.length === 1 || (args.length === 2 && args[0] === '--validate-only')) ? flow : '';
 }
 
 function normalizeCommandEnv(value) {

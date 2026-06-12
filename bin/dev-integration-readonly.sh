@@ -9,13 +9,14 @@ ORIGINAL_ARGS=( "$@" )
 
 usage() {
 	cat <<'EOF'
-Usage: bash bin/dev-integration-readonly.sh [--validate-only] [--allowlist https://host[:port]] <flow-name|flows/name.flow.json>
+Usage: bash bin/dev-integration-readonly.sh [--validate-only] [--headed] [--keep-open-ms N] [--allowlist https://host[:port]] <flow-name|flows/name.flow.json>
 
 Development-only read lane:
   - accepts local, staging, and live-readonly flows with riskClass read
   - derives an exact AQA_TARGET_ALLOWLIST from startUrl for http(s) targets unless one is supplied
   - accepts only exact http(s) origin allowlist entries; no wildcards, paths, queries, or credentials
   - refuses live-action, destructive-looking read steps, CI, scheduled, and external-runner contexts
+  - --headed opens Chrome for visual inspection; --keep-open-ms keeps it open after replay
   - writes a minimal run record under artifacts/<RUN_ID>/
 
 No owner approval packet or evidence pack is required for this manual read-only development lane.
@@ -47,10 +48,18 @@ shell_quote_command() {
 
 validate_only=0
 allowlist_override=""
+headed=0
+keep_open_ms=""
 flow_arg=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--validate-only) validate_only=1 ;;
+		--headed) headed=1 ;;
+		--keep-open-ms)
+			shift
+			[ "$#" -gt 0 ] || fail "--keep-open-ms requires milliseconds"
+			keep_open_ms="$1"
+			;;
 		--allowlist)
 			shift
 			[ "$#" -gt 0 ] || fail "--allowlist requires an origin"
@@ -67,6 +76,12 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$flow_arg" ] || { usage >&2; exit 2; }
+
+if [ -n "$keep_open_ms" ]; then
+	[[ "$keep_open_ms" =~ ^[0-9]+$ ]] || fail "--keep-open-ms must be a non-negative integer"
+	[ "$keep_open_ms" -le 3600000 ] || fail "--keep-open-ms must be between 0 and 3600000"
+	if [ "$keep_open_ms" -gt 0 ]; then headed=1; fi
+fi
 
 if is_truthy "${CI:-}" || is_truthy "${GITHUB_ACTIONS:-}" || is_truthy "${BUILDKITE:-}" || is_truthy "${GITLAB_CI:-}" || is_truthy "${TF_BUILD:-}"; then
 	fail "development integration read-only replay is a manual local-shell lane, not CI"
@@ -238,6 +253,12 @@ fi
 export AQA_RUN_MODE="$run_mode"
 export AQA_INCLUDE_NONLOCAL=1
 export AQA_DEV_INTEGRATION_READONLY=1
+if [ "$validate_only" -ne 1 ] && [ "$headed" -eq 1 ]; then
+	export AQA_PW_HEADLESS=0
+fi
+if [ "$validate_only" -ne 1 ] && [ -n "$keep_open_ms" ]; then
+	export AQA_PW_KEEP_OPEN_MS="$keep_open_ms"
+fi
 
 write_record() {
 	local result="$1"
@@ -286,6 +307,12 @@ else
 	echo "dev-integration-readonly: allowlist=(local/file target)"
 fi
 echo "dev-integration-readonly: artifacts=$RUN_DIR"
+if [ "$validate_only" -ne 1 ] && [ "$headed" -eq 1 ]; then
+	echo "dev-integration-readonly: browser=headed"
+fi
+if [ "$validate_only" -ne 1 ] && [ -n "$keep_open_ms" ]; then
+	echo "dev-integration-readonly: keep_open_ms=$keep_open_ms"
+fi
 
 set +e
 if [ "$validate_only" -eq 1 ]; then

@@ -76,12 +76,14 @@ assert.match(indexHtml, /id="auto-flow-action-reason"/, 'verify/compile/run cont
 assert.match(indexHtml, /id="auto-target-allowlist"/, 'automation view exposes an exact allowlist input for non-local dev integration');
 assert.match(appJs, /function renderAutomationOnboarding\(form, flow, \{ loggedIn, activeRecord, activeVerify, activeRun, busy \}\)/, 'automation onboarding panel is rendered from current form and flow state');
 assert.match(appJs, /owner approval\/evidence pack은 production open에서만 필요합니다/, 'development read-only copy keeps production approval separate');
-assert.match(appJs, /postJson\('\/api\/dev-integration-readonly', \{ name: flow\.name, allowlist, validateOnly: false \}\)/, 'automation run uses the development read-only endpoint for eligible flows');
+assert.match(appJs, /postJson\('\/api\/dev-integration-readonly', \{ name: flow\.name, allowlist, validateOnly: false, keepOpen: true, keepOpenMs: DEV_RUN_KEEP_OPEN_MS \}\)/, 'automation run uses the development read-only endpoint with a headed keep-open dev UX');
 assert.match(appJs, /runBtn\.textContent = !runAccess\.allowed \? '권한 제한' : flow && isDevelopmentReadonlyFlow\(flow\) \? '개발 실행'/, 'run button labels development read-only replay explicitly');
 assert.match(utilJs, /streamJob\(jobId, logEl, onEnd, options = \{\}\)/, 'job stream supports log preservation options');
 assert.match(utilJs, /if \(options\.clearOnOpen !== false\) logEl\.textContent = '';/, 'job stream can preserve pre-stream log headers');
 assert.match(serverJs, /function developmentReadonlyCompileContext\(flow, allowlistValue = ''\)/, 'WebUI compile/verify derives a development read-only context for eligible flows');
 assert.match(serverJs, /AQA_DEV_INTEGRATION_READONLY: '1'/, 'WebUI compile uses the development read-only env instead of production evidence requirements');
+assert.match(indexHtml, /id="dev-keep-open"/, 'diagnostics dev read-only controls expose a keep-browser-open option');
+assert.match(appJs, /DEV_RUN_KEEP_OPEN_MS = 10 \* 60 \* 1000/, 'development read-only headed replay keeps the browser visible for a bounded time');
 assert.match(appJs, /return form\?\.targetAllowlist \|\| exactOriginFor/, 'automation allowlist uses operator exact entries before deriving startUrl origin');
 assert.match(appJs, /body\.allowlist = allowlist;/, 'automation verify sends the development read-only allowlist to the server');
 assert.match(serverJs, /spawnFn: \(\) => requestNodeLeaf\('bin\/play-flow\.mjs', \['--flow', `flows\/\$\{name\}\.flow\.json`, '--verify'\], verifyContext\.env\)/, 'WebUI verify runs with the development read-only env when eligible');

@@ -361,6 +361,17 @@ function startUrlOrigin(value) {
 	return '';
 }
 
+const DEV_RUN_KEEP_OPEN_MS = 10 * 60 * 1000;
+
+function normalizeKeepOpenMs(value, fallback = DEV_RUN_KEEP_OPEN_MS) {
+	if (value == null || value === '') return fallback;
+	const raw = String(value).trim();
+	if (!/^\d+$/.test(raw)) throw new Error('keepOpenMs must be a non-negative integer');
+	const ms = Number(raw);
+	if (!Number.isSafeInteger(ms) || ms > 3600000) throw new Error('keepOpenMs must be between 0 and 3600000');
+	return ms;
+}
+
 function developmentReadonlyCompileContext(flow, allowlistValue = '') {
 	const environment = String(flow?.environment || '').trim();
 	const riskClass = String(flow?.riskClass || '').trim();
@@ -677,7 +688,19 @@ const server = http.createServer(async (req, res) => {
 						state: flow.scenarioStatus?.state || 'not-ready',
 					});
 				}
-				const args = validateOnly ? ['--validate-only', '--allowlist', allowlist, name] : ['--allowlist', allowlist, name];
+				let keepOpenMs = 0;
+				const keepOpen = !validateOnly && (bodyJson.keepOpen === true || bodyJson.keep_open === true);
+				if (keepOpen) {
+					try {
+						keepOpenMs = normalizeKeepOpenMs(bodyJson.keepOpenMs || bodyJson.keep_open_ms || '');
+					} catch (e) {
+						return sendJson(res, 400, { error: e.message });
+					}
+				}
+				const args = [];
+				if (validateOnly) args.push('--validate-only');
+				if (keepOpenMs > 0) args.push('--headed', '--keep-open-ms', String(keepOpenMs));
+				args.push('--allowlist', allowlist, name);
 				const env = { AQA_TARGET_ALLOWLIST: allowlist };
 				try {
 					const resolverEvidence = normalizeJsonEnvValue(bodyJson.resolverEvidence || bodyJson.resolver_evidence || '', 'resolverEvidence');
@@ -698,13 +721,14 @@ const server = http.createServer(async (req, res) => {
 						run_mode: requestedMode,
 						allowlist,
 						result: 'pending',
-						next_action: validateOnly ? 'run replay after validate-only passes' : 'review RUN_ID artifacts and issues_found',
+						next_action: validateOnly ? 'run replay after validate-only passes' : keepOpenMs > 0 ? 'inspect the headed browser, then close it to finish the job' : 'review RUN_ID artifacts and issues_found',
 						flow: name,
 						system: flow.app || null,
 						riskClass,
 						productionOpenApprovalRequired: false,
 						evidencePackRequired: false,
 						retention: 'ephemeral-debug',
+						keepOpenMs,
 					},
 				});
 				return sendJson(res, 202, {
@@ -712,6 +736,7 @@ const server = http.createServer(async (req, res) => {
 					mode: 'development-integration-readonly',
 					run_mode: requestedMode,
 					allowlist,
+					keepOpenMs,
 					approvalRequired: false,
 					evidencePackRequired: false,
 				});

@@ -6,6 +6,7 @@ import { buildOpsDashboardModel } from './ops-dashboard.js';
 
 const DEFAULT_ENGINE = 'playwright';
 const MANUAL_AUTH_SAVE_NEEDLE = '__AQA_MANUAL_AUTH_SAVE_ONLY__';
+const DEV_RUN_KEEP_OPEN_MS = 10 * 60 * 1000;
 const FLOW_NAME_RE = /^[A-Za-z0-9_-]+$/;
 const RBAC_ENDPOINTS = ['/api/rbac', '/api/session'];
 const RBAC_PERMISSIONS = ['read', 'sync', 'enrich', 'auth', 'record', 'verify', 'compile', 'run', 'live-action', 'approve'];
@@ -723,6 +724,7 @@ function developmentReadonlyCommand(flow, validateOnly = false) {
 	const allowlist = developmentAllowlistFor(flow);
 	const parts = ['bash bin/dev-integration-readonly.sh'];
 	if (validateOnly) parts.push('--validate-only');
+	else parts.push('--headed', '--keep-open-ms', String(DEV_RUN_KEEP_OPEN_MS));
 	if (allowlist) parts.push('--allowlist', allowlist);
 	parts.push(flow.name);
 	return parts.join(' ');
@@ -1876,15 +1878,16 @@ async function runAutomationFlow() {
 	const devReadonly = isDevelopmentReadonlyFlow(flow);
 	const allowlist = developmentAllowlistFor(flow);
 	log.textContent = devReadonly
-		? `개발 read-only 실행 요청 중...\nallowlist=${allowlist || '(산출 실패)'}\n`
+		? `개발 read-only 실행 요청 중...\nallowlist=${allowlist || '(산출 실패)'}\nheaded=1 keepOpenMs=${DEV_RUN_KEEP_OPEN_MS}\n`
 		: '실행 요청 중...\n';
 	setAutomationJobBadge(devReadonly ? '개발 실행' : '실행', 'info');
 	try {
 		const data = devReadonly
-			? await postJson('/api/dev-integration-readonly', { name: flow.name, allowlist, validateOnly: false })
+			? await postJson('/api/dev-integration-readonly', { name: flow.name, allowlist, validateOnly: false, keepOpen: true, keepOpenMs: DEV_RUN_KEEP_OPEN_MS })
 			: await postJson('/api/run', { glob: flow.name });
 		if (devReadonly) {
 			log.textContent += `mode=${data.mode || 'development-integration-readonly'} run_mode=${data.run_mode || flow.environment || '-'} allowlist=${data.allowlist || allowlist || '-'}\n`;
+			if (data.keepOpenMs) log.textContent += `browser=headed keepOpenMs=${data.keepOpenMs}\n`;
 			log.textContent += `approvalRequired=${data.approvalRequired === true} evidencePackRequired=${data.evidencePackRequired === true}\n`;
 		}
 		state.automation.runJob = data.job?.id || null;
@@ -2766,19 +2769,21 @@ async function runDevIntegrationReadonly() {
 	const flowName = ($('#dev-flow-name')?.value || state.automation.flow?.name || '').trim();
 	const allowlist = ($('#dev-target-allowlist')?.value || '').trim();
 	const validateOnly = $('#dev-validate-only')?.checked !== false;
+	const keepOpen = !validateOnly && $('#dev-keep-open')?.checked !== false;
 	const log = $('#dev-run-log');
 	if (log) {
 		log.hidden = false;
-		log.textContent = 'dev read-only integration request...\n';
+		log.textContent = `dev read-only integration request...\n${keepOpen ? `headed=1 keepOpenMs=${DEV_RUN_KEEP_OPEN_MS}\n` : ''}`;
 	}
 	if (!FLOW_NAME_RE.test(flowName)) {
 		if (log) log.textContent += 'refused: enter a valid flow name ([A-Za-z0-9_-])\n';
 		return;
 	}
 	try {
-		const data = await postJson('/api/dev-integration-readonly', { name: flowName, allowlist, validateOnly });
+		const data = await postJson('/api/dev-integration-readonly', { name: flowName, allowlist, validateOnly, keepOpen, keepOpenMs: keepOpen ? DEV_RUN_KEEP_OPEN_MS : 0 });
 		if (log) {
 			log.textContent += `mode=${data.mode || 'development-integration-readonly'} run_mode=${data.run_mode || '-'} allowlist=${data.allowlist || '-'}\n`;
+			if (data.keepOpenMs) log.textContent += `browser=headed keepOpenMs=${data.keepOpenMs}\n`;
 			log.textContent += `approvalRequired=${data.approvalRequired === true} evidencePackRequired=${data.evidencePackRequired === true}\n`;
 		}
 		if (data.job) {

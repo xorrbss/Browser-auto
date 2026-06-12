@@ -43,6 +43,8 @@ printf 'run_mode=%s\n' "${AQA_RUN_MODE:-}" >> "$AQA_DEV_WRAPPER_LOG"
 printf 'allowlist=%s\n' "${AQA_TARGET_ALLOWLIST:-}" >> "$AQA_DEV_WRAPPER_LOG"
 printf 'run_id=%s\n' "${RUN_ID:-}" >> "$AQA_DEV_WRAPPER_LOG"
 printf 'dev_marker=%s\n' "${AQA_DEV_INTEGRATION_READONLY:-}" >> "$AQA_DEV_WRAPPER_LOG"
+printf 'headless=%s\n' "${AQA_PW_HEADLESS:-}" >> "$AQA_DEV_WRAPPER_LOG"
+printf 'keep_open_ms=%s\n' "${AQA_PW_KEEP_OPEN_MS:-}" >> "$AQA_DEV_WRAPPER_LOG"
 echo 'AQA_JOB_RESULT={"status":"ok","mode":"unit"}'
 SH
 
@@ -122,6 +124,15 @@ assert_file_contains "$LOG" "allowlist=https://example.com"
 assert_file_contains "$LOG" "run_id=$RUN_PREFIX-replay"
 assert_file_contains "$LOG" "dev_marker=1"
 test -s "$DIR/artifacts/$RUN_PREFIX-replay/dev-integration-readonly.json"
+
+: > "$LOG"
+RUN_ID="$RUN_PREFIX-headed" \
+AQA_DEV_WRAPPER_LOG="$LOG" \
+"$REAL_BASH" "$DIR/bin/dev-integration-readonly.sh" --headed --keep-open-ms 1234 "$NAME" > "$TMPROOT/headed.out" 2> "$TMPROOT/headed.err"
+assert_file_contains "$TMPROOT/headed.out" "browser=headed"
+assert_file_contains "$TMPROOT/headed.out" "keep_open_ms=1234"
+assert_file_contains "$LOG" "headless=0"
+assert_file_contains "$LOG" "keep_open_ms=1234"
 
 node - "$DIR/artifacts/$RUN_PREFIX-replay/dev-integration-readonly.json" <<'NODE'
 const fs = require('node:fs');

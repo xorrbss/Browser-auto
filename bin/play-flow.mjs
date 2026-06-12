@@ -42,9 +42,45 @@ const flowPath = opt('--flow');
 const verify = flag('--verify');
 const validateOnly = flag('--validate-only');
 const headed = flag('--headed') || process.env.AQA_PW_HEADLESS === '0';
+const keepOpenMs = parseKeepOpenMs(opt('--keep-open-ms', process.env.AQA_PW_KEEP_OPEN_MS || '0'));
 if (!flowPath) {
-	console.error('usage: node bin/play-flow.mjs --flow flows/name.flow.json [--verify] [--validate-only] [--headed]');
+	console.error('usage: node bin/play-flow.mjs --flow flows/name.flow.json [--verify] [--validate-only] [--headed] [--keep-open-ms N]');
 	process.exit(2);
+}
+
+function parseKeepOpenMs(raw) {
+	const s = String(raw == null ? '' : raw).trim();
+	if (!s) return 0;
+	if (!/^\d+$/.test(s)) {
+		console.error('[play-flow] --keep-open-ms must be a non-negative integer');
+		process.exit(2);
+	}
+	const n = Number(s);
+	if (!Number.isSafeInteger(n) || n > 3600000) {
+		console.error('[play-flow] --keep-open-ms must be between 0 and 3600000');
+		process.exit(2);
+	}
+	return n;
+}
+
+function targetClosedError(e) {
+	return /target page, context or browser has been closed/i.test(String(e && e.message || e));
+}
+
+async function keepHeadedBrowserOpen(page, ms) {
+	if (!ms || !headed || !page || page.isClosed()) return;
+	console.error(`[play-flow] keeping headed browser open for ${ms}ms; close the window to finish sooner.`);
+	const deadline = Date.now() + ms;
+	while (Date.now() < deadline && !page.isClosed()) {
+		const waitMs = Math.min(1000, Math.max(0, deadline - Date.now()));
+		if (!waitMs) break;
+		try {
+			await page.waitForTimeout(waitMs);
+		} catch (e) {
+			if (targetClosedError(e)) break;
+			throw e;
+		}
+	}
 }
 
 function readJson(file, fallback = null) {
@@ -721,12 +757,13 @@ try {
 
 	const chromium = await loadChromium();
 	const browser = await chromium.launch({ headless: !headed, channel: process.env.AQA_PW_CHANNEL || 'chrome' });
+	let page = null;
 	try {
 		const ctx = await newContext(browser, flow);
 		const egressGuard = await installEgressGuard(ctx, egressChecker, {
 			onDeny: (verdict) => appendPlayEgressAudit(absFlow, flow, verdict),
 		});
-		const page = await ctx.newPage();
+		page = await ctx.newPage();
 		await gotoWithEgressGuard(page, flow.startUrl, egressGuard);
 		await assertPageAuthReady(page, flow, 'initial navigation');
 		if (verify) {
@@ -754,6 +791,7 @@ try {
 			summary = { status: 'ok', mode: 'play', flow: flow.name || path.basename(absFlow), policy: policyValidation };
 		}
 	} finally {
+		await keepHeadedBrowserOpen(page, keepOpenMs);
 		await browser.close();
 	}
 	console.log('AQA_JOB_RESULT=' + JSON.stringify(summary));
