@@ -35,7 +35,7 @@ const TERMINAL_STATUSES = new Set(['done', 'failed', 'cancelled', 'interrupted']
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const TEST_GLOB_RE = /^[A-Za-z0-9_*?-]+$/;
 const READONLY_RUN_MODES = new Set(['staging', 'live-readonly']);
-const COMMAND_ENV_KEYS = new Set(['AQA_RUN_MODE', 'AQA_TARGET_ALLOWLIST', 'AQA_EGRESS_RESOLVER_EVIDENCE', 'AQA_EGRESS_CONNECTION_IPS']);
+const COMMAND_ENV_KEYS = new Set(['AQA_DEV_INTEGRATION_READONLY', 'AQA_RUN_MODE', 'AQA_TARGET_ALLOWLIST', 'AQA_EGRESS_RESOLVER_EVIDENCE', 'AQA_EGRESS_CONNECTION_IPS']);
 const RUN_ARTIFACTS = [
 	{ rel: 'report.json', kind: 'report', redaction: 'text-redacted-on-read' },
 	{ rel: 'report.junit.xml', kind: 'junit', redaction: 'text-redacted-on-read' },
@@ -315,6 +315,10 @@ function normalizeCommandEnv(value) {
 	for (const [key, raw] of Object.entries(value)) {
 		if (raw == null || raw === '') continue;
 		if (!COMMAND_ENV_KEYS.has(key)) throw new Error(`commandSpec.env key "${key}" is not WebUI-safe`);
+		if (key === 'AQA_DEV_INTEGRATION_READONLY') {
+			if (String(raw).trim() !== '1') throw new Error('AQA_DEV_INTEGRATION_READONLY must be 1');
+			out.AQA_DEV_INTEGRATION_READONLY = '1';
+		}
 		if (key === 'AQA_RUN_MODE') {
 			const mode = String(raw).trim();
 			if (!READONLY_RUN_MODES.has(mode)) throw new Error('AQA_RUN_MODE must be staging or live-readonly');
@@ -361,6 +365,7 @@ function validateCommandSpec(spec) {
 			? /^flows\/([A-Za-z0-9_-]+)\.flow\.json$/.exec(args[1])
 			: null;
 		if (!hasEnv && m) return out;
+		if (m && env.AQA_DEV_INTEGRATION_READONLY === '1' && READONLY_RUN_MODES.has(env.AQA_RUN_MODE) && env.AQA_TARGET_ALLOWLIST) return out;
 	}
 	if (runner === 'nodeLeaf' && script === 'bin/pw-rpa.mjs') {
 		if (!hasEnv && args.length === 3 && ['analyze', 'sync', 'enrich'].includes(args[0]) && args[1] === '--system' && NAME_RE.test(args[2])) return out;

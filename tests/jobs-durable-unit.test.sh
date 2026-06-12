@@ -311,6 +311,46 @@ assert(jobStatus(scoped.id, tenantBCtx) === null, 'tenant B cannot read tenant A
 assert(jobResult(scoped.id, tenantBCtx) === null, 'tenant B cannot read tenant A job result');
 assert(queueState(tenantBCtx).recent.every((j) => j.tenantId !== 'tenant_a'), 'tenant B queue state excludes tenant A jobs');
 
+const devVerify = enqueue({
+	kind: 'verify',
+	label: 'dev readonly verify command',
+	context: tenantACtx,
+	commandSpec: {
+		runner: 'nodeLeaf',
+		script: 'bin/play-flow.mjs',
+		args: ['--flow', 'flows/tenant_unit.flow.json', '--verify'],
+		env: {
+			AQA_DEV_INTEGRATION_READONLY: '1',
+			AQA_RUN_MODE: 'staging',
+			AQA_TARGET_ALLOWLIST: 'https://example.test',
+		},
+	},
+	spawnFn: () => spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: ['ignore', 'pipe', 'pipe'] }),
+});
+await waitDone(devVerify.id);
+const devVerifyCommand = dbJob(devVerify.id).command;
+assert(devVerifyCommand?.runner === 'nodeLeaf' && devVerifyCommand.env?.AQA_DEV_INTEGRATION_READONLY === '1', 'development read-only verify command spec is WebUI-safe');
+assert(devVerifyCommand.env.AQA_TARGET_ALLOWLIST === 'https://example.test', 'development read-only verify keeps exact allowlist');
+assertThrows(
+	() => enqueue({
+		kind: 'verify',
+		label: 'bad dev readonly marker',
+		commandSpec: {
+			runner: 'nodeLeaf',
+			script: 'bin/play-flow.mjs',
+			args: ['--flow', 'flows/tenant_unit.flow.json', '--verify'],
+			env: {
+				AQA_DEV_INTEGRATION_READONLY: 'true',
+				AQA_RUN_MODE: 'staging',
+				AQA_TARGET_ALLOWLIST: 'https://example.test',
+			},
+		},
+		spawnFn: () => spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: ['ignore', 'pipe', 'pipe'] }),
+	}),
+	/AQA_DEV_INTEGRATION_READONLY must be 1/,
+	'development read-only marker only accepts the explicit safe value',
+);
+
 const scopedRunning = enqueue({
 	kind: 'unit',
 	label: 'tenant scoped cancel job',
