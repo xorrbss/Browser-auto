@@ -20,6 +20,14 @@ if (!loginUrl || !successNeedle || !outFile) {
 const TIMEOUT_MS = Number(process.env.HUMAN_TIMEOUT_MS) || 900000;
 const STOPFILE = stopFileArg || process.env.AQA_AUTH_STOPFILE || '';
 
+function stopRequested() {
+  return !!(STOPFILE && fs.existsSync(STOPFILE));
+}
+
+function isTargetClosedError(e) {
+  return /Target page, context or browser has been closed|Target closed|Page closed/i.test(String((e && e.message) || e || ''));
+}
+
 // Default = system-installed Google Chrome (channel:'chrome', no Playwright browser download).
 // AQA_PW_CHANNEL overrides for environments without branded Chrome (e.g. the Docker image's
 // bundled chromium) — same knob every other driver honors.
@@ -33,18 +41,39 @@ try {
 
   let waited = 0;
   let matched = false;
+  let closedAfterSaveRequest = false;
   while (waited < TIMEOUT_MS) {
-    const currentUrl = page.url();
+    let currentUrl = '';
+    try {
+      currentUrl = page.url();
+    } catch (e) {
+      if (stopRequested() && isTargetClosedError(e)) {
+        closedAfterSaveRequest = true;
+        matched = true;
+        break;
+      }
+      throw e;
+    }
     if (currentUrl && currentUrl !== initialUrl && currentUrl.includes(successNeedle)) {
       matched = true;
       break;
     }
-    if (STOPFILE && fs.existsSync(STOPFILE) && currentUrl) {
+    if (stopRequested() && currentUrl) {
       console.error('[auth-pw] confirm-save requested; saving the current session.');
       matched = true;
       break;
     }
-    await page.waitForTimeout(1000);
+    try {
+      await page.waitForTimeout(1000);
+    } catch (e) {
+      if (stopRequested() && isTargetClosedError(e)) {
+        console.error('[auth-pw] confirm-save requested after the page closed; attempting to save the current context.');
+        closedAfterSaveRequest = true;
+        matched = true;
+        break;
+      }
+      throw e;
+    }
     waited += 1000;
   }
 
@@ -54,8 +83,16 @@ try {
   }
 
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
-  await ctx.storageState({ path: outFile });
+  try {
+    await ctx.storageState({ path: outFile });
+  } catch (e) {
+    if (closedAfterSaveRequest || isTargetClosedError(e)) {
+      console.error('[auth-pw] save requested, but the browser/context closed before storageState could be written. Leave the login window open until OK is printed.');
+      process.exit(1);
+    }
+    throw e;
+  }
   console.error(`[auth-pw] OK. storageState saved -> ${outFile}`);
 } finally {
-  await browser.close();
+  try { await browser.close(); } catch {}
 }

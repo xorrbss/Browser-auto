@@ -43,6 +43,8 @@ assert.match(appJs, /loggedIn \? '로그인 갱신'/, 'saved auth presents a ref
 assert.match(appJs, /저장된 로그인 있음/, 'saved auth badge is descriptive rather than a hard block');
 assert.match(authPw, /const initialUrl = page\.url\(\);/, 'auth driver records the initial login URL');
 assert.match(authPw, /currentUrl !== initialUrl && currentUrl\.includes\(successNeedle\)/, 'auth driver does not accept the initial login URL as success');
+assert.match(authPw, /function isTargetClosedError\(e\)/, 'auth driver handles login window closure without a raw stack trace');
+assert.match(authPw, /Leave the login window open until OK is printed/, 'auth driver gives a clear save-before-close recovery message');
 assert.match(appJs, /function isClickedRecordReview\(item\)/, 'flow review UI distinguishes clicked-record reviews');
 assert.match(appJs, /item\?\.kind === 'find' && \(item\.action \|\| 'click'\) === 'click'/, 'clicked-row open button is only for find/click review steps');
 assert.match(appJs, /function isContainerScrollReview\(item\)/, 'flow review UI recognizes container-scroll review steps');
