@@ -7,6 +7,7 @@ PORT=$((6100 + RANDOM % 1000))
 SRV=""
 DEV_FLOW_NAME="_webui_dev_readonly_$$"
 DEV_FLOW="$DIR/flows/$DEV_FLOW_NAME.flow.json"
+DEV_TEST="$DIR/tests/$DEV_FLOW_NAME.test.sh"
 
 fail(){ echo "  webui-blocked-flow-route-unit: $1" >&2; exit 1; }
 
@@ -15,7 +16,7 @@ cleanup() {
 		kill "$SRV" 2>/dev/null || true
 		wait "$SRV" 2>/dev/null || true
 	fi
-	rm -f "$DEV_FLOW"
+	rm -f "$DEV_FLOW" "$DEV_TEST"
 	rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -188,6 +189,17 @@ r = await fetch(`${base}/api/dev-integration-readonly`, {
 assert.equal(r.status, 409, 'development read-only replay still requires compiled test wrapper');
 body = await r.json();
 assert.match(body.error || '', /compiled test is missing or older than the flow/, 'replay compile blocker is explicit');
+
+r = await fetch(`${base}/api/compile`, {
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	body: JSON.stringify({ name: process.env.DEV_FLOW_NAME }),
+});
+assert.equal(r.status, 200, 'compile route returns 200 for development read-only flow');
+body = await r.json();
+assert.equal(body.ok, true, `development read-only compile should pass, got ${body.output || body.code}`);
+assert.equal(body.mode, 'development-integration-readonly', 'compile route reports development read-only mode');
+assert.equal(body.allowlist, 'https://example.com', 'compile route derives exact startUrl allowlist');
 
 r = await fetch(`${base}/api/dev-integration-readonly`, {
 	method: 'POST',

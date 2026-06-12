@@ -203,10 +203,70 @@ pre, code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; }
 	gap: 16px;
 	align-items: start;
 }
-.automation-workspace > .panel:nth-child(3),
-.automation-workspace > .panel:nth-child(4),
-.automation-workspace > .panel:nth-child(5) {
+.automation-workspace > .automation-wide {
 	grid-column: 1 / -1;
+}
+.onboarding-grid {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(150px, 1fr));
+	gap: 10px;
+}
+.onboarding-step {
+	min-height: 92px;
+	padding: 11px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--surface-2);
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+.onboarding-step > span:first-child {
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 900;
+}
+.onboarding-step strong {
+	font-size: 14px;
+	line-height: 1.25;
+	overflow-wrap: anywhere;
+}
+.onboarding-step small {
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+.dev-command-preview {
+	margin-top: 10px;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 6px;
+}
+.dev-command-preview code {
+	display: block;
+	padding: 8px 10px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--surface-2);
+	color: var(--ink);
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+.control-reason {
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+.control-reason.warning { color: var(--amber); }
+.control-reason.danger { color: var(--red); }
+.control-reason.success { color: var(--green); }
+.panel-note {
+	padding: 10px 14px;
+	border-bottom: 1px solid var(--line);
+	background: var(--surface-2);
 }
 .scenario-grid {
 	display: grid;
@@ -782,10 +842,9 @@ tbody tr:hover td { background: #fbfdfe; }
 
 @media (max-width: 1200px) {
 	.layout.two-col, .systems-layout, .automation-workspace, .ops-dashboard-grid { grid-template-columns: 1fr; }
-	.automation-workspace > .panel:nth-child(3),
-	.automation-workspace > .panel:nth-child(4),
-	.automation-workspace > .panel:nth-child(5) { grid-column: auto; }
+	.automation-workspace > .automation-wide { grid-column: auto; }
 	.ops-dashboard-grid .table-wrap:first-child { grid-column: auto; }
+	.onboarding-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.scenario-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.scenario-grid .input-wrap:nth-child(2) { grid-column: span 1; }
 	.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -825,7 +884,7 @@ tbody tr:hover td { background: #fbfdfe; }
 	.workspace { padding: 14px; }
 	.command-strip { grid-template-columns: 1fr; }
 	.command-strip .button-row .btn { flex: 1 1 140px; }
-	.kv-grid, .form-grid, .metric-grid, .link-grid, .scenario-grid { grid-template-columns: 1fr; }
+	.kv-grid, .form-grid, .metric-grid, .link-grid, .scenario-grid, .onboarding-grid { grid-template-columns: 1fr; }
 	.table-wrap table { min-width: 760px; }
 	.panel-head {
 		align-items: flex-start;

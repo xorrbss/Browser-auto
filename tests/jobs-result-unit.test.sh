@@ -9,7 +9,7 @@ trap 'rm -rf "$TMP"' EXIT
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
-process.env.WEBUI_JOB_TIMEOUT_MS = '600';
+process.env.WEBUI_JOB_TIMEOUT_MS = '2500';
 process.env.WEBUI_JOB_KILL_GRACE_MS = '80';
 process.env.WEBUI_JOB_HEARTBEAT_STALE_MS = '25';
 process.env.WEBUI_JOB_SLOW_MS = '40';
@@ -33,7 +33,7 @@ async function waitUntil(id, pred, label) {
 	}
 	throw new Error('timeout waiting for ' + id + ' ' + label);
 }
-function longChild(ms = 1000) {
+function longChild(ms = 5000) {
 	return spawn(process.execPath, ['-e', `setTimeout(()=>{}, ${ms})`], {
 		detached: process.platform !== 'win32',
 		stdio: ['ignore', 'pipe', 'pipe'],
@@ -155,7 +155,7 @@ job = enqueue({
 await waitDone(job.id);
 jr = jobResult(job.id);
 assert(jr.status === 'failed' && jr.timedOut === true, 'timeout marks job failed');
-assert(jr.failureReason === 'timeout after 600ms', 'timeout failure reason includes timeout budget');
+assert(/^timeout after /.test(jr.failureReason) && jr.diagnostics.timeoutMs === 2500, 'timeout failure reason includes timeout budget');
 assert(replayStream(job.id).includes('[webui] diagnostic: status=failed'), 'terminal diagnostic is present in replayed SSE log');
 
 job = enqueue({

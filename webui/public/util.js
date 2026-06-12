@@ -41,10 +41,11 @@ export const statusKo = (s) => {
 
 // Exactly one job stream is open at a time. Starting another closes the prior one, so a stale
 // job's 'end' never reaches the client (no view hijack); clearing on '(re)open' avoids
-// duplicated lines when the browser EventSource auto-reconnects after a transport drop.
+// duplicated lines when the browser EventSource auto-reconnects after a transport drop. Callers
+// that write a pre-stream header can opt out of that clear.
 let currentEs = null;
 
-export function streamJob(jobId, logEl, onEnd) {
+export function streamJob(jobId, logEl, onEnd, options = {}) {
 	if (currentEs) {
 		currentEs.close();
 		currentEs = null;
@@ -65,7 +66,7 @@ export function streamJob(jobId, logEl, onEnd) {
 		if (onEnd) onEnd(data);
 	};
 	es.addEventListener('open', () => {
-		logEl.textContent = '';
+		if (options.clearOnOpen !== false) logEl.textContent = '';
 	});
 	es.addEventListener('line', (ev) => {
 		const { line } = JSON.parse(ev.data);

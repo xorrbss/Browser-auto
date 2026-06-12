@@ -74,6 +74,7 @@ const state = {
 const empty = (message) => el('div', { class: 'empty' }, message);
 const errorBox = (message) => el('div', { class: 'notice danger' }, message);
 const warnBox = (message) => el('div', { class: 'notice warning' }, message);
+const infoBox = (message) => el('div', { class: 'notice' }, message);
 
 function badge(label, kind = 'neutral') {
 	return el('span', { class: `badge ${kind}` }, label);
@@ -696,6 +697,35 @@ function successNeedleSuggestion(form) {
 	}
 }
 
+function exactOriginFor(value) {
+	try {
+		const u = new URL(String(value || '').trim());
+		if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin;
+	} catch {
+		/* incomplete while typing */
+	}
+	return '';
+}
+
+function developmentAllowlistFor(flow, form = automationForm()) {
+	return exactOriginFor(flow?.startUrl || form.recordUrl);
+}
+
+function isDevelopmentReadonlyFlow(flow) {
+	const env = String(flow?.environment || '').trim();
+	return !!flow && ['staging', 'live-readonly'].includes(env) && flow.riskClass === 'read';
+}
+
+function developmentReadonlyCommand(flow, validateOnly = false) {
+	if (!flow?.name) return '';
+	const allowlist = developmentAllowlistFor(flow);
+	const parts = ['bash bin/dev-integration-readonly.sh'];
+	if (validateOnly) parts.push('--validate-only');
+	if (allowlist) parts.push('--allowlist', allowlist);
+	parts.push(flow.name);
+	return parts.join(' ');
+}
+
 function urlPartsForAuth(urls) {
 	const hosts = [];
 	const hints = [];
@@ -761,8 +791,9 @@ function looksLikeLoginUrl(url) {
 	return /login|signin|auth|sso|oauth/i.test(String(url || ''));
 }
 
-function automationLoggedIn(form = automationForm()) {
-	return !!(form.app && (state.authStates || []).some((auth) => auth.app === form.app && (auth.engine || DEFAULT_ENGINE) === DEFAULT_ENGINE));
+function automationLoggedIn(form = automationForm(), flow = null) {
+	const app = form.app || flow?.app || '';
+	return !!(app && (state.authStates || []).some((auth) => auth.app === app && (auth.engine || DEFAULT_ENGINE) === DEFAULT_ENGINE));
 }
 
 function queueWork() {
@@ -882,6 +913,106 @@ function updateAutomationLogPlaceholder(flow) {
 	log.textContent = blocked
 		? `[준비]\n아직 검증/컴파일/실행이 시작되지 않았습니다.\n현재 상태: ${blocked}\n`
 		: '[준비]\n검증, 컴파일 또는 실행을 누르면 여기서 진행 로그를 볼 수 있습니다.\n';
+}
+
+function setControlReason(selector, message, kind = 'neutral') {
+	const node = $(selector);
+	if (!node) return;
+	const text = String(message || '').trim();
+	node.hidden = !text;
+	node.textContent = text;
+	node.className = `control-reason ${kind}`;
+}
+
+function accessReason(decision) {
+	return decision?.allowed === false ? (decision.reason || '권한이 없습니다.') : '';
+}
+
+function authActionReason({ form, loggedIn, busy, busyText, authAccess }) {
+	const denied = accessReason(authAccess);
+	if (denied) return { text: denied, kind: 'danger' };
+	if (busy) return { text: busyText || '앞선 작업이 끝나야 로그인 창을 열 수 있습니다.', kind: 'warning' };
+	if (!form.loginUrl) return { text: '로그인 URL을 입력하면 로그인 창을 열 수 있습니다.', kind: 'warning' };
+	if (!form.app) return { text: '앱 ID를 확인할 수 있는 로그인 URL 또는 업무 URL이 필요합니다.', kind: 'warning' };
+	if (!form.successUrl) return { text: '로그인 완료 확인값을 만들 수 있는 URL 형식이 필요합니다.', kind: 'warning' };
+	return {
+		text: loggedIn
+			? '저장된 세션이 있어도 로그인 갱신으로 새 창을 열 수 있습니다.'
+			: '비밀번호와 OTP는 열린 브라우저 창에서 직접 입력합니다.',
+		kind: loggedIn ? 'success' : 'neutral',
+	};
+}
+
+function recordActionReason({ form, activeRecord, activeVerify, activeRun, busy, busyText, recordAccess }) {
+	const denied = accessReason(recordAccess);
+	if (denied) return { text: denied, kind: 'danger' };
+	if (activeRecord) return { text: '녹화가 진행 중입니다. 끝나면 녹화 완료를 누르세요.', kind: 'info' };
+	if (activeVerify || activeRun || busy) return { text: busyText || '앞선 작업이 끝난 뒤 녹화를 시작할 수 있습니다.', kind: 'warning' };
+	if (!form.recordUrl) return { text: '로그인 후 실제 업무 화면 URL을 입력해야 녹화를 시작할 수 있습니다.', kind: 'warning' };
+	if (looksLikeLoginUrl(form.recordUrl)) return { text: '녹화 URL은 로그인 화면이 아니라 로그인 후 업무 화면이어야 합니다.', kind: 'warning' };
+	return { text: '녹화 완료 후 검토 항목과 스크롤 재생 가능 여부를 자동으로 확인합니다.', kind: 'neutral' };
+}
+
+function flowActionReason({ flow, activeRecord, activeVerify, activeRun, busy, busyText, verifyAccess, compileAccess, runAccess }) {
+	const denied = accessReason(verifyAccess) || accessReason(compileAccess) || accessReason(runAccess);
+	if (denied) return { text: denied, kind: 'danger' };
+	if (activeRecord) return { text: '녹화가 끝난 뒤 검증/컴파일/실행할 수 있습니다.', kind: 'warning' };
+	if (activeVerify || activeRun || busy) return { text: busyText || '현재 작업이 끝나면 다음 단계로 진행할 수 있습니다.', kind: 'warning' };
+	if (!flow) return { text: '녹화가 끝나면 검증, 컴파일, 개발 read-only 실행이 켜집니다.', kind: 'warning' };
+	const blocked = automationBlockedReason(flow);
+	if (blocked && flow.compilable === false) return { text: blocked, kind: 'warning' };
+	if (isDevelopmentReadonlyFlow(flow)) {
+		const allowlist = developmentAllowlistFor(flow);
+		return {
+			text: `개발 read-only 실행 경로를 사용합니다${allowlist ? `: ${allowlist}` : ''}. owner approval/evidence pack은 production open에서만 필요합니다.`,
+			kind: 'success',
+		};
+	}
+	return { text: flow.compiled ? '컴파일된 테스트를 실행할 수 있습니다.' : '컴파일 후 실행할 수 있습니다.', kind: flow.compiled ? 'success' : 'neutral' };
+}
+
+function onboardingStep(label, value, detail, kind = 'neutral') {
+	return el('div', { class: 'onboarding-step' },
+		el('span', {}, label),
+		statusBadge(value, kind),
+		el('small', {}, detail || ''),
+	);
+}
+
+function renderAutomationOnboarding(form, flow, { loggedIn, activeRecord, activeVerify, activeRun, busy }) {
+	const box = $('#auto-onboarding');
+	if (!box) return;
+	const badges = $('#auto-onboarding-badges');
+	const allowlist = developmentAllowlistFor(flow, form);
+	const systemLabel = flow?.app || form.app || '대기';
+	const systemDetail = flow?.startUrl || form.recordUrl || form.loginUrl || 'URL 입력 대기';
+	const devReadonly = isDevelopmentReadonlyFlow(flow);
+	const needsReview = flow?.needsReviewSteps?.length || 0;
+	const missingValues = flow?.missingValues?.length || 0;
+	const readyForCompile = !!flow && flow.compilable && !needsReview && !missingValues;
+	const readyForRun = readyForCompile && (flow.compiled || devReadonly);
+	if (badges) {
+		setChildren(
+			badges,
+			badge('development read-only', 'info'),
+			badge('exact allowlist', allowlist ? 'success' : 'warning'),
+			badge('production open 별도', 'warning'),
+		);
+	}
+	const command = flow ? developmentReadonlyCommand(flow, !flow.compiled) : '';
+	setChildren(box,
+		el('div', { class: 'onboarding-grid' },
+			onboardingStep('시스템', systemLabel, systemDetail, flow || form.app ? 'success' : 'warning'),
+			onboardingStep('로그인', loggedIn ? 'ready' : '필요', loggedIn ? '저장된 로그인 메타데이터 있음' : '비밀번호/OTP 직접 입력 필요', loggedIn ? 'success' : 'warning'),
+			onboardingStep('녹화', flow ? `${flow.steps.length}단계` : (activeRecord ? '진행 중' : '대기'), flow ? flowReadyReason(flow) : (form.recordUrl ? '녹화 시작 가능' : '업무 화면 URL 필요'), flow ? (needsReview ? 'warning' : 'success') : (form.recordUrl ? 'info' : 'warning')),
+			onboardingStep('개발 실행', readyForRun ? 'ready' : '대기', devReadonly ? (allowlist || 'allowlist 산출 대기') : 'local 또는 컴파일된 테스트', readyForRun ? 'success' : 'warning'),
+		),
+		infoBox('개발 read-only는 exact allowlist와 최소 실행 기록만 사용합니다. production open, unattended, approve/reject/write는 별도 승인 단계로 분리됩니다.'),
+		command ? el('div', { class: 'dev-command-preview' },
+			el('span', { class: 'muted' }, busy || activeVerify || activeRun ? '현재 작업 완료 후 실행' : '빠른 실행 명령'),
+			el('code', {}, command),
+		) : null,
+	);
 }
 
 function scenarioReason(flow) {
@@ -1143,7 +1274,7 @@ function renderAutomation() {
 	const recordRunning = recordJob?.status === 'running';
 	const activeVerify = !!state.automation.verifyJob;
 	const activeRun = !!state.automation.runJob;
-	const loggedIn = automationLoggedIn(form);
+	const loggedIn = automationLoggedIn(form, flow);
 	const manualAuthSave = form.successUrl === MANUAL_AUTH_SAVE_NEEDLE;
 	const busy = queueBusy();
 	const busyText = queueBusyText();
@@ -1152,6 +1283,7 @@ function renderAutomation() {
 	const verifyAccess = accessDecision('verify');
 	const compileAccess = accessDecision('compile');
 	const runAccess = accessDecision('run');
+	renderAutomationOnboarding(form, flow, { loggedIn, activeRecord, activeVerify, activeRun, busy });
 	const badges = $('#auto-status-badges');
 	if (badges) {
 		setChildren(
@@ -1240,6 +1372,10 @@ function renderAutomation() {
 			? '시나리오 이름과 로그인 연결은 자동으로 처리됩니다.'
 			: '녹화 URL이 비어 있어 녹화 시작이 꺼져 있습니다. 로그인 후 열린 실제 업무 화면 URL을 붙여넣으세요.';
 	}
+	const authReason = authActionReason({ form, loggedIn, busy, busyText, authAccess });
+	setControlReason('#auto-auth-action-reason', authReason.text, authReason.kind);
+	const recordReason = recordActionReason({ form, activeRecord, activeVerify, activeRun, busy, busyText, recordAccess });
+	setControlReason('#auto-record-action-reason', recordReason.text, recordReason.kind);
 	const verifyBtn = $('#auto-verify');
 	if (verifyBtn) {
 		const needsReview = !!(flow && flow.needsReviewSteps?.length);
@@ -1255,9 +1391,11 @@ function renderAutomation() {
 	const runBtn = $('#auto-run');
 	if (runBtn) {
 		runBtn.disabled = !flow || !flow.compilable || activeRecord || activeVerify || activeRun || busy || !runAccess.allowed;
-		runBtn.textContent = !runAccess.allowed ? '권한 제한' : flow && !flow.compiled ? '컴파일 후 실행' : '실행';
+		runBtn.textContent = !runAccess.allowed ? '권한 제한' : flow && isDevelopmentReadonlyFlow(flow) ? '개발 실행' : flow && !flow.compiled ? '컴파일 후 실행' : '실행';
 		runBtn.title = accessTitle(runAccess, flow && !flow.compilable ? automationBlockedReason(flow) : '');
 	}
+	const flowReason = flowActionReason({ flow, activeRecord, activeVerify, activeRun, busy, busyText, verifyAccess, compileAccess, runAccess });
+	setControlReason('#auto-flow-action-reason', flowReason.text, flowReason.kind);
 	const previewBtn = $('#auto-preview');
 	if (previewBtn) {
 		previewBtn.disabled = !runAccess.allowed;
@@ -1460,7 +1598,7 @@ async function startAutomationRecord(overwrite = false) {
 				setAutomationJobBadge(done?.status === 'done' ? '녹화 완료' : '녹화 종료', done?.status === 'done' ? 'success' : 'warning');
 				await Promise.allSettled([loadFlowsList(), loadAutomationFlow(flowName), loadQueue()]);
 				renderAutomation();
-			});
+			}, { clearOnOpen: false });
 		}
 	} catch (e) {
 		if (String(e.message || '').includes('already exists') && !overwrite && window.confirm('같은 이름의 플로우가 있습니다. 다시 녹화해서 덮어쓸까요?')) {
@@ -1553,7 +1691,7 @@ async function runAutomationAuth() {
 				await Promise.allSettled([loadAuthStates(), loadDiagnostics(), loadQueue()]);
 				log.append(document.createTextNode('\n다음 단계: 녹화 URL에 로그인 이후 실제 업무 화면을 넣고 [녹화 시작]을 누르세요.\n'));
 				renderAutomation();
-			});
+			}, { clearOnOpen: false });
 		}
 	} catch (e) {
 		state.automation.authJob = null;
@@ -1662,7 +1800,7 @@ async function verifyAutomationFlow() {
 				state.automation.verifyJob = null;
 				setAutomationJobBadge(done?.status === 'done' ? '검증 완료' : '검증 확인', done?.status === 'done' ? 'success' : 'warning');
 				await loadAutomationFlow(flow.name);
-			});
+			}, { clearOnOpen: false });
 		}
 	} catch (e) {
 		state.automation.verifyJob = null;
@@ -1695,7 +1833,8 @@ async function compileAutomationFlow() {
 	renderAutomation();
 	try {
 		const data = await postJson('/api/compile', { name: flow.name });
-		state.automation.compileOutput = (data.ok ? `컴파일됨: ${data.testFile}` : `컴파일 실패 (${data.code})`) + (data.output ? `\n\n${data.output}` : '');
+		const lane = data.mode ? `\nmode=${data.mode}${data.allowlist ? ` allowlist=${data.allowlist}` : ''}` : '';
+		state.automation.compileOutput = (data.ok ? `컴파일됨: ${data.testFile}` : `컴파일 실패 (${data.code})`) + lane + (data.output ? `\n\n${data.output}` : '');
 		if (log) log.textContent += state.automation.compileOutput + '\n';
 		await loadAutomationFlow(flow.name);
 		return !!data.ok;
@@ -1727,20 +1866,30 @@ async function runAutomationFlow() {
 	}
 	const log = $('#auto-run-log');
 	log.dataset.placeholder = 'false';
-	log.textContent = '실행 요청 중...\n';
-	setAutomationJobBadge('실행', 'info');
+	const devReadonly = isDevelopmentReadonlyFlow(flow);
+	const allowlist = developmentAllowlistFor(flow);
+	log.textContent = devReadonly
+		? `개발 read-only 실행 요청 중...\nallowlist=${allowlist || '(산출 실패)'}\n`
+		: '실행 요청 중...\n';
+	setAutomationJobBadge(devReadonly ? '개발 실행' : '실행', 'info');
 	try {
-		const data = await postJson('/api/run', { glob: flow.name });
+		const data = devReadonly
+			? await postJson('/api/dev-integration-readonly', { name: flow.name, allowlist, validateOnly: false })
+			: await postJson('/api/run', { glob: flow.name });
+		if (devReadonly) {
+			log.textContent += `mode=${data.mode || 'development-integration-readonly'} run_mode=${data.run_mode || flow.environment || '-'} allowlist=${data.allowlist || allowlist || '-'}\n`;
+			log.textContent += `approvalRequired=${data.approvalRequired === true} evidencePackRequired=${data.evidencePackRequired === true}\n`;
+		}
 		state.automation.runJob = data.job?.id || null;
 		renderAutomation();
 		if (data.job) {
 			streamJob(data.job.id, log, async (done) => {
 				state.automation.runJob = null;
 				state.automation.lastRunId = done?.result?.runId || '';
-				setAutomationJobBadge(done?.status === 'done' ? '실행 완료' : '실행 확인', done?.status === 'done' ? 'success' : 'warning');
+				setAutomationJobBadge(done?.status === 'done' ? (devReadonly ? '개발 실행 완료' : '실행 완료') : '실행 확인', done?.status === 'done' ? 'success' : 'warning');
 				await Promise.allSettled([loadQueue(), loadDiagnostics(), loadAutomationFlow(flow.name)]);
 				renderAutomation();
-			});
+			}, { clearOnOpen: false });
 		}
 	} catch (e) {
 		state.automation.runJob = null;
@@ -2630,7 +2779,7 @@ async function runDevIntegrationReadonly() {
 			streamJob(data.job.id, log || document.createElement('pre'), () => {
 				state.activeRunJob = null;
 				Promise.allSettled([loadQueue(), loadDiagnostics(), loadAutomationFlow(flowName)]).then(renderAll);
-			});
+			}, { clearOnOpen: false });
 			await loadQueue();
 			renderAll();
 		}

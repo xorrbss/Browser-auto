@@ -52,6 +52,14 @@
 			<main class="workspace">
 				<section class="view active" data-view="automation">
 					<div class="automation-workspace">
+						<section class="panel automation-wide automation-onboarding-panel">
+							<div class="panel-head">
+								<h2>개발 통합 시작</h2>
+								<div id="auto-onboarding-badges" class="badge-row"></div>
+							</div>
+							<div id="auto-onboarding" class="panel-body"></div>
+						</section>
+
 						<section class="panel">
 							<div class="panel-head">
 								<h2>로그인 등록</h2>
@@ -67,6 +75,7 @@
 									<button id="auto-auth-stop" class="btn" type="button" disabled>로그인 완료·저장</button>
 									<button id="auto-auth-clear" class="btn quiet" type="button" hidden>로그인 초기화</button>
 								</div>
+								<div id="auto-auth-action-reason" class="control-reason" hidden></div>
 								<details class="advanced-box">
 									<summary>고급 설정</summary>
 									<div class="scenario-grid">
@@ -92,6 +101,7 @@
 									<button id="auto-stop-record" class="btn" type="button" disabled>녹화 완료</button>
 									<button id="auto-refresh-flow" class="btn quiet" type="button">불러오기</button>
 								</div>
+								<div id="auto-record-action-reason" class="control-reason" hidden></div>
 								<details class="advanced-box">
 									<summary>고급 설정</summary>
 									<div class="scenario-grid">
@@ -103,7 +113,7 @@
 							</div>
 						</section>
 
-						<section class="panel">
+						<section class="panel automation-wide">
 							<div class="panel-head">
 								<h2>목표</h2>
 								<div class="panel-actions"><button id="auto-preview" class="btn primary" type="button">미리보기 생성</button></div>
@@ -117,7 +127,7 @@
 							</div>
 						</section>
 
-						<section class="panel">
+						<section class="panel automation-wide">
 							<div class="panel-head">
 								<h2>녹화 결과</h2>
 								<div class="panel-actions">
@@ -126,10 +136,11 @@
 									<button id="auto-run" class="btn small danger" type="button" disabled>실행</button>
 								</div>
 							</div>
+							<div id="auto-flow-action-reason" class="panel-note control-reason" hidden></div>
 							<div id="auto-flow-box" class="panel-body"></div>
 						</section>
 
-						<section class="panel">
+						<section class="panel automation-wide">
 							<div class="panel-head">
 								<h2>실행 로그</h2>
 								<span id="auto-job-badge" class="badge neutral">대기</span>

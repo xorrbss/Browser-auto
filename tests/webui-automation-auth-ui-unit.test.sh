@@ -14,6 +14,8 @@ import fs from 'node:fs';
 const appJs = fs.readFileSync('webui/public/app.js', 'utf8');
 const indexHtml = fs.readFileSync('webui/public/index.html', 'utf8');
 const appCss = fs.readFileSync('webui/public/app.css', 'utf8');
+const utilJs = fs.readFileSync('webui/public/util.js', 'utf8');
+const serverJs = fs.readFileSync('webui/server.js', 'utf8');
 const authPw = fs.readFileSync('approve/auth-pw.mjs', 'utf8');
 
 assert.match(appJs, /MANUAL_AUTH_SAVE_NEEDLE = '__AQA_MANUAL_AUTH_SAVE_ONLY__'/, 'login-url-only auth uses a manual-save sentinel');
@@ -65,9 +67,23 @@ assert.match(appJs, /log\.textContent = '컴파일 요청 중/, 'compile action 
 assert.match(appJs, /startBtn\.disabled = activeRecord \|\| activeVerify \|\| activeRun \|\| busy \|\| !form\.recordUrl \|\| !recordAccess\.allowed;/, 'record start stays disabled until a real record URL is entered');
 assert.match(appJs, /!form\.recordUrl\s*\?\s*'URL 입력 필요'/, 'empty record URL changes the button label to an explicit blocked state');
 assert.match(appJs, /녹화 URL이 비어 있어 녹화 시작이 꺼져 있습니다/, 'record hint explains why recording is disabled');
+assert.match(indexHtml, /id="auto-onboarding"/, 'automation view includes a development onboarding status panel');
+assert.match(indexHtml, /id="auto-auth-action-reason"/, 'auth controls have a visible action reason slot');
+assert.match(indexHtml, /id="auto-record-action-reason"/, 'record controls have a visible action reason slot');
+assert.match(indexHtml, /id="auto-flow-action-reason"/, 'verify/compile/run controls have a visible action reason slot');
+assert.match(appJs, /function renderAutomationOnboarding\(form, flow, \{ loggedIn, activeRecord, activeVerify, activeRun, busy \}\)/, 'automation onboarding panel is rendered from current form and flow state');
+assert.match(appJs, /owner approval\/evidence pack은 production open에서만 필요합니다/, 'development read-only copy keeps production approval separate');
+assert.match(appJs, /postJson\('\/api\/dev-integration-readonly', \{ name: flow\.name, allowlist, validateOnly: false \}\)/, 'automation run uses the development read-only endpoint for eligible flows');
+assert.match(appJs, /runBtn\.textContent = !runAccess\.allowed \? '권한 제한' : flow && isDevelopmentReadonlyFlow\(flow\) \? '개발 실행'/, 'run button labels development read-only replay explicitly');
+assert.match(utilJs, /streamJob\(jobId, logEl, onEnd, options = \{\}\)/, 'job stream supports log preservation options');
+assert.match(utilJs, /if \(options\.clearOnOpen !== false\) logEl\.textContent = '';/, 'job stream can preserve pre-stream log headers');
+assert.match(serverJs, /function developmentReadonlyCompileContext\(flow\)/, 'WebUI compile derives a development read-only context for eligible flows');
+assert.match(serverJs, /AQA_DEV_INTEGRATION_READONLY: '1'/, 'WebUI compile uses the development read-only env instead of production evidence requirements');
 assert.doesNotMatch(indexHtml, /id="auto-record-url"[^>]*placeholder="https:\/\/app\.example\.com\/dashboard"/, 'record URL placeholder must not look like a filled real URL');
 assert.match(indexHtml, /id="auto-record-url"[^>]*placeholder="로그인 후 열린 실제 업무 화면 URL을 붙여넣으세요"/, 'record URL placeholder tells the operator to paste the post-login screen URL');
 assert.match(appCss, /\.btn:disabled,\s*\.btn\.primary:disabled,\s*\.btn\.danger:disabled\s*\{[\s\S]*background: var\(--surface-3\);/, 'disabled primary buttons render as neutral, not teal');
+assert.match(appCss, /\.onboarding-grid\s*\{[\s\S]*grid-template-columns: repeat\(4, minmax\(150px, 1fr\)\);/, 'onboarding status uses a stable responsive grid');
+assert.match(appCss, /\.control-reason\s*\{[\s\S]*overflow-wrap: anywhere;/, 'visible control reasons wrap long policy messages');
 NODE
 
 echo "  webui-automation-auth-ui-unit: auth controls remain refreshable"

@@ -361,6 +361,26 @@ function startUrlOrigin(value) {
 	return '';
 }
 
+function developmentReadonlyCompileContext(flow) {
+	const environment = String(flow?.environment || '').trim();
+	const riskClass = String(flow?.riskClass || '').trim();
+	if (!['staging', 'live-readonly'].includes(environment) || riskClass !== 'read') {
+		return { env: null, mode: '', allowlist: '' };
+	}
+	const origin = startUrlOrigin(flow.startUrl);
+	if (!origin) return { env: null, mode: '', allowlist: '' };
+	const allowlist = normalizeExactTargetAllowlist('', origin);
+	return {
+		mode: 'development-integration-readonly',
+		allowlist,
+		env: {
+			AQA_DEV_INTEGRATION_READONLY: '1',
+			AQA_RUN_MODE: environment,
+			AQA_TARGET_ALLOWLIST: allowlist,
+		},
+	};
+}
+
 function systemAuthSpawn(_engine, app, loginUrl, successUrl) {
 	return gitBash('setup/auth.sh', [app, loginUrl, successUrl]);
 }
@@ -767,8 +787,16 @@ const server = http.createServer(async (req, res) => {
 					const engine = flow.engine;
 					if (engine !== 'playwright') return sendJson(res, 400, { error: `flow '${name}' is ${engine}; WebUI compile is Playwright-only` });
 				// compile is deterministic and browser-free -> run directly (not via the serial queue).
-				const { code, output } = await runCapture(requestGitBash('bin/probe-record.sh', ['compile', `flows/${name}.flow.json`]));
-				return sendJson(res, 200, { ok: code === 0, code, output, testFile: code === 0 ? `tests/${name}.test.sh` : null });
+				const compileContext = developmentReadonlyCompileContext(flow);
+				const { code, output } = await runCapture(requestGitBash('bin/probe-record.sh', ['compile', `flows/${name}.flow.json`], compileContext.env));
+				return sendJson(res, 200, {
+					ok: code === 0,
+					code,
+					output,
+					testFile: code === 0 ? `tests/${name}.test.sh` : null,
+					mode: compileContext.mode || undefined,
+					allowlist: compileContext.allowlist || undefined,
+				});
 			}
 
 				// 결재/RPA routes (sync, NL command router, system registry) — see webui/routes-rpa.js.
