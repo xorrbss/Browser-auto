@@ -1,0 +1,21 @@
+{
+  "name": "guest_samsungdisplay_argos_readonly_smoke",
+  "engine": "playwright",
+  "environment": "staging",
+  "riskClass": "read",
+  "app": "guest_samsungdisplay_com",
+  "startUrl": "https://guest.samsungdisplay.com/vi/rq/VIRQ001.do",
+  "steps": [
+    {
+      "kind": "wait",
+      "until": "text",
+      "value": "신청자정보확인"
+    }
+  ],
+  "asserts": [
+    {
+      "kind": "url",
+      "value": "**/vi/rq/VIRQ001.do"
+    }
+  ]
+}
