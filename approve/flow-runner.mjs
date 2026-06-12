@@ -22,6 +22,8 @@ const OPEN_RECORD_SOURCE = new Set(['first', 'row_index', 'field_value']);
 const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_STEP_TIMEOUT_MS = 20000;
 const MAX_STEP_TIMEOUT_MS = 10 * 60 * 1000;
+const SAFE_HREF_RE = /^(\/[^"'\\\s]*|https?:\/\/[^"'\\\s]+)$/;
+const HREF_CONSTRAINABLE_BY = new Set(['role', 'text']);
 
 function validViewportPoint(p) {
 	return p && typeof p === 'object' &&
@@ -32,7 +34,24 @@ function validViewportPoint(p) {
 function validFindTarget(c) {
 	return c && typeof c === 'object' && FIND_BY.has(c.by) &&
 		typeof c.value === 'string' && c.value !== '' &&
-		(c.name == null || typeof c.name === 'string');
+		(c.name == null || typeof c.name === 'string') &&
+		(c.href == null || (typeof c.href === 'string' && SAFE_HREF_RE.test(c.href)));
+}
+
+function cssAttrValue(value) {
+	return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function hrefLocator(scope, href) {
+	return scope.locator(`a[href="${cssAttrValue(href)}"]`);
+}
+
+function constrainHref(scope, loc, s) {
+	const href = s && s.href;
+	if (!href) return loc;
+	const hrefLoc = hrefLocator(scope, href);
+	if (s.by === 'text') return hrefLoc.filter({ hasText: s.value });
+	return loc.and(hrefLoc);
 }
 
 export function isEffectfulStep(s) {
@@ -58,6 +77,8 @@ export function validateSteps(steps) {
 		if (s.kind === 'find') {
 			if (!FIND_BY.has(s.by)) return { ok: false, reason: `step ${i}: find.by "${s.by}" invalid` };
 			if (typeof s.value !== 'string' || !s.value) return { ok: false, reason: `step ${i}: find.value required` };
+			if (s.href != null && !(HREF_CONSTRAINABLE_BY.has(s.by) && typeof s.href === 'string' && SAFE_HREF_RE.test(s.href)))
+				return { ok: false, reason: `step ${i}: find.href is only allowed as an exact href constraint on role or text locators` };
 			if (!FIND_ACTION.has(s.action)) return { ok: false, reason: `step ${i}: find.action "${s.action}" invalid` };
 			// fill/type/select MUST carry the recorded value (the {{input_N}} token or a literal). A value-less
 			// effectful field action would default to fill('') / selectOption(undefined) at runStep and SILENTLY
@@ -142,16 +163,18 @@ function frameScope(page, f) {
 export function buildLocator(page, s) {
 	const scope = s.frame ? frameScope(page, s.frame) : page;
 	const exact = s.exact !== false;
+	let loc;
 	switch (s.by) {
-		case 'testid': return scope.getByTestId(s.value);
-		case 'role': return scope.getByRole(s.value, s.name ? { name: s.name, exact } : undefined);
-		case 'label': return scope.getByLabel(s.value, { exact });
-		case 'text': return scope.getByText(s.value, { exact });
-		case 'placeholder': return scope.getByPlaceholder(s.value, { exact });
-		case 'alt': return scope.getByAltText(s.value, { exact });
-		case 'title': return scope.getByTitle(s.value, { exact });
+		case 'testid': loc = scope.getByTestId(s.value); break;
+		case 'role': loc = scope.getByRole(s.value, s.name ? { name: s.name, exact } : undefined); break;
+		case 'label': loc = scope.getByLabel(s.value, { exact }); break;
+		case 'text': loc = scope.getByText(s.value, { exact }); break;
+		case 'placeholder': loc = scope.getByPlaceholder(s.value, { exact }); break;
+		case 'alt': loc = scope.getByAltText(s.value, { exact }); break;
+		case 'title': loc = scope.getByTitle(s.value, { exact }); break;
 		default: throw new Error(`unknown find.by ${s.by}`);
 	}
+	return constrainHref(scope, loc, s);
 }
 
 // runStep(page, step, resolveValue): execute ONE step. An effectful find FAILS CLOSED unless the locator is

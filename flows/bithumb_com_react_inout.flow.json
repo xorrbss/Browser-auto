@@ -1,0 +1,73 @@
+{
+  "name": "bithumb_com_react_inout",
+  "engine": "playwright",
+  "environment": "staging",
+  "riskClass": "read",
+  "app": "bithumb_com",
+  "startUrl": "https://www.bithumb.com/react/inout/deposit/KRW",
+  "steps": [
+    {
+      "kind": "wait",
+      "until": "text",
+      "value": "코인 링크 선택",
+      "timeoutMs": 30000
+    },
+    {
+      "kind": "find",
+      "action": "click",
+      "by": "text",
+      "value": "코인 링크 선택",
+      "href": "/react/inout/deposit/ETH"
+    },
+    {
+      "kind": "wait",
+      "until": "url",
+      "value": "**/react/inout/deposit/ETH"
+    },
+    {
+      "kind": "scroll",
+      "dir": "down",
+      "px": 40,
+      "at": {
+        "x": 597,
+        "y": 451
+      }
+    },
+    {
+      "kind": "scroll",
+      "dir": "down",
+      "px": 60,
+      "at": {
+        "x": 597,
+        "y": 451
+      }
+    },
+    {
+      "kind": "scroll",
+      "dir": "down",
+      "px": 156,
+      "at": {
+        "x": 665,
+        "y": 469
+      }
+    },
+    {
+      "kind": "find",
+      "action": "click",
+      "by": "text",
+      "value": "코인 링크 선택",
+      "href": "/react/inout/deposit/KRW"
+    },
+    {
+      "kind": "wait",
+      "until": "url",
+      "value": "**/react/inout/deposit/KRW"
+    }
+  ],
+  "asserts": [
+    {
+      "kind": "url",
+      "value": "**/react/inout/deposit/KRW"
+    }
+  ]
+}

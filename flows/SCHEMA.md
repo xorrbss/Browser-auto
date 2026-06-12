@@ -88,6 +88,8 @@ with headed `setup/auth.sh` instead.
   - `by`: one of `testid`, `role`, `label`, `text`, `placeholder`, `alt`, `title`.
   - `value`: locator value.
   - `name`: optional accessible name for `role`.
+  - `href`: optional exact href constraint for repeated link role/text locators.
+    Use only exact relative paths or http(s) URLs; no wildcards, credentials, or selector fragments.
   - `action`: one of `click`, `fill`, `type`, `select`, `check`, `uncheck`, `hover`.
   - `text` / `val`: value for `fill`, `type`, or `select`.
   - `frame`: optional same-origin iframe scope.
@@ -115,7 +117,7 @@ with headed `setup/auth.sh` instead.
     exactly one row has that field value.
   - `timeoutMs`: optional per-step timeout override for runner-controlled work where supported.
 
-Locator priority when authoring: **testid > role+name > label > exact-text > placeholder > title**.
+Locator priority when authoring: **testid > role+name > role/text+exact-href > label > exact-text > placeholder > title**.
 Uniqueness is checked during capture/verification; a non-unique or fragile target must become
 `needs_review` instead of a guessed selector.
 

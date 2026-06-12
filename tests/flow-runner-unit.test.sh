@@ -44,6 +44,10 @@ assert(validateSteps([{ kind: "find", by: "label", value: "Name", action: "type"
 assert(validateSteps([{ kind: "find", by: "label", value: "Name", action: "fill", text: "{{input_1}}" }]).ok === true, "fill WITH a token text ⇒ valid");
 assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "select" }]).ok === false, "select without val/text ⇒ refused");
 assert(validateSteps([{ kind: "find", by: "role", value: "combobox", action: "select", val: "kr" }]).ok === true, "select WITH val ⇒ valid");
+assert(validateSteps([{ kind: "find", by: "role", value: "link", name: "코인 링크 선택", href: "/react/inout/deposit/ETH", action: "click" }]).ok === true, "role link may include an exact href constraint");
+assert(validateSteps([{ kind: "find", by: "text", value: "코인 링크 선택", href: "/react/inout/deposit/ETH", action: "click" }]).ok === true, "repeated link text may include an exact href constraint");
+assert(validateSteps([{ kind: "find", by: "label", value: "코인 링크 선택", href: "/react/inout/deposit/ETH", action: "click" }]).ok === false, "href constraint is refused for non-link-oriented locator types");
+assert(validateSteps([{ kind: "find", by: "role", value: "link", name: "bad", href: "javascript:alert(1)", action: "click" }]).ok === false, "unsafe href constraint refused");
 
 assert(validateSteps([{ kind: "scroll", dir: "down", px: 100 }]).ok === true, "page scroll validates");
 assert(validateSteps([{ kind: "scroll", dir: "down", px: 100, at: { x: 200, y: 300 } }]).ok === true, "viewport wheel scroll validates");
@@ -95,6 +99,8 @@ assert(classifyAuthChallenge({ url: "https://example.test/app", text: "Permissio
 function mockPage(calls, countVal = 1) {
   const node = {
     count: async () => countVal, first: () => node,
+    and: () => { calls.push("and"); return node; },
+    filter: (opts) => { calls.push("filter:" + (opts && opts.hasText || "")); return node; },
     click: async () => calls.push("click"), fill: async (t) => calls.push("fill:" + t),
     pressSequentially: async (t) => calls.push("type:" + t), selectOption: async (v) => calls.push("select:" + v),
     check: async () => calls.push("check"), uncheck: async () => calls.push("uncheck"),
@@ -107,10 +113,22 @@ function mockPage(calls, countVal = 1) {
     getByText: (v) => { calls.push("text:" + v); return loc(); },
     getByLabel: (v) => loc(), getByPlaceholder: (v) => { calls.push("ph:" + v); return loc(); },
     getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(),
-    frameLocator: (sel) => { calls.push("frameLocator:" + sel); const scope = { getByRole: (r, o) => { calls.push("role:" + r + ":" + (o ? o.name : "")); return loc(); }, getByText: (v) => loc(), getByLabel: (v) => loc(), getByPlaceholder: (v) => loc(), getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(), nth: (i) => scope }; return scope; },
+    locator: (sel) => { calls.push("locator:" + sel); return loc(); },
+    frameLocator: (sel) => { calls.push("frameLocator:" + sel); const scope = { getByRole: (r, o) => { calls.push("role:" + r + ":" + (o ? o.name : "")); return loc(); }, getByText: (v) => loc(), getByLabel: (v) => loc(), getByPlaceholder: (v) => loc(), getByTestId: (v) => loc(), getByAltText: (v) => loc(), getByTitle: (v) => loc(), locator: (s) => { calls.push("frameLocatorChild:" + s); return loc(); }, nth: (i) => scope }; return scope; },
     waitForURL: async (g, o = {}) => calls.push("waitURL:" + g + ":" + (o.timeout || "")), waitForLoadState: async (s, o = {}) => calls.push("waitLoad:" + s + ":" + (o.timeout || "")),
     keyboard: { press: async (k) => calls.push("press:" + k) }, mouse: { move: async (x, y) => calls.push("move:" + x + "," + y), wheel: async (x, y) => calls.push("wheel:" + x + "," + y) },
   };
+}
+
+{
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "find", by: "role", value: "link", name: "코인 링크 선택", href: "/react/inout/deposit/ETH", action: "click" }], { dryRun: false, irreversibleAt: 0, onBeforeIrreversible: () => {} });
+  assert(calls.includes("role:link:코인 링크 선택") && calls.includes("locator:a[href=\"/react/inout/deposit/ETH\"]") && calls.includes("and") && calls.includes("click"), "href-constrained link intersects role locator with exact href (got " + calls.join() + ")");
+}
+{
+  const calls = [];
+  await runSteps(mockPage(calls), [{ kind: "find", by: "text", value: "코인 링크 선택", href: "/react/inout/deposit/ETH", action: "click" }], { dryRun: false, irreversibleAt: 0, onBeforeIrreversible: () => {} });
+  assert(calls.includes("text:코인 링크 선택") && calls.includes("locator:a[href=\"/react/inout/deposit/ETH\"]") && calls.includes("filter:코인 링크 선택") && calls.includes("click"), "href-constrained text locator filters exact href by text (got " + calls.join() + ")");
 }
 
 // --- LIVE run: irreversible gate runs onBeforeIrreversible then executes; token substituted ---

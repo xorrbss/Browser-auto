@@ -73,8 +73,9 @@ function describeStep(s) {
 	if (!s || typeof s !== 'object') return 'invalid step';
 	if (s.kind === 'find') {
 		const name = s.name ? ` name="${s.name}"` : '';
+		const href = s.href ? ` href="${s.href}"` : '';
 		const frame = s.frame ? ` frame=${s.frame.by}:${s.frame.value}` : '';
-		return `find ${s.by}:${s.value}${name} ${s.action}${frame}`;
+		return `find ${s.by}:${s.value}${name}${href} ${s.action}${frame}`;
 	}
 	if (s.kind === 'wait') return `wait ${s.until}${s.value != null ? `:${s.value}` : ''}`;
 	if (s.kind === 'press') return `press ${s.value}`;
@@ -573,12 +574,13 @@ function candidateStep(base, c) {
 		by: c.by,
 		value: c.value,
 		...(c.name ? { name: c.name } : {}),
+		...(c.href ? { href: c.href } : {}),
 		needs_review: false,
 	};
 }
 
 async function resolveFindForVerify(page, step, ladder) {
-	const primary = { by: step.by, value: step.value, ...(step.name ? { name: step.name } : {}) };
+	const primary = { by: step.by, value: step.value, ...(step.name ? { name: step.name } : {}), ...(step.href ? { href: step.href } : {}) };
 	const choices = [primary, ...(ladder || []).filter((c) => c && c.count === 1)];
 	for (let i = 0; i < choices.length; i++) {
 		const trial = candidateStep(step, choices[i]);
@@ -619,12 +621,12 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 				const r = await resolveFindForVerify(page, s, ladderByStep[String(i)] || []);
 				if (!r.step) {
 					const cands = (ladderByStep[String(i)] || [{ by: s.by, value: s.value, ...(s.name ? { name: s.name } : {}) }]);
-					nextSteps[i] = { kind: 'find', needs_review: true, candidates: cands, action: s.action, ...(s.text ? { text: s.text } : {}), ...(s.val ? { val: s.val } : {}), ...(s.frame ? { frame: s.frame } : {}) };
+					nextSteps[i] = { kind: 'find', needs_review: true, candidates: cands, action: s.action, ...(s.text ? { text: s.text } : {}), ...(s.val ? { val: s.val } : {}), ...(s.href ? { href: s.href } : {}), ...(s.frame ? { frame: s.frame } : {}) };
 					promoted++;
 					break;
 				}
 				if (r.repaired) {
-					nextSteps[i] = { ...s, by: r.step.by, value: r.step.value, ...(r.step.name ? { name: r.step.name } : {}) };
+					nextSteps[i] = { ...s, by: r.step.by, value: r.step.value, ...(r.step.name ? { name: r.step.name } : {}), ...(r.step.href ? { href: r.step.href } : {}) };
 					delete nextSteps[i].needs_review;
 					delete nextSteps[i].candidates;
 					repaired++;
@@ -640,10 +642,11 @@ async function verifyFlow(page, flow, flowFile, resolveValue) {
 				nextSteps[i] = {
 					kind: 'find',
 					needs_review: true,
-					candidates: ladderByStep[String(i)] || [{ by: s.by, value: s.value, ...(s.name ? { name: s.name } : {}) }],
+					candidates: ladderByStep[String(i)] || [{ by: s.by, value: s.value, ...(s.name ? { name: s.name } : {}), ...(s.href ? { href: s.href } : {}) }],
 					action: s.action,
 					...(s.text ? { text: s.text } : {}),
 					...(s.val ? { val: s.val } : {}),
+					...(s.href ? { href: s.href } : {}),
 					...(s.frame ? { frame: s.frame } : {}),
 				};
 				promoted++;
